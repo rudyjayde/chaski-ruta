@@ -1,0 +1,61 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Inter', sans-serif;
+  --color-primary: #1D4ED8;
+  --color-primary-h: #1E40AF;
+  --color-accent: #F97316;
+  --color-teal: #0F766E;
+  --color-ok: #15803D;
+  --color-warn: #B45309;
+  --color-danger: #B91C1C;
+  --color-bg: #F7F7F8;
+  --color-surface: #FFFFFF;
+  --color-border: #E4E4E7;
+  --color-t1: #18181B;
+  --color-t2: #52525B;
+  --color-muted: #71717A;
+  --color-hover: #F4F4F5;
+  --color-selected: #EFF6FF;
+}
+
+/* Modo oscuro — solo para las pantallas autenticadas (dentro de la asociación).
+   La Landing tiene su propio toggle independiente y no usa la clase html.dark. */
+html.dark {
+  color-scheme: dark;
+  --color-bg: #18181B;
+  --color-surface: #202023;
+  --color-border: #303034;
+  --color-t1: #F4F4F5;
+  --color-t2: #A1A1AA;
+  --color-muted: #71717A;
+  --color-hover: #27272A;
+  --color-selected: #1E3A5F;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  font-family: 'Inter', sans-serif;
+  background-color: var(--color-bg);
+  color: var(--color-t1);
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: 0;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+:focus-visible {
+  outline: 2px solid #1D4ED8;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #D4D4D8; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #A1A1AA; }
+
+button { cursor: pointer; }
+table { border-collapse: collapse; }

@@ -1,0 +1,659 @@
+// Esquema inicial de CHASKI RUTA — Prioridad 1: cuentas reales + aislamiento por asociacion.
+// El resto del dominio (colas, manifiestos, unidades, reubicaciones) se agrega en la Prioridad 2,
+// una vez que autenticacion + organization_id esten funcionando de punta a punta.
+// Ver docs/planes/arquitectura-tecnica.md
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrgStatus {
+  ACTIVA
+  EN_CONFIGURACION
+  SUSPENDIDA
+  CON_INCIDENCIA
+}
+
+enum OrgPlan {
+  OPERACION
+  PRO
+}
+
+enum PersonRole {
+  SUPERADMIN
+  ADMINISTRADOR
+  SOCIO
+  CONDUCTOR
+}
+
+enum PersonStatus {
+  ACTIVO
+  PENDIENTE
+  SUSPENDIDO
+}
+
+/// Una asociacion de transporte cliente de CHASKI AI (ej. ATIPCAR).
+model Organization {
+  id                   String    @id @default(cuid())
+  name                 String
+  ruc                  String    @unique
+  logoUrl              String?
+  status               OrgStatus @default(EN_CONFIGURACION)
+  plan                 OrgPlan   @default(OPERACION)
+  driverLiveMapEnabled Boolean   @default(false)
+  whatsappAssistantEnabled Boolean @default(false)
+
+  // Datos institucionales capturados en el wizard "Nueva asociacion" (paso 0)
+  // -- antes se pedian en el formulario y se descartaban silenciosamente,
+  // nunca llegaban a guardarse. Editables despues desde el panel de Super
+  // Admin (Asociaciones -> seleccionar -> Datos de contacto), igual que name.
+  city         String?
+  legalRepName String? // representante legal de la asociacion
+  contactPhone String?
+  contactEmail String? // correo institucional -- distinto del correo del gerente (Person.email)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  people       Person[]
+  auditEntries AuditEntry[]
+
+  companies          Company[]
+  vehicles           Vehicle[]
+  operationalConfig  OperationalConfig?
+  routes             Route[]
+  queueEntries       QueueEntry[]
+  trips              Trip[]
+  manifests          Manifest[]
+  relocationOrders   RelocationOrder[]
+  delayedRegistrationRequests DelayedRegistrationRequest[]
+
+  @@map("organizations")
+}
+
+/// Una persona con cuenta en el sistema: gerente/administrador, socio, conductor o super admin de CHASKI AI.
+/// organizationId es null SOLO para SUPERADMIN (pertenece a CHASKI AI, no a una asociacion cliente).
+/// Regla dura del sistema (doc maestro §10): toda consulta/mutacion de datos operativos debe filtrar
+/// por organizationId — se aplica desde el modulo de auth hacia adelante.
+model Person {
+  id             String   @id @default(cuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  name   String
+  // Un mismo correo puede tener hasta 2 cuentas (una Socio, una Conductor) —
+  // nunca dos con el mismo rol. Al hacer login con Google, si el correo tiene
+  // mas de una cuenta, el sistema pide elegir con cual entrar (ver auth.service.ts).
+  email  String
+  dni    String?
+  phone  String?
+  role   PersonRole
+  status PersonStatus @default(PENDIENTE)
+
+  // Identidad de Google verificada (Sign in with Google) — nunca se le asigna contrasena.
+  // Ya no es @unique: la MISMA cuenta real de Google confirma dos filas de Person
+  // distintas (una por rol) cuando el correo tiene cuenta Socio y Conductor a la vez.
+  googleId              String?
+  googleEmailVerifiedAt DateTime?
+
+  // Numero de WhatsApp vinculado para el asistente por WhatsApp (docs/planes/plan-pro.md §8).
+  // Solo se responde con datos reales si coincide exactamente con este numero.
+  whatsappPhone String? @unique
+
+  // Vinculo cuenta-dispositivo (plan-operacion.md §3.2): la cuenta de un
+  // conductor/socio solo opera desde este dispositivo una vez vinculado.
+  boundDeviceId    String?
+  boundDeviceSetAt DateTime?
+
+  code       String? // codigo de unidad, cuando aplica (conductor/socio)
+  company    String? // nombre de la empresa miembro dentro de la asociacion
+  linkedUnit String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  auditEntriesAsActor AuditEntry[]
+
+  vehiclesAsPartner      Vehicle[]         @relation("VehiclePartner")
+  vehiclesAsCurrentDriver Vehicle[]        @relation("VehicleCurrentDriver")
+  queueEntriesAsDriver   QueueEntry[]      @relation("QueueEntryDriver")
+  tripsAsDriver          Trip[]            @relation("TripDriver")
+  manifestsAsDriver      Manifest[]        @relation("ManifestDriver")
+  manifestsAsOperator    Manifest[]        @relation("ManifestOperator")
+  relocationsConfirmed   RelocationOrder[] @relation("RelocationConfirmedBy")
+  delayedRegistrationsResolved DelayedRegistrationRequest[] @relation("DelayedRegistrationResolvedBy")
+
+  @@unique([email, role])
+  @@index([organizationId])
+  @@index([email])
+  @@index([googleId])
+  @@map("people")
+}
+
+/// Registro de auditoria: actor, fecha, motivo y cambio — obligatorio para toda excepcion/intervencion manual
+/// (doc maestro §9: "Toda excepcion registra actor, fecha, motivo y cambio").
+model AuditEntry {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  actorId   String?
+  actor     Person? @relation(fields: [actorId], references: [id])
+  actorRole String
+
+  action     String
+  resource   String
+  resourceId String
+  before     String?
+  after      String?
+  reason     String?
+  evidence   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@map("audit_entries")
+}
+
+// ============================================================================
+// Prioridad 2 — Motor real del Plan Operación (colas, manifiestos, viajes,
+// reubicaciones) con las reglas de integridad antifraude acordadas en
+// docs/planes/plan-operacion.md §3. No incluye GPS físico continuo (eso es
+// PRO/GPS Vehicular — docs/planes/plan-pro.md, plan-gps-vehicular.md).
+// ============================================================================
+
+enum VehicleType {
+  SPRINTER
+  HIACE
+  MASTER
+}
+
+enum RouteDir {
+  JULI_PUNO
+  PUNO_JULI
+}
+
+enum VehicleRouteAssignment {
+  JULI_PUNO
+  PUNO_JULI
+  AMBAS
+}
+
+enum VehicleStatus {
+  ACTIVO
+  INACTIVO
+  SUSPENDIDO
+}
+
+enum CompanyStatus {
+  ACTIVA
+  OBSERVADA
+  SUSPENDIDA
+}
+
+enum QueueStatus {
+  PREINSCRITO
+  INSCRITO
+  LLAMADO
+  EN_TERMINAL
+  EMBARCANDO
+  LISTO
+  SALIO
+  AUSENTE
+  RETIRADO
+}
+
+enum EvidenceType {
+  REGISTRO_MOVIL
+  PRESENCIA_TERMINAL
+  VEHICULO_VERIFICADO
+  SIN_EVIDENCIA
+}
+
+// Vía de escape "me inscribo más tarde" (plan-operacion.md §3.6, vía 2):
+// declaración explícita del conductor, siempre manda al final de la lista.
+enum EscapeState {
+  NINGUNO
+  ME_INSCRIBO_MAS_TARDE
+}
+
+enum TripStatus {
+  PROGRAMADO
+  ACTIVO
+  COMPLETADO
+  CON_INCIDENCIA
+}
+
+enum GpsStatus {
+  SIN_GPS
+  REGISTRO_MOVIL
+  GPS_FISICO
+}
+
+enum ManifestStatus {
+  BORRADOR
+  CERRADO
+  CON_INCIDENCIA
+  CORREGIDO
+}
+
+enum PaymentMethod {
+  EFECTIVO
+  YAPE
+  PLIN
+  TRANSFERENCIA
+  QR
+}
+
+enum Terminal {
+  JULI
+  PUNO
+}
+
+enum RelocationStatus {
+  DETECTADO
+  PROPUESTA
+  AUTORIZADA
+  EN_TRASLADO
+  COMPLETADA
+}
+
+/// Empresa miembro de una asociación (ej. "Virgen de Fátima" dentro de ATIPCAR).
+model Company {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+
+  name     String
+  ruc      String?
+  legalRep String?
+  phone    String?
+  email    String?
+  status   CompanyStatus @default(ACTIVA)
+
+  vehicles  Vehicle[]
+  manifests Manifest[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, ruc])
+  @@index([organizationId])
+  @@map("companies")
+}
+
+/// Un vehículo/unidad de la asociación (lo que en el negocio se llama "código").
+model Vehicle {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  code    String // código de unidad, ej. "015" — único dentro de la asociación
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  vehicleType     VehicleType
+  plate           String
+  model           String
+  year            Int
+  status          VehicleStatus          @default(ACTIVO)
+  routeAssignment VehicleRouteAssignment @default(AMBAS)
+
+  // Socio dueño de la unidad (puede ser null si aún no se vincula formalmente).
+  partnerId String?
+  partner   Person? @relation("VehiclePartner", fields: [partnerId], references: [id])
+
+  // Conductor actual asignado (puede cambiar; el historial vive en AuditEntry).
+  currentDriverId String?
+  currentDriver   Person? @relation("VehicleCurrentDriver", fields: [currentDriverId], references: [id])
+
+  // GPS PRO / GPS Vehicular (plan-gps-vehicular.md): identificador del dispositivo
+  // Teltonika en el servidor Traccar (su "uniqueId", normalmente el IMEI). Null
+  // mientras la unidad no tiene hardware GPS instalado -- el mapa en vivo del
+  // admin nunca muestra un marcador para una unidad sin este campo (regla dura:
+  // nunca coordenadas como si vinieran de un rastreador real, sin serlo).
+  traccarDeviceId String? @unique
+
+  plateHistory  VehiclePlateHistory[]
+  queueEntries  QueueEntry[]
+  trips         Trip[]
+  manifests     Manifest[]
+  relocationUnits RelocationUnit[]
+  delayedRegistrationsRequested DelayedRegistrationRequest[] @relation("DelayedRegistrationRequesting")
+  delayedRegistrationsBlocking  DelayedRegistrationRequest[] @relation("DelayedRegistrationBlockedBy")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("vehicles")
+}
+
+model VehiclePlateHistory {
+  id        String    @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle   @relation(fields: [vehicleId], references: [id])
+  plate     String
+  fromDate  DateTime
+  toDate    DateTime?
+
+  @@index([vehicleId])
+  @@map("vehicle_plate_history")
+}
+
+/// Parámetros configurables por asociación para las reglas antifraude
+/// (plan-operacion.md §3.10) — NUNCA fijos en el código, siempre por Super Admin.
+/// Cada asociacion define su PROPIO corredor (nunca compartido con otras):
+/// terminalOrigin/terminalDestination son los dos puntos de su ruta de ida y
+/// vuelta -- el enum interno RouteDir (JULI_PUNO/PUNO_JULI) y Terminal
+/// (JULI/PUNO) son solo CODIGOS INTERNOS de direccion ('ruta de ida'/'ruta de
+/// vuelta', 'terminal de origen'/'terminal de destino'); el nombre real que ve
+/// el usuario (Juli/Puno, o Puno/Juliaca para otra asociacion, etc.) vive aqui.
+/// Los defaults de este modelo son los de ATIPCAR (Juli <-> Puno) solo por
+/// compatibilidad con los datos existentes -- una asociacion nueva los
+/// sobreescribe con sus propios nombres desde el wizard del Super Admin.
+model OperationalConfig {
+  id             String       @id @default(cuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  // JULI_PUNO ('ruta de ida' = origen -> destino) / PUNO_JULI ('ruta de vuelta' = destino -> origen).
+  minTripMinutesOutbound   Int @default(90)
+  minTripMinutesReturn     Int @default(90)
+  gpsRadiusMeters          Int @default(300)
+  timeoutMinutes           Int @default(15)
+  anomalySpeedThresholdKmh Int @default(100)
+
+  // Nombre y direccion visibles de cada terminal -- esto es lo que el Super
+  // Admin configura por asociacion (paso 2 del wizard "Nueva asociacion").
+  terminalOriginName         String  @default("Juli")
+  terminalOriginAddress      String?
+  terminalDestinationName    String  @default("Puno")
+  terminalDestinationAddress String?
+
+  // Coordenadas de referencia de cada terminal, para la verificación puntual de
+  // GPS al confirmar llegada (plan-operacion.md §3.3) -- valores por defecto son
+  // el centro aproximado de Juli/Puno; el Super Admin los ajusta al punto real
+  // de la terminal de cada asociacion cuando tenga esos datos (paso pendiente,
+  // hoy el wizard no captura coordenadas todavia -- ver comentario en el DTO).
+  terminalOriginLat      Float @default(-16.2035)
+  terminalOriginLng      Float @default(-69.4597)
+  terminalDestinationLat Float @default(-15.8402)
+  terminalDestinationLng Float @default(-70.0219)
+
+  // Notas libres de configuracion inicial (horario de apertura, tarifa base,
+  // etc.) -- capturadas en el wizard "Nueva asociacion" (paso 2) pero recien
+  // conectadas a un dato real; antes se descartaban silenciosamente igual
+  // que los datos de contacto de Organization (ver comentario ahi).
+  initialConfigNotes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("operational_configs")
+}
+
+/// Una ruta de operacion de la asociacion (origen -> destino). La ruta de ida
+/// y la ruta de vuelta ya estan cubiertas por los terminales de
+/// OperationalConfig -- este modelo es para rutas ADICIONALES que el wizard
+/// de creacion siempre permitio agregar ("+ Agregar ruta") pero nunca
+/// persistia en ningun lado (plan-operacion.md, paso "Nueva asociacion" §3).
+model Route {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  origin      String
+  destination String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@map("routes")
+}
+
+/// La cola digital EN VIVO de una dirección (JULI_PUNO o PUNO_JULI). Cuando un
+/// vehículo sale de la cola (SALIO) o se retira, su fila se cierra y lo que
+/// queda como historial es el Trip + AuditEntry — esta tabla es el estado actual.
+model QueueEntry {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  route    RouteDir
+  position Int
+
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id])
+
+  driverId String
+  driver   Person  @relation("QueueEntryDriver", fields: [driverId], references: [id])
+
+  status   QueueStatus  @default(PREINSCRITO)
+  evidence EvidenceType @default(SIN_EVIDENCIA)
+
+  // Vínculo cuenta-dispositivo (plan-operacion.md §3.2): el dispositivo desde el
+  // que se hizo esta inscripción — debe coincidir con Person.boundDeviceId.
+  deviceId String?
+
+  // Verificación de llegada por GPS del celular (§3.3): chequeo puntual, no rastreo.
+  arrivalGpsLat    Float?
+  arrivalGpsLng    Float?
+  arrivalCheckedAt DateTime?
+
+  // Cadena de predecesores (§3.5): hora real de salida del viaje que trajo a
+  // este vehículo hasta aquí (si existe) — se usa para ordenar la posición en la
+  // cola de regreso por orden real de salida, no por orden de "toque" en el celular.
+  chainDepartureAt DateTime?
+
+  // Escape de 3 vías (§3.6).
+  escapeState EscapeState @default(NINGUNO)
+  timeoutAt   DateTime? // pasado este momento, el timeout automático libera la posición
+
+  registeredAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([organizationId, route, vehicleId])
+  @@index([organizationId, route, position])
+  @@map("queue_entries")
+}
+
+/// Un viaje (salida de terminal → llegada). Nace cuando un vehículo sale de la cola.
+model Trip {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id])
+
+  driverId String
+  driver   Person  @relation("TripDriver", fields: [driverId], references: [id])
+
+  route  RouteDir
+  status TripStatus @default(PROGRAMADO)
+
+  scheduledDeparture DateTime?
+  actualDeparture    DateTime?
+  scheduledArrival   DateTime?
+  actualArrival      DateTime?
+
+  gpsStatus    GpsStatus @default(SIN_GPS)
+  incidentNote String?
+
+  // Cadena de predecesores (§3.5): referencia al viaje que abrió el cupo que
+  // este vehículo ocupa al re-inscribirse en la cola de regreso.
+  predecessorTripId String?
+  predecessorTrip   Trip?   @relation("TripPredecessor", fields: [predecessorTripId], references: [id])
+  successorTrips    Trip[]  @relation("TripPredecessor")
+
+  manifest Manifest?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, route, status])
+  @@map("trips")
+}
+
+/// El manifiesto de un viaje: lista de pasajeros, cierre, versión y respaldo en papel.
+model Manifest {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  number String @unique // MAN-{año}-{secuencia}
+  status ManifestStatus @default(BORRADOR)
+  route  RouteDir
+
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id])
+
+  driverId String
+  driver   Person  @relation("ManifestDriver", fields: [driverId], references: [id])
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  operatorId String? // persona que llenó el manifiesto (conductor o admin, evidencia de auditoría)
+  operator   Person? @relation("ManifestOperator", fields: [operatorId], references: [id])
+
+  tripId String? @unique
+  trip   Trip?   @relation(fields: [tripId], references: [id])
+
+  date          DateTime
+  departureTime String
+  arrivalTime   String?
+  capacity      Int
+  version       Int     @default(1)
+
+  correctionReason String?
+  pdfGenerated     Boolean @default(false)
+
+  // Manifiesto vacío bajo presión real, con respaldo físico en papel (§3.8) —
+  // pendingDigitize es el estado "pendiente de digitalizar" que no debe quedar
+  // abierto indefinidamente (debilita la verificación por QR).
+  paperBackup     Boolean @default(false)
+  pendingDigitize Boolean @default(false)
+
+  passengers Passenger[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@map("manifests")
+}
+
+model Passenger {
+  id         String   @id @default(cuid())
+  manifestId String
+  manifest   Manifest @relation(fields: [manifestId], references: [id])
+
+  name          String
+  dni           String
+  seat          Int
+  fare          Float
+  paymentMethod PaymentMethod
+  origin        String
+  destination   String
+
+  @@index([manifestId])
+  @@map("passengers")
+}
+
+/// Orden de reubicación de flota entre terminales (§9 / plan-operacion.md).
+model RelocationOrder {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  status       RelocationStatus @default(DETECTADO)
+  fromTerminal Terminal
+  toTerminal   Terminal
+  reason       String
+  windowLabel  String
+  compensation String
+  internalOrder String @unique
+
+  confirmedById String?
+  confirmedBy   Person? @relation("RelocationConfirmedBy", fields: [confirmedById], references: [id])
+
+  units RelocationUnit[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@map("relocation_orders")
+}
+
+model RelocationUnit {
+  id                String          @id @default(cuid())
+  relocationOrderId String
+  relocationOrder   RelocationOrder @relation(fields: [relocationOrderId], references: [id])
+
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id])
+
+  accepted Boolean @default(false)
+
+  @@unique([relocationOrderId, vehicleId])
+  @@map("relocation_units")
+}
+
+enum DelayedRegistrationStatus {
+  PENDIENTE
+  AUTORIZADO
+  RESUELTO
+}
+
+enum DelayedRegistrationResolution {
+  LLAMAR_PREDECESOR
+  AUTORIZAR_DIRECTO
+}
+
+/// Excepcion 3 (Jayde, 4 sept 2026): "Inscripcion retrasada". Un conductor
+/// bloqueado por el candado de orden real de salida (§3.5) -- porque la
+/// unidad que salio antes que el no se inscribio ni aviso que se quedaba --
+/// presiona este boton para avisarle al administrador en vez de quedar
+/// atascado. El administrador resuelve manualmente, nunca se resuelve sola:
+/// o llama al predecesor para que marque, o autoriza a esta unidad a
+/// inscribirse igual (una sola vez, verificado por el servidor en join(),
+/// nunca confiado del cliente -- mismo patron que RelocationUnit arriba).
+model DelayedRegistrationRequest {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  route RouteDir
+
+  requestingVehicleId String
+  requestingVehicle   Vehicle @relation("DelayedRegistrationRequesting", fields: [requestingVehicleId], references: [id])
+
+  // Unidad que bloquea (la que salio antes y no se inscribio) -- puede quedar
+  // null si por algun motivo no se pudo identificar con certeza.
+  blockedByVehicleId String?
+  blockedByVehicle   Vehicle? @relation("DelayedRegistrationBlockedBy", fields: [blockedByVehicleId], references: [id])
+
+  status     DelayedRegistrationStatus     @default(PENDIENTE)
+  resolution DelayedRegistrationResolution?
+
+  resolvedById String?
+  resolvedBy   Person? @relation("DelayedRegistrationResolvedBy", fields: [resolvedById], references: [id])
+  resolvedAt   DateTime?
+  consumedAt   DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, status])
+  @@map("delayed_registration_requests")
+}

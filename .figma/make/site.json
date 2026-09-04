@@ -1,0 +1,10 @@
+{
+  "description": "Provides secure web access with role-based dashboards enabling users to manage tasks efficiently after authentication.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
