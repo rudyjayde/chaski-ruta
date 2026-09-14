@@ -33,6 +33,14 @@ repite esas reglas — solo agrega el flujo de salida/re-inscripción.
 > Los pasos de este documento ya reflejan estos tres cambios como la regla
 > vigente. La sección 7 al final distingue qué de esto ya está en el código
 > y qué falta ajustar.
+>
+> **Corrección adicional (8 de septiembre de 2026, aclarada el mismo día):**
+> se elimina por completo el despacho administrativo sin manifiesto — ni
+> como rutina ni como excepción aprobada (§4). El manifiesto vacío con
+> respaldo en papel sigue aplicando tanto a reubicaciones como a demanda
+> real de pasajeros (§5) — lo que cambia es que completarlo después
+> ("pendiente de digitalizar") es una acción separada de prepararlo, y
+> puede apoyarse en IA con visión (`ia-aplicada.md` §2.2).
 
 ## 1. Regla central: un solo flujo, la fuente del GPS cambia
 
@@ -169,17 +177,21 @@ septiembre), el conductor obtiene un viaje `PROGRAMADO` (sin
 normalidad. "Marcar salida" es lo que transiciona ese mismo viaje a
 `ACTIVO` — no crea un viaje aparte.
 
-El administrador conserva la posibilidad de despachar una unidad
-directamente para un caso de excepción real (no como atajo de rutina) —
-mismo botón que ya existía en Colas.
+**Corrección (8 de septiembre de 2026): no existe despacho administrativo sin manifiesto**, ni como flujo normal ni como excepción aprobada — ni siquiera en un caso de accidente/robo real. Esos casos se resuelven reasignando el dispositivo del conductor o interviniendo la cola (§3 más arriba), nunca saltándose el manifiesto.
 
 ## 5. Manifiesto vacío con respaldo en papel — alcance acotado
 
-**Corrección (4 de septiembre de 2026):** cerrar un manifiesto vacío con
-respaldo físico en papel (`plan-operacion.md` §3.8) **solo corresponde a
-una reubicación, o a una demanda real de pasajeros que no da tiempo de
-digitar en el momento** — no es una salida válida de rutina para evitar
-llenar el manifiesto en un viaje normal.
+**Corrección (8 de septiembre de 2026, aclarada el mismo día):** cerrar un
+manifiesto vacío o incompleto con respaldo físico en papel
+(`plan-operacion.md` §3.8) corresponde a dos casos: una reubicación (sin
+pasajeros), o una demanda real de pasajeros que no da tiempo de registrar a
+todos antes de marcar salida. En ese segundo caso, el manifiesto queda
+"pendiente de digitalizar" y se completa **después**, desde una pantalla
+aparte, sin necesidad de que el vehículo siga LLAMANDO — no es reabrir el
+manifiesto ni volver a "prepararlo" (esa restricción sigue siendo
+exclusivamente LLAMANDO, ver `plan-operacion.md` §3.8). La digitalización
+puede apoyarse en IA con visión (`ia-aplicada.md` §2.2): foto del papel,
+Claude pre-llena los datos, el conductor o administrador confirma.
 
 ## 6. Lo que este documento explícitamente NO cambia
 
@@ -203,16 +215,17 @@ Ya construido y probado en vivo antes de esta corrección:
 - "Inscripción retrasada": botón del conductor, notificación y las dos
   opciones de resolución del administrador.
 
-Pendiente de ajustar en el código para que calce con esta corrección (no
-tocar todavía, solo queda registrado aquí):
+Ajustado en el código el 8 de septiembre de 2026 (`roadmap-implementacion.md`
+§1.2) — pendiente todavía de probarse en vivo con las unidades de ATIPCAR
+antes de confiar en ello en producción:
 
 - Quitar el timeout automático (`sweepTimeouts`, `demoteToBack` por
-  vencimiento) — LLAMANDO no debe vencer nunca.
+  vencimiento) — LLAMANDO no debe vencer nunca. Hecho.
 - Restringir `prepareTrip()` a únicamente el estado LLAMANDO (hoy acepta
-  "LLAMANDO o más adelante en la fila interna").
+  "LLAMANDO o más adelante en la fila interna"). Hecho.
 - Eliminar el botón/paso separado de "Marcar llegada" (`trips.service.ts`
   → `complete()`, botón en `DriverApp.tsx`) y mover esa validación de GPS
   al propio `join()`, junto con el contador de 60 minutos como condición
-  de inscripción (no como ETA mostrada en pantalla).
+  de inscripción (no como ETA mostrada en pantalla). Hecho.
 - Reubicaciones: exención del tiempo mínimo y orden por llegada real (GPS)
-  ajustado al orden que marcó el administrador.
+  ajustado al orden que marcó el administrador. Hecho.

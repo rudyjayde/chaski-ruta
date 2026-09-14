@@ -1,24 +1,38 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  LayoutDashboard, Building2, Wrench, Activity,
+  LayoutDashboard, Building2, Activity,
   HeadphonesIcon, ShieldCheck, Settings, Plus, X, ChevronRight, ArrowRight,
-  AlertTriangle, CheckCircle, Clock, Users, CreditCard, DollarSign,
-  Wifi, Sliders, FileText, AlertCircle, RefreshCw, ChevronDown,
-  RotateCcw, Upload, ImageIcon, MapPin, Search, Map, LogIn, Pencil, ChevronLeft,
+  AlertTriangle, CheckCircle, Users,
+  FileText, AlertCircle, RefreshCw, ChevronDown,
+  RotateCcw, Upload, ImageIcon, MapPin, Search, Map, LogIn, Pencil, ChevronLeft, Globe, Sparkles,
 } from 'lucide-react';
 import Shell, { type NavItem } from '../../components/layout/Shell';
 import TerminalMapPicker from '../../components/TerminalMapPicker';
-import { ORGANIZATIONS, SUBSCRIPTIONS, PAYMENTS, COMMERCIAL_REQUESTS, GPS_DEVICES, AUDIT_LOG } from '../../data/demo';
-import type { Subscription, Payment, CommercialRequest, GPSDevice, AuditEntry, SubscriptionStatus, PaymentStatus } from '../../types';
+import GPSOverviewPage from './GPSOverviewPage';
+import PassengerProfilesPage from './PassengerProfilesPage';
+import type { AuditEntry } from '../../types';
 import {
   fetchOrganizations, updateOrganization, createOrganization, uploadImage,
+  fetchGlobalAudit,
   fetchPeople, createPerson, updatePersonStatus,
   fetchOperationalConfig, updateOperationalConfig,
   fetchRoutes, createRoute, deleteRoute,
   fetchCompanies, createCompany, updateCompany,
+  fetchCommercialRequests, markCommercialRequestReviewed, fetchCommercialRequestTriage, updateLandingSection,
+  fetchCommercialRequestOnboardingSuggestion,
+  fetchComplaints, respondComplaint,
+  fetchVehicles, setVehicleGpsDevice, broadcastNotice,
+  fetchSupportTickets, respondSupportTicket, type SupportTicket, type SupportTicketStatus,
+  fetchOrganizationMetrics, type OrganizationMetrics,
+  fetchOrganizationOnboarding, type OrganizationOnboardingStatus,
+  fetchEngineLockRequests, confirmEngineLock, cancelEngineLock, restoreEngineLock, requestEngineLockDirect, fetchEngineLockPendingSummary, type EngineLockRequest,
+  fetchSuperAdminUrgentGpsAlerts, type SuperAdminUrgentAlert,
+  fetchHealthStatus, type HealthCheckServiceStatus,
   type Organization, type OperationalConfig, type Route, type CompanyOption,
+  type CommercialRequest as ApiCommercialRequest, type ComplaintBookEntry, type OnboardingSuggestion,
 } from '../../lib/operacion-api';
-import type { Person } from '../../types';
+import { fetchLandingContent, type LandingContentData, type LandingFleetItem, type LandingFleetShowcase } from '../../lib/landing-content-api';
+import type { Person, Unit } from '../../types';
 
 // Redimensiona la imagen ANTES de convertirla a data URI -- una foto real de
 // varios MB facilmente supera el limite del body del backend (y se ve exactamente
@@ -49,21 +63,24 @@ function resizeImageFile(file: File, maxDimension = 480): Promise<string> {
 }
 
 type Section =
-  | 'resumen' | 'asociaciones' | 'solicitudes' | 'planes-sub'
-  | 'pagos' | 'gps-solicitudes' | 'gps-instalaciones' | 'gps' | 'gps-suscripciones' | 'cobros' | 'salud' | 'soporte' | 'auditoria'
+  | 'resumen' | 'asociaciones' | 'gps-overview' | 'pasajeros' | 'solicitudes' | 'landing' | 'libro-reclamaciones'
+  | 'salud' | 'soporte' | 'auditoria'
   | 'configuracion' | 'nueva-org';
 
+// "Planes y suscripciones", "Pagos" e "Inventario GPS" se eliminaron (11 sept
+// 2026, decision de Jayde): simulaban un sistema de facturacion que nunca se
+// va a construir -- el pago se coordina por fuera de la plataforma, y el
+// cambio de plan real ya vive en Asociaciones -> editar -> Plan (ver
+// handleChangePlan, que llama a updateOrganization() de verdad y ahora pide
+// motivo obligatorio).
 const NAV_ITEMS: NavItem[] = [
   { id: 'resumen', label: 'Resumen', icon: LayoutDashboard },
   { id: 'asociaciones', label: 'Asociaciones', icon: Building2 },
+  { id: 'gps-overview', label: 'GPS', icon: MapPin },
+  { id: 'pasajeros', label: 'Pasajeros', icon: Users },
   { id: 'solicitudes', label: 'Solicitudes comerciales', icon: FileText },
-  { id: 'planes-sub', label: 'Planes y suscripciones', icon: CreditCard },
-  { id: 'pagos', label: 'Pagos', icon: DollarSign },
-  { id: 'gps-solicitudes', label: 'Solicitudes GPS', icon: FileText },
-  { id: 'gps-instalaciones', label: 'Instalaciones GPS', icon: Wrench },
-  { id: 'gps', label: 'Inventario GPS', icon: Wifi },
-  { id: 'gps-suscripciones', label: 'Suscripciones GPS', icon: CreditCard },
-  { id: 'cobros', label: 'Config. de cobros', icon: Sliders },
+  { id: 'landing', label: 'Landing pública', icon: Globe },
+  { id: 'libro-reclamaciones', label: 'Libro de Reclamaciones', icon: AlertCircle },
   { id: 'salud', label: 'Salud técnica', icon: Activity },
   { id: 'soporte', label: 'Soporte', icon: HeadphonesIcon },
   { id: 'auditoria', label: 'Auditoría', icon: ShieldCheck },
@@ -78,57 +95,6 @@ const ORG_STATUS_STYLE: Record<string, string> = {
   CON_INCIDENCIA: 'bg-accent/20 text-accent',
 };
 
-const SUB_STATUS_LABEL: Record<SubscriptionStatus, string> = {
-  BORRADOR: 'Borrador',
-  PENDIENTE_PAGO: 'Pendiente de pago',
-  PAGO_EN_REVISION: 'Pago en revisión',
-  PROGRAMADA: 'Programada',
-  ACTIVA: 'Activa',
-  PERIODO_GRACIA: 'Periodo de gracia',
-  SUSPENDIDA: 'Suspendida',
-  CANCELADA: 'Cancelada',
-};
-
-const SUB_STATUS_STYLE: Record<SubscriptionStatus, string> = {
-  BORRADOR: 'bg-t2/10 text-t2',
-  PENDIENTE_PAGO: 'bg-warn/10 text-warn',
-  PAGO_EN_REVISION: 'bg-accent/10 text-accent',
-  PROGRAMADA: 'bg-primary/10 text-primary',
-  ACTIVA: 'bg-ok/10 text-ok',
-  PERIODO_GRACIA: 'bg-warn/10 text-warn',
-  SUSPENDIDA: 'bg-danger/10 text-danger',
-  CANCELADA: 'bg-t2/10 text-muted',
-};
-
-const PAY_STATUS_LABEL: Record<PaymentStatus, string> = {
-  PENDIENTE: 'Pendiente',
-  EN_REVISION: 'En revisión',
-  APROBADO: 'Aprobado',
-  RECHAZADO: 'Rechazado',
-  CORRECCION_SOLICITADA: 'Corrección solicitada',
-};
-
-const PAY_STATUS_STYLE: Record<PaymentStatus, string> = {
-  PENDIENTE: 'bg-t2/10 text-t2',
-  EN_REVISION: 'bg-accent/10 text-accent',
-  APROBADO: 'bg-ok/10 text-ok',
-  RECHAZADO: 'bg-danger/10 text-danger',
-  CORRECCION_SOLICITADA: 'bg-warn/10 text-warn',
-};
-
-const GPS_STATUS_STYLE: Record<string, string> = {
-  PENDIENTE: 'bg-t2/10 text-t2',
-  INSTALADO: 'bg-primary/10 text-primary',
-  EN_LINEA: 'bg-ok/10 text-ok',
-  SIN_SENAL: 'bg-warn/10 text-warn',
-  DESCONECTADO: 'bg-danger/10 text-danger',
-};
-
-const PRO_FEATURES = [
-  'GPS en vivo', 'Historial GPS', 'Dispositivos GPS',
-  'Geocercas', 'Alertas GPS', 'Estado técnico', 'Reportes avanzados',
-];
-
 function field(label: string, value: string, mono = false) {
   return (
     <div className="flex justify-between px-3 py-2">
@@ -139,19 +105,42 @@ function field(label: string, value: string, mono = false) {
 }
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
+const URGENT_ALERT_LABEL: Record<string, string> = {
+  BOTON_PANICO: 'Botón de pánico',
+  POSIBLE_REMOLQUE: 'Posible remolque',
+  POSIBLE_ACCIDENTE: 'Posible accidente',
+  FUERA_DE_RUTA: 'Fuera del corredor autorizado',
+};
+
 function SADashboard({ onNavigate }: { onNavigate: (s: Section) => void }) {
   const [orgs, setOrgs] = useState<Organization[]>([]);
+  const [commercialRequests, setCommercialRequests] = useState<ApiCommercialRequest[]>([]);
+  // Alertas graves de asociaciones SIN Plan PRO (12 sept 2026, decidido con
+  // Jayde): el Administrador de esas asociaciones no las ve -- Super Admin
+  // toma ese lugar, aqui y por correo (ver notifySuperAdminIfNoPro en el
+  // backend). Nunca inventado -- mismo endpoint que alimenta el correo.
+  const [urgentAlerts, setUrgentAlerts] = useState<SuperAdminUrgentAlert[]>([]);
+  // Metricas reales de negocio (13 sept 2026, decidido con Jayde) -- antes
+  // "Resumen" solo mostraba salud operativa; esto agrega cuantas
+  // asociaciones hay por plan, altas recientes y adopcion de GPS Vehicular.
+  const [metrics, setMetrics] = useState<OrganizationMetrics | null>(null);
   useEffect(() => {
     let cancelled = false;
     fetchOrganizations().then(list => { if (!cancelled) setOrgs(list); }).catch(() => { /* se degrada a lista vacia */ });
-    return () => { cancelled = true; };
+    fetchCommercialRequests().then(list => { if (!cancelled) setCommercialRequests(list); }).catch(() => { /* se degrada a lista vacia */ });
+    fetchOrganizationMetrics().then(m => { if (!cancelled) setMetrics(m); }).catch(() => { /* se degrada sin metricas */ });
+    const pollAlerts = () => {
+      fetchSuperAdminUrgentGpsAlerts().then(list => { if (!cancelled) setUrgentAlerts(list); }).catch(() => { /* se degrada sin alertas */ });
+    };
+    pollAlerts();
+    const id = setInterval(pollAlerts, 20000);
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
   const active = orgs.filter(o => o.status === 'ACTIVA').length;
   const configuring = orgs.filter(o => o.status === 'EN_CONFIGURACION').length;
   const suspended = orgs.filter(o => o.status === 'SUSPENDIDA').length;
   const incident = 0; // el estado CON_INCIDENCIA no existe en el backend real (OrgStatus solo tiene 3 valores)
-  const pendingPayments = PAYMENTS.filter(p => p.status === 'PENDIENTE' || p.status === 'EN_REVISION').length;
-  const newRequests = COMMERCIAL_REQUESTS.filter(r => r.status === 'NUEVA').length;
+  const newRequests = commercialRequests.filter(r => r.status === 'NUEVA').length;
 
   return (
     <div className="p-6 lg:p-8 space-y-6">
@@ -174,17 +163,35 @@ function SADashboard({ onNavigate }: { onNavigate: (s: Section) => void }) {
         ))}
       </div>
 
+      {/* Metricas de negocio: cuantas asociaciones por plan, altas recientes
+          y adopcion de GPS Vehicular -- todo contado en vivo, nunca una
+          proyeccion inventada. */}
+      {metrics && (
+        <div className="bg-surface border border-border rounded-lg p-4">
+          <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mb-3">Negocio</p>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+              <div className="text-xl font-bold text-t1">{metrics.pro} <span className="text-sm font-normal text-t2">PRO</span></div>
+              <div className="text-xs text-t2 mt-0.5">{metrics.operacion} en Operación</div>
+            </div>
+            <div>
+              <div className="text-xl font-bold text-t1">{metrics.nuevasUltimos30Dias}</div>
+              <div className="text-xs text-t2 mt-0.5">Altas en los últimos 30 días</div>
+            </div>
+            <div>
+              <div className="text-xl font-bold text-t1">{metrics.unidadesConPlanGpsVehicularActivo}</div>
+              <div className="text-xs text-t2 mt-0.5">Unidades con GPS Vehicular activo</div>
+            </div>
+            <div>
+              <div className="text-xl font-bold text-warn">{metrics.unidadesEnGraciaGpsVehicular}</div>
+              <div className="text-xs text-t2 mt-0.5">Unidades en periodo de gracia</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Pending attention */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {pendingPayments > 0 && (
-          <button onClick={() => onNavigate('pagos')} className="bg-warn/5 border border-warn/30 rounded-lg p-4 text-left hover:bg-warn/10 transition-colors">
-            <div className="flex items-center gap-2 mb-1">
-              <AlertTriangle size={14} className="text-warn" />
-              <span className="text-sm font-medium text-warn">{pendingPayments} pago{pendingPayments > 1 ? 's' : ''} pendiente{pendingPayments > 1 ? 's' : ''} de revisión</span>
-            </div>
-            <p className="text-sm text-t2 flex items-center gap-1">Ir a Pagos <ArrowRight size={13} /></p>
-          </button>
-        )}
         {newRequests > 0 && (
           <button onClick={() => onNavigate('solicitudes')} className="bg-primary/5 border border-primary/20 rounded-lg p-4 text-left hover:bg-primary/10 transition-colors">
             <div className="flex items-center gap-2 mb-1">
@@ -199,30 +206,33 @@ function SADashboard({ onNavigate }: { onNavigate: (s: Section) => void }) {
       <div className="bg-surface border border-border rounded-lg overflow-hidden">
         <div className="px-5 py-3.5 border-b border-border flex items-center gap-2">
           <AlertTriangle size={15} className="text-warn" />
-          <h2 className="text-base font-semibold text-t1">Alertas de servicio</h2>
+          <h2 className="text-base font-semibold text-t1">Alertas de seguridad — asociaciones sin Plan PRO</h2>
+          {urgentAlerts.length > 0 && (
+            <span className="text-[11px] font-bold bg-danger text-white px-2 py-0.5 rounded-full ml-auto">{urgentAlerts.length}</span>
+          )}
         </div>
         <div className="p-4 space-y-2.5">
-          <div className="flex items-start gap-3 p-3.5 rounded-lg border border-accent/30 bg-accent/5">
-            <AlertTriangle size={16} className="text-accent mt-0.5 flex-shrink-0" />
-            <div>
-              <p className="text-sm font-medium text-t1">ASOTRANS ILAVE — Incidencia en cola</p>
-              <p className="text-sm text-t2 mt-0.5">Reportaron un error en la asignación de posiciones. Soporte activo.</p>
+          {urgentAlerts.length === 0 ? (
+            <div className="flex items-start gap-3 p-3.5 rounded-lg border border-ok/30 bg-ok/5">
+              <CheckCircle size={16} className="text-ok mt-0.5 flex-shrink-0" />
+              <p className="text-sm text-t2">Sin alertas de seguridad abiertas en asociaciones sin Plan PRO.</p>
             </div>
-          </div>
-          <div className="flex items-start gap-3 p-3.5 rounded-lg border border-warn/30 bg-warn/5">
-            <Clock size={16} className="text-warn mt-0.5 flex-shrink-0" />
-            <div>
-              <p className="text-sm font-medium text-t1">TRANSTITI — Configuración pendiente</p>
-              <p className="text-sm text-t2 mt-0.5">Organización creada el 15/08. Checklist de configuración al 30%.</p>
-            </div>
-          </div>
-          <div className="flex items-start gap-3 p-3.5 rounded-lg border border-ok/30 bg-ok/5">
-            <CheckCircle size={16} className="text-ok mt-0.5 flex-shrink-0" />
-            <div>
-              <p className="text-sm font-medium text-t1">ATIPCAR — Operación normal</p>
-              <p className="text-sm text-t2 mt-0.5">Jornada 29/08 activa. Sin alertas de servicio.</p>
-            </div>
-          </div>
+          ) : (
+            urgentAlerts.map(a => (
+              <button
+                key={a.id}
+                onClick={() => onNavigate('gps-overview')}
+                className="w-full flex items-start gap-3 p-3.5 rounded-lg border border-danger/30 bg-danger/5 text-left hover:bg-danger/10"
+              >
+                <AlertTriangle size={16} className="text-danger mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-t1">{URGENT_ALERT_LABEL[a.type] ?? a.type} — Unidad {a.vehicleCode} de {a.organizationName}</p>
+                  <p className="text-sm text-t2 mt-0.5">{a.description}</p>
+                  <p className="text-xs text-muted mt-1">{new Date(a.detectedAt).toLocaleString('es-PE')}</p>
+                </div>
+              </button>
+            ))
+          )}
         </div>
       </div>
 
@@ -248,7 +258,17 @@ function SAOrganizations({ onNew, onEnterAsAdmin }: { onNew: () => void; onEnter
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [version, setVersion] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [editingOrg, setEditingOrg] = useState<Organization | null>(null);
+  // Guarda solo el id (no el objeto Organization completo): si se guardara el
+  // objeto, quedaria congelado con los valores de ANTES de guardar -- tras
+  // cambiar el plan (o cualquier otro campo) en el wizard, la pantalla
+  // seguiria mostrando el valor viejo aunque el backend ya haya guardado el
+  // nuevo, porque "orgs" se refresca pero este objeto frozen no. Derivando
+  // siempre desde "orgs" (ver editingOrgFull mas abajo) el wizard recibe el
+  // dato real despues de cada guardado.
+  const [editingOrgId, setEditingOrgId] = useState<string | null>(null);
+  // Bloqueo de motor (12 sept 2026): cuantas solicitudes SOLICITADO tiene
+  // cada asociacion, para verlo sin entrar una por una.
+  const [pendingLocksByOrg, setPendingLocksByOrg] = useState<Record<string, number>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -256,26 +276,45 @@ function SAOrganizations({ onNew, onEnterAsAdmin }: { onNew: () => void; onEnter
     return () => { cancelled = true; };
   }, [version]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      fetchEngineLockPendingSummary()
+        .then(summary => {
+          if (cancelled) return;
+          setPendingLocksByOrg(Object.fromEntries(summary.map(s => [s.organizationId, s.pendingCount])));
+        })
+        .catch(() => { /* se degrada a sin badges */ });
+    };
+    poll();
+    const id = setInterval(poll, 15000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
   const selected = orgs.find(o => o.id === selectedId) ?? null;
+  const editingOrgFull = orgs.find(o => o.id === editingOrgId) ?? null;
+
+  // Checklist real de onboarding (13 sept 2026, decidido con Jayde): cada
+  // senal sale de datos reales (ver organizations.service.ts
+  // getOnboardingStatus) -- nunca una casilla marcada a mano.
+  const [onboarding, setOnboarding] = useState<OrganizationOnboardingStatus | null>(null);
+  const [onboardingLoading, setOnboardingLoading] = useState(false);
+  useEffect(() => {
+    if (!selectedId) { setOnboarding(null); return; }
+    let cancelled = false;
+    setOnboardingLoading(true);
+    fetchOrganizationOnboarding(selectedId)
+      .then(status => { if (!cancelled) setOnboarding(status); })
+      .catch(() => { if (!cancelled) setOnboarding(null); })
+      .finally(() => { if (!cancelled) setOnboardingLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedId, version]);
 
   const toggleLiveMap = async () => {
     if (!selected) return;
     setBusy(true);
     try {
       await updateOrganization(selected.id, { driverLiveMapEnabled: !selected.driverLiveMapEnabled });
-      setVersion(v => v + 1);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Sin flujo de pago real conectado todavia (plan-pro.md) -- por ahora el
-  // Super Admin activa el Plan PRO a mano desde aqui.
-  const changePlan = async (next: Organization['plan']) => {
-    if (!selected || selected.plan === next) return;
-    setBusy(true);
-    try {
-      await updateOrganization(selected.id, { plan: next });
       setVersion(v => v + 1);
     } finally {
       setBusy(false);
@@ -296,11 +335,11 @@ function SAOrganizations({ onNew, onEnterAsAdmin }: { onNew: () => void; onEnter
     }
   };
 
-  if (editingOrg) {
+  if (editingOrgFull) {
     return (
       <EditOrgWizard
-        org={editingOrg}
-        onBack={() => setEditingOrg(null)}
+        org={editingOrgFull}
+        onBack={() => setEditingOrgId(null)}
         onSaved={() => setVersion(v => v + 1)}
       />
     );
@@ -333,7 +372,14 @@ function SAOrganizations({ onNew, onEnterAsAdmin }: { onNew: () => void; onEnter
               {orgs.map(o => (
                 <tr key={o.id} className="border-b border-border last:border-0 hover:bg-hover cursor-pointer" onClick={() => setSelectedId(o.id === selectedId ? null : o.id)}>
                   <td className="px-4 py-3">
-                    <p className="font-medium text-t1">{o.name}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-t1">{o.name}</p>
+                      {Boolean(pendingLocksByOrg[o.id]) && (
+                        <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-danger text-white animate-pulse">
+                          🔒 {pendingLocksByOrg[o.id]} bloqueo{pendingLocksByOrg[o.id] > 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-t2 font-mono">{o.ruc}</p>
                   </td>
                   <td className="px-4 py-3 text-t1">{o.plan}</td>
@@ -357,90 +403,116 @@ function SAOrganizations({ onNew, onEnterAsAdmin }: { onNew: () => void; onEnter
               <h3 className="text-base font-semibold text-t1">{selected.name}</h3>
               <button onClick={() => setSelectedId(null)} className="text-muted hover:text-t1" aria-label="Cerrar"><X size={16} /></button>
             </div>
+            <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mb-2">Acciones</p>
             <button
               onClick={() => onEnterAsAdmin({ id: selected.id, name: selected.name })}
-              className="w-full flex items-center justify-center gap-2 h-9 mb-4 rounded-lg text-sm font-medium bg-primary text-white hover:bg-primary/90"
+              className="w-full flex items-center justify-center gap-2 h-9 mb-2 rounded-lg text-sm font-medium bg-primary text-white hover:bg-primary/90"
             >
               <LogIn size={14} /> Entrar como administrador
             </button>
             <button
-              onClick={() => setEditingOrg(selected)}
-              className="w-full flex items-center justify-center gap-2 h-9 mb-4 rounded-lg text-sm font-medium border border-primary/30 text-primary hover:bg-primary/5"
+              onClick={() => setEditingOrgId(selected.id)}
+              className="w-full flex items-center justify-center gap-2 h-9 mb-5 rounded-lg text-sm font-medium border border-primary/30 text-primary hover:bg-primary/5"
             >
               <Pencil size={14} /> Editar asociación
             </button>
-            <div className="space-y-4 text-sm">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <span className={`inline-block text-[11px] px-2 py-0.5 rounded font-medium ${ORG_STATUS_STYLE[selected.status]}`}>
-                  {selected.status.replace(/_/g, ' ')}
-                </span>
-                <div className="flex items-center gap-1.5">
-                  {selected.status !== 'ACTIVA' && (
-                    <button
-                      onClick={() => changeStatus('ACTIVA')}
-                      disabled={busy}
-                      className="h-7 px-2.5 text-xs font-medium text-primary border border-primary/30 rounded-md hover:bg-primary/5 disabled:opacity-50"
-                    >
-                      Activar
-                    </button>
-                  )}
-                  {selected.status !== 'SUSPENDIDA' && (
-                    <button
-                      onClick={() => changeStatus('SUSPENDIDA')}
-                      disabled={busy}
-                      className="h-7 px-2.5 text-xs font-medium text-danger border border-danger/30 rounded-md hover:bg-danger/5 disabled:opacity-50"
-                    >
-                      Suspender
-                    </button>
-                  )}
-                  {selected.status !== 'EN_CONFIGURACION' && (
-                    <button
-                      onClick={() => changeStatus('EN_CONFIGURACION')}
-                      disabled={busy}
-                      className="h-7 px-2.5 text-xs font-medium text-t2 border border-border rounded-md hover:bg-hover disabled:opacity-50"
-                    >
-                      Volver a configuración
-                    </button>
-                  )}
+
+            <div className="space-y-5 text-sm">
+              {/* Estado: la unica accion de ciclo de vida que queda fuera del
+                  wizard a proposito -- activar/suspender es una decision
+                  puntual, no un dato que se "edita". */}
+              <div>
+                <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mb-2">Estado</p>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className={`inline-block text-[11px] px-2 py-0.5 rounded font-medium ${ORG_STATUS_STYLE[selected.status]}`}>
+                    {selected.status.replace(/_/g, ' ')}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {selected.status !== 'ACTIVA' && (
+                      <button
+                        onClick={() => changeStatus('ACTIVA')}
+                        disabled={busy}
+                        className="h-7 px-2.5 text-xs font-medium text-primary border border-primary/30 rounded-md hover:bg-primary/5 disabled:opacity-50"
+                      >
+                        Activar
+                      </button>
+                    )}
+                    {selected.status !== 'SUSPENDIDA' && (
+                      <button
+                        onClick={() => changeStatus('SUSPENDIDA')}
+                        disabled={busy}
+                        className="h-7 px-2.5 text-xs font-medium text-danger border border-danger/30 rounded-md hover:bg-danger/5 disabled:opacity-50"
+                      >
+                        Suspender
+                      </button>
+                    )}
+                    {selected.status !== 'EN_CONFIGURACION' && (
+                      <button
+                        onClick={() => changeStatus('EN_CONFIGURACION')}
+                        disabled={busy}
+                        className="h-7 px-2.5 text-xs font-medium text-t2 border border-border rounded-md hover:bg-hover disabled:opacity-50"
+                      >
+                        Volver a configuración
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              <div className="border border-border rounded-lg divide-y divide-border">
-                {[
-                  { label: 'RUC', value: selected.ruc, mono: true },
-                  { label: 'Creada', value: selected.createdAt.slice(0, 10) },
-                ].map(row => (
-                  <div key={row.label} className="flex justify-between px-3 py-2">
-                    <span className="text-t2">{row.label}</span>
-                    <span className={`text-t1 font-medium ${row.mono ? 'font-mono' : ''}`}>{row.value}</span>
+              {/* Onboarding: checklist calculado en vivo de datos reales --
+                  nunca casillas marcadas a mano (ver getOnboardingStatus). */}
+              <div>
+                <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mb-2">Onboarding</p>
+                {onboardingLoading || !onboarding ? (
+                  <p className="text-t2 text-xs">Calculando…</p>
+                ) : (
+                  <div className="border border-border rounded-lg divide-y divide-border">
+                    {[
+                      { label: 'Administrador invitado y activo', ok: onboarding.adminActivo },
+                      { label: 'Corredor con direcciones reales configurado', ok: onboarding.corredorConfigurado },
+                      { label: `Empresas registradas (${onboarding.empresasRegistradas})`, ok: onboarding.empresasRegistradas > 0 },
+                      { label: `Vehículos registrados (${onboarding.vehiculosRegistrados})`, ok: onboarding.vehiculosRegistrados > 0 },
+                    ].map(row => (
+                      <div key={row.label} className="flex items-center justify-between px-3 py-2 gap-2">
+                        <span className="text-t2 text-xs">{row.label}</span>
+                        <span className={`text-[11px] font-bold shrink-0 ${row.ok ? 'text-ok' : 'text-warn'}`}>{row.ok ? '✓' : '· falta'}</span>
+                      </div>
+                    ))}
+                    <div className="flex items-center justify-between px-3 py-2 gap-2">
+                      <span className="text-t2 text-xs">Unidades con GPS vinculado</span>
+                      <span className="text-[11px] font-medium text-t1 shrink-0">{onboarding.unidadesConGps}</span>
+                    </div>
                   </div>
-                ))}
+                )}
               </div>
+
+              {/* Datos: solo lectura -- todo lo editable vive en "Editar
+                  asociacion" (incluido el Plan, que antes tambien se podia
+                  cambiar aqui mismo: dos caminos para lo mismo). */}
               <div>
-                <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mb-2">Plan</p>
-                <div className="flex rounded-lg border border-border overflow-hidden text-sm">
-                  <button
-                    onClick={() => changePlan('OPERACION')}
-                    disabled={busy || selected.plan === 'OPERACION'}
-                    className={`flex-1 py-2 font-medium transition-colors disabled:cursor-default ${selected.plan === 'OPERACION' ? 'bg-primary text-white' : 'text-t2 hover:bg-hover'}`}
-                  >
-                    Operación
-                  </button>
-                  <button
-                    onClick={() => changePlan('PRO')}
-                    disabled={busy || selected.plan === 'PRO'}
-                    className={`flex-1 py-2 font-medium transition-colors disabled:cursor-default ${selected.plan === 'PRO' ? 'bg-primary text-white' : 'text-t2 hover:bg-hover'}`}
-                  >
-                    PRO
-                  </button>
+                <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mb-2">Datos</p>
+                <div className="border border-border rounded-lg divide-y divide-border">
+                  {[
+                    { label: 'RUC', value: selected.ruc, mono: true },
+                    { label: 'Creada', value: selected.createdAt.slice(0, 10) },
+                    { label: 'Plan', value: selected.plan },
+                  ].map(row => (
+                    <div key={row.label} className="flex justify-between px-3 py-2">
+                      <span className="text-t2">{row.label}</span>
+                      <span className={`text-t1 font-medium ${row.mono ? 'font-mono' : ''}`}>{row.value}</span>
+                    </div>
+                  ))}
                 </div>
-                <p className="text-[11px] text-t2 mt-1.5">Activa PRO para desbloquear GPS Vehicular y el Asistente AI de esta asociación.</p>
+                <p className="text-[11px] text-t2 mt-1.5">El plan se cambia desde "Editar asociación" → Plan y facturación.</p>
               </div>
+
+              {/* Funciones: interruptores puntuales que no forman parte de
+                  ningun paso del wizard. */}
               <div>
-                <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mb-2">Mapa en vivo del conductor</p>
+                <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mb-2">Funciones</p>
                 <div className="flex items-center justify-between border border-border rounded-lg px-3 py-2.5 gap-2">
                   <div>
-                    <p className="text-t1 font-medium">{selected.driverLiveMapEnabled ? 'Habilitado' : 'Deshabilitado'}</p>
+                    <p className="text-t1 font-medium">Mapa en vivo del conductor: {selected.driverLiveMapEnabled ? 'habilitado' : 'deshabilitado'}</p>
                     <p className="text-t2 mt-0.5">Ubicación en vivo (Google Maps) en el perfil del conductor. Consume cuota de Google Maps Platform.</p>
                   </div>
                   <button
@@ -453,7 +525,10 @@ function SAOrganizations({ onNew, onEnterAsAdmin }: { onNew: () => void; onEnter
                   </button>
                 </div>
               </div>
-              <p className="text-[11px] text-t2">Módulos, unidades, socios y terminales se consultan y configuran desde "Entrar como administrador" arriba (Flota, Personas, Empresas, GPS, Reportes...).</p>
+
+              <p className="text-[11px] text-t2">
+                Flota, Personas, Cola, Empresas y Reportes se operan desde "Entrar como administrador" arriba. Terminales, radio GPS y tiempos mínimos de viaje se configuran desde "Editar asociación" → Operación.
+              </p>
             </div>
           </aside>
         )}
@@ -462,7 +537,7 @@ function SAOrganizations({ onNew, onEnterAsAdmin }: { onNew: () => void; onEnter
   );
 }
 
-const EDIT_ORG_STEPS = ['Organización', 'Administrador', 'Operación', 'Plan y facturación', 'Confirmación'];
+const EDIT_ORG_STEPS = ['Organización', 'Administrador', 'Operación', 'Plan y facturación', 'GPS', 'Bloqueo de motor', 'Confirmación'];
 
 // Flujo dedicado de edicion (Super Admin -> Asociaciones -> seleccionar ->
 // "Editar asociacion"), con la MISMA navegacion por pasos y el mismo look
@@ -626,6 +701,14 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
     terminalDestinationLat: null as number | null,
     terminalDestinationLng: null as number | null,
     initialConfigNotes: '',
+    // Parametros antifraude (plan-operacion.md §3.10) -- ya existian en el
+    // backend y en OperationalConfig, pero ningun formulario los expone
+    // todavia. timeoutMinutes y anomalySpeedThresholdKmh se quedan afuera a
+    // proposito: existen en el modelo pero ningun servicio los lee hoy
+    // (agregarlos aqui daria la falsa impresion de que hacen algo).
+    gpsRadiusMeters: 300,
+    minTripMinutesOutbound: 90,
+    minTripMinutesReturn: 90,
   });
   const [opSaving, setOpSaving] = useState(false);
   const [opError, setOpError] = useState('');
@@ -730,6 +813,9 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           terminalDestinationLat: cfg.terminalDestinationLat ?? null,
           terminalDestinationLng: cfg.terminalDestinationLng ?? null,
           initialConfigNotes: cfg.initialConfigNotes ?? '',
+          gpsRadiusMeters: cfg.gpsRadiusMeters ?? 300,
+          minTripMinutesOutbound: cfg.minTripMinutesOutbound ?? 90,
+          minTripMinutesReturn: cfg.minTripMinutesReturn ?? 90,
         });
       })
       .catch(() => setOpConfig(null));
@@ -752,6 +838,9 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
             ? { terminalDestinationLat: opForm.terminalDestinationLat, terminalDestinationLng: opForm.terminalDestinationLng }
             : {}),
           initialConfigNotes: opForm.initialConfigNotes.trim(),
+          gpsRadiusMeters: opForm.gpsRadiusMeters,
+          minTripMinutesOutbound: opForm.minTripMinutesOutbound,
+          minTripMinutesReturn: opForm.minTripMinutesReturn,
         },
         org.id,
       );
@@ -769,19 +858,175 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
   const [editingPlan, setEditingPlan] = useState(false);
   const [planSaving, setPlanSaving] = useState(false);
   const [planError, setPlanError] = useState('');
+  const [pendingPlan, setPendingPlan] = useState<Organization['plan']>(org.plan);
+  const [planReason, setPlanReason] = useState('');
 
-  const handleChangePlan = async (next: Organization['plan']) => {
+  // Sin modulo de Pagos interno (11 sept 2026), el motivo es el UNICO rastro
+  // de por que se activo/desactivo PRO -- nunca se manda el cambio sin el.
+  const handleChangePlan = async (next: Organization['plan'], reason: string) => {
     if (next === org.plan) { setEditingPlan(false); return; }
     setPlanSaving(true);
     setPlanError('');
     try {
-      await updateOrganization(org.id, { plan: next });
+      await updateOrganization(org.id, { plan: next, reason });
       setEditingPlan(false);
+      setPlanReason('');
       onSaved();
     } catch (err) {
       setPlanError(err instanceof Error ? err.message : 'No se pudo cambiar el plan.');
     } finally {
       setPlanSaving(false);
+    }
+  };
+
+  // ── Paso GPS: vincular/editar el dispositivo Traccar real de cada unidad de
+  // ESTA asociacion (nunca la flota de otra) -- unico lugar real donde Super
+  // Admin hace esto (antes existia el endpoint pero ninguna pantalla lo usaba).
+  const [gpsVehicles, setGpsVehicles] = useState<Unit[]>([]);
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const [gpsLoadError, setGpsLoadError] = useState('');
+  const [editingVehicleId, setEditingVehicleId] = useState<string | null>(null);
+  const [imeiDraft, setImeiDraft] = useState('');
+  // Operador/numero de SIM (12 sept 2026): dato puramente informativo, ver
+  // comentario en schema.prisma -- se edita junto al IMEI, en la misma fila.
+  const [simOperatorDraft, setSimOperatorDraft] = useState('');
+  const [simNumberDraft, setSimNumberDraft] = useState('');
+  const [gpsSaving, setGpsSaving] = useState(false);
+  const [gpsSaveError, setGpsSaveError] = useState('');
+
+  const loadGpsVehicles = useCallback(() => {
+    setGpsLoading(true);
+    setGpsLoadError('');
+    fetchVehicles(undefined, org.id)
+      .then(setGpsVehicles)
+      .catch(err => setGpsLoadError(err instanceof Error ? err.message : 'No se pudieron cargar las unidades.'))
+      .finally(() => setGpsLoading(false));
+  }, [org.id]);
+
+  useEffect(() => {
+    // Tambien en el paso 5 (Bloqueo de motor): necesita la misma lista de
+    // unidades con GPS real para ofrecer el bloqueo directo por llamada.
+    if (step === 4 || step === 5) loadGpsVehicles();
+  }, [step, loadGpsVehicles]);
+
+  const startEditImei = (vehicleId: string, current?: string, currentSimOperator?: string, currentSimNumber?: string) => {
+    setEditingVehicleId(vehicleId);
+    setImeiDraft(current ?? '');
+    setSimOperatorDraft(currentSimOperator ?? '');
+    setSimNumberDraft(currentSimNumber ?? '');
+    setGpsSaveError('');
+  };
+
+  const handleSaveImei = async (vehicleId: string) => {
+    setGpsSaving(true);
+    setGpsSaveError('');
+    try {
+      await setVehicleGpsDevice(vehicleId, imeiDraft.trim(), org.id, simOperatorDraft || undefined, simNumberDraft.trim() || undefined);
+      setEditingVehicleId(null);
+      loadGpsVehicles();
+    } catch (err) {
+      setGpsSaveError(err instanceof Error ? err.message : 'No se pudo guardar el dispositivo.');
+    } finally {
+      setGpsSaving(false);
+    }
+  };
+
+  const handleUnlinkImei = async (vehicleId: string) => {
+    if (!window.confirm('¿Desvincular el dispositivo GPS de esta unidad?')) return;
+    setGpsSaving(true);
+    setGpsSaveError('');
+    try {
+      await setVehicleGpsDevice(vehicleId, '', org.id);
+      loadGpsVehicles();
+    } catch (err) {
+      setGpsSaveError(err instanceof Error ? err.message : 'No se pudo desvincular el dispositivo.');
+    } finally {
+      setGpsSaving(false);
+    }
+  };
+
+  // El Plan GPS Vehicular individual (activo/inactivo por socio) vive en
+  // GPSOverviewPage.tsx (nav "GPS" -> asociacion -> tab "Plan GPS Vehicular"),
+  // no aca -- es una tarea de cobranza recurrente, no algo que se revise
+  // durante la edicion de la asociacion. Este paso solo vincula el IMEI.
+
+  // ── Paso Bloqueo de motor (12 sept 2026, decidido con Jayde): el Socio
+  // solicita desde su panel, Super Admin confirma/cancela/restaura ACA --
+  // nunca el Administrador de la asociacion.
+  const [lockRequests, setLockRequests] = useState<EngineLockRequest[]>([]);
+  const [lockLoading, setLockLoading] = useState(false);
+  const [lockLoadError, setLockLoadError] = useState('');
+  const [lockActionId, setLockActionId] = useState<string | null>(null);
+  const [lockActionError, setLockActionError] = useState('');
+  const [lockReasonDraft, setLockReasonDraft] = useState<{ id: string; action: 'cancel' | 'restore'; reason: string } | null>(null);
+
+  const loadLockRequests = useCallback(() => {
+    setLockLoading(true);
+    setLockLoadError('');
+    fetchEngineLockRequests(org.id)
+      .then(setLockRequests)
+      .catch(err => setLockLoadError(err instanceof Error ? err.message : 'No se pudieron cargar las solicitudes.'))
+      .finally(() => setLockLoading(false));
+  }, [org.id]);
+
+  useEffect(() => {
+    if (step === 5) loadLockRequests();
+  }, [step, loadLockRequests]);
+
+  const handleConfirmLock = async (id: string) => {
+    setLockActionId(id);
+    setLockActionError('');
+    try {
+      await confirmEngineLock(id, org.id);
+      loadLockRequests();
+    } catch (err) {
+      setLockActionError(err instanceof Error ? err.message : 'No se pudo confirmar el bloqueo.');
+    } finally {
+      setLockActionId(null);
+    }
+  };
+
+  const handleLockReasonSubmit = async () => {
+    if (!lockReasonDraft || !lockReasonDraft.reason.trim()) return;
+    setLockActionId(lockReasonDraft.id);
+    setLockActionError('');
+    try {
+      if (lockReasonDraft.action === 'cancel') await cancelEngineLock(lockReasonDraft.id, lockReasonDraft.reason.trim(), org.id);
+      else await restoreEngineLock(lockReasonDraft.id, lockReasonDraft.reason.trim(), org.id);
+      setLockReasonDraft(null);
+      loadLockRequests();
+    } catch (err) {
+      setLockActionError(err instanceof Error ? err.message : 'No se pudo completar la acción.');
+    } finally {
+      setLockActionId(null);
+    }
+  };
+
+  // Bloqueo directo por Super Admin (12 sept 2026, acordado con Jayde): el
+  // socio llama por telefono sin pasar por su panel -- el motivo sigue
+  // siendo obligatorio. Solo unidades con GPS real y sin un bloqueo activo ya.
+  const [directVehicleId, setDirectVehicleId] = useState('');
+  const [directReason, setDirectReason] = useState('');
+  const [directBusy, setDirectBusy] = useState(false);
+  const [directError, setDirectError] = useState('');
+
+  const lockableVehicles = gpsVehicles.filter(v =>
+    !!v.traccarDeviceId && !lockRequests.some(r => r.vehicleId === v.id && ['SOLICITADO', 'CONFIRMADO', 'EJECUTADO'].includes(r.status)),
+  );
+
+  const handleDirectLock = async () => {
+    if (!directVehicleId || !directReason.trim()) return;
+    setDirectBusy(true);
+    setDirectError('');
+    try {
+      await requestEngineLockDirect(directVehicleId, directReason.trim(), org.id);
+      setDirectVehicleId('');
+      setDirectReason('');
+      loadLockRequests();
+    } catch (err) {
+      setDirectError(err instanceof Error ? err.message : 'No se pudo registrar el bloqueo.');
+    } finally {
+      setDirectBusy(false);
     }
   };
 
@@ -857,6 +1102,9 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 terminalDestinationLat: opConfig.terminalDestinationLat ?? null,
                 terminalDestinationLng: opConfig.terminalDestinationLng ?? null,
                 initialConfigNotes: opConfig.initialConfigNotes ?? '',
+                gpsRadiusMeters: opConfig.gpsRadiusMeters ?? 300,
+                minTripMinutesOutbound: opConfig.minTripMinutesOutbound ?? 90,
+                minTripMinutesReturn: opConfig.minTripMinutesReturn ?? 90,
               });
             }
           }}
@@ -872,11 +1120,11 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
     );
   } else if (step === 3) {
     stepAction = !editingPlan ? (
-      <button onClick={() => setEditingPlan(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h">
+      <button onClick={() => { setEditingPlan(true); setPendingPlan(org.plan); setPlanReason(''); }} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h">
         <Pencil size={13} /> Editar
       </button>
     ) : (
-      <button onClick={() => { setEditingPlan(false); setPlanError(''); }} disabled={planSaving} className="px-3 py-1.5 text-sm font-medium text-t2 border border-border rounded-lg hover:bg-hover disabled:opacity-50">
+      <button onClick={() => { setEditingPlan(false); setPlanError(''); setPendingPlan(org.plan); setPlanReason(''); }} disabled={planSaving} className="px-3 py-1.5 text-sm font-medium text-t2 border border-border rounded-lg hover:bg-hover disabled:opacity-50">
         Cancelar
       </button>
     );
@@ -1146,8 +1394,59 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
 
               {opError && <p className="text-sm text-danger">{opError}</p>}
               <p className="text-xs text-t2">
-                La ubicación en el mapa que marques aquí es la misma que usa el GPS en vivo (Configuración → Terminales, dentro del panel del administrador, edita este mismo dato).
+                La ubicación en el mapa que marques aquí es la que usa el sistema para validar el GPS al inscribirse en la cola contraria. El administrador de la asociación puede consultarla desde Configuración → Terminales, pero solo el Super Admin puede cambiarla — y solo se cambia aquí.
               </p>
+
+              <div className="border-t border-border pt-5">
+                <p className="text-sm font-semibold text-t1 mb-1">Parámetros antifraude</p>
+                <p className="text-xs text-t2 mb-3">
+                  Controlan la cola contraria (plan-operacion.md §3.10) — el administrador de la asociación solo puede verlos, nunca cambiarlos.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-t1 mb-1">Radio GPS de terminal (metros)</label>
+                    {editingOp ? (
+                      <input
+                        type="number"
+                        min={0}
+                        value={opForm.gpsRadiusMeters}
+                        onChange={e => setOpForm(v => ({ ...v, gpsRadiusMeters: Number(e.target.value) }))}
+                        className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    ) : (
+                      <p className="text-sm text-t1">{opForm.gpsRadiusMeters} m</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-t1 mb-1">Tiempo mínimo de viaje — ida (min)</label>
+                    {editingOp ? (
+                      <input
+                        type="number"
+                        min={0}
+                        value={opForm.minTripMinutesOutbound}
+                        onChange={e => setOpForm(v => ({ ...v, minTripMinutesOutbound: Number(e.target.value) }))}
+                        className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    ) : (
+                      <p className="text-sm text-t1">{opForm.minTripMinutesOutbound} min</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-t1 mb-1">Tiempo mínimo de viaje — vuelta (min)</label>
+                    {editingOp ? (
+                      <input
+                        type="number"
+                        min={0}
+                        value={opForm.minTripMinutesReturn}
+                        onChange={e => setOpForm(v => ({ ...v, minTripMinutesReturn: Number(e.target.value) }))}
+                        className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    ) : (
+                      <p className="text-sm text-t1">{opForm.minTripMinutesReturn} min</p>
+                    )}
+                  </div>
+                </div>
+              </div>
 
               <div className="border-t border-border pt-5">
                 <p className="text-sm font-semibold text-t1 mb-1">Rutas de operación adicionales</p>
@@ -1238,21 +1537,42 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
               <div>
                 <label className="block text-sm font-medium text-t1 mb-1">Plan *</label>
                 {editingPlan ? (
-                  <div className="flex rounded-lg border border-border overflow-hidden text-sm max-w-xs">
-                    <button
-                      onClick={() => handleChangePlan('OPERACION')}
-                      disabled={planSaving}
-                      className={`flex-1 py-2 font-medium transition-colors disabled:cursor-default ${org.plan === 'OPERACION' ? 'bg-primary text-white' : 'text-t2 hover:bg-hover'}`}
-                    >
-                      Operación
-                    </button>
-                    <button
-                      onClick={() => handleChangePlan('PRO')}
-                      disabled={planSaving}
-                      className={`flex-1 py-2 font-medium transition-colors disabled:cursor-default ${org.plan === 'PRO' ? 'bg-primary text-white' : 'text-t2 hover:bg-hover'}`}
-                    >
-                      PRO
-                    </button>
+                  <div className="space-y-3 max-w-sm">
+                    <div className="flex rounded-lg border border-border overflow-hidden text-sm">
+                      <button
+                        onClick={() => setPendingPlan('OPERACION')}
+                        disabled={planSaving}
+                        className={`flex-1 py-2 font-medium transition-colors disabled:cursor-default ${pendingPlan === 'OPERACION' ? 'bg-primary text-white' : 'text-t2 hover:bg-hover'}`}
+                      >
+                        Operación
+                      </button>
+                      <button
+                        onClick={() => setPendingPlan('PRO')}
+                        disabled={planSaving}
+                        className={`flex-1 py-2 font-medium transition-colors disabled:cursor-default ${pendingPlan === 'PRO' ? 'bg-primary text-white' : 'text-t2 hover:bg-hover'}`}
+                      >
+                        PRO
+                      </button>
+                    </div>
+                    {pendingPlan !== org.plan && (
+                      <div>
+                        <label className="block text-xs font-medium text-t1 mb-1">Motivo del cambio * (queda en Auditoría)</label>
+                        <textarea
+                          value={planReason}
+                          onChange={e => setPlanReason(e.target.value)}
+                          rows={2}
+                          placeholder="Ej. Pago confirmado por transferencia, referencia 00123"
+                          className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                        <button
+                          onClick={() => handleChangePlan(pendingPlan, planReason)}
+                          disabled={planSaving || !planReason.trim()}
+                          className="mt-2 px-3.5 py-1.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h disabled:opacity-50"
+                        >
+                          {planSaving ? 'Guardando…' : `Confirmar cambio a ${pendingPlan === 'PRO' ? 'PRO' : 'Operación'}`}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <p className="text-sm text-t1">{org.plan}</p>
@@ -1260,13 +1580,246 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 {planError && <p className="text-sm text-danger mt-1.5">{planError}</p>}
               </div>
               <p className="text-xs text-t2">
-                Periodicidad, unidades contratadas, costos acordados y estado de suscripción viven en "Planes y Suscripciones" —
-                esa pantalla todavía no está conectada a datos reales, así que no se muestran aquí como editables.
+                El pago y la facturación se coordinan directamente con la asociación, fuera de la plataforma — este botón es el único
+                que activa o desactiva PRO de verdad, y cada cambio queda registrado en Auditoría con el motivo indicado.
               </p>
             </div>
           )}
 
           {step === 4 && (
+            <div className="space-y-4">
+              <p className="text-xs text-t2">
+                Vincula el IMEI real del dispositivo Traccar a cada unidad de {org.name}. Aplica tanto para flota PRO como para
+                unidades con GPS Vehicular individual en Plan Operación — el acceso al GPS de cada unidad ya no depende del plan,
+                depende de si tiene un dispositivo vinculado aquí.
+              </p>
+              {gpsLoading ? (
+                <p className="text-sm text-t2">Cargando unidades…</p>
+              ) : gpsLoadError ? (
+                <p className="text-sm text-danger">{gpsLoadError}</p>
+              ) : gpsVehicles.length === 0 ? (
+                <p className="text-sm text-t2">Esta asociación todavía no tiene unidades registradas.</p>
+              ) : (
+                <div className="bg-bg border border-border rounded-lg overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th className="text-left px-3 py-2 text-t2 font-medium">Unidad</th>
+                        <th className="text-left px-3 py-2 text-t2 font-medium">Placa</th>
+                        <th className="text-left px-3 py-2 text-t2 font-medium">Empresa</th>
+                        <th className="text-left px-3 py-2 text-t2 font-medium">Dispositivo (IMEI)</th>
+                        <th className="text-left px-3 py-2 text-t2 font-medium">SIM (informativo)</th>
+                        <th className="px-3 py-2" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {gpsVehicles.map(v => (
+                        <tr key={v.id} className="border-b border-border last:border-0">
+                          <td className="px-3 py-2.5 font-semibold text-t1">{v.code}</td>
+                          <td className="px-3 py-2.5 font-mono text-t2">{v.plate}</td>
+                          <td className="px-3 py-2.5 text-t2">{v.company}</td>
+                          <td className="px-3 py-2.5">
+                            {editingVehicleId === v.id ? (
+                              <input
+                                value={imeiDraft}
+                                onChange={e => setImeiDraft(e.target.value)}
+                                placeholder="IMEI del dispositivo Teltonika"
+                                className="h-8 px-2 border border-border rounded text-sm font-mono w-44 focus:outline-none focus:ring-2 focus:ring-primary"
+                              />
+                            ) : v.traccarDeviceId ? (
+                              <span className="font-mono text-t1">{v.traccarDeviceId}</span>
+                            ) : (
+                              <span className="text-muted">Sin dispositivo</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            {editingVehicleId === v.id ? (
+                              <div className="flex items-center gap-1.5">
+                                <select
+                                  value={simOperatorDraft}
+                                  onChange={e => setSimOperatorDraft(e.target.value)}
+                                  className="h-8 px-1.5 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                >
+                                  <option value="">— Operador —</option>
+                                  <option value="CLARO">Claro</option>
+                                  <option value="MOVISTAR">Movistar</option>
+                                  <option value="BITEL">Bitel</option>
+                                  <option value="ENTEL">Entel</option>
+                                </select>
+                                <input
+                                  value={simNumberDraft}
+                                  onChange={e => setSimNumberDraft(e.target.value)}
+                                  placeholder="Número SIM"
+                                  className="h-8 px-2 border border-border rounded text-sm w-28 focus:outline-none focus:ring-2 focus:ring-primary"
+                                />
+                              </div>
+                            ) : v.simOperator || v.simNumber ? (
+                              <span className="text-t2">{v.simOperator ? v.simOperator.charAt(0) + v.simOperator.slice(1).toLowerCase() : '—'}{v.simNumber ? ` · ${v.simNumber}` : ''}</span>
+                            ) : (
+                              <span className="text-muted">—</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                            {editingVehicleId === v.id ? (
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  onClick={() => handleSaveImei(v.id)}
+                                  disabled={gpsSaving || !imeiDraft.trim()}
+                                  className="px-2.5 py-1 text-xs font-medium bg-primary text-white rounded hover:bg-primary-h disabled:opacity-50"
+                                >
+                                  {gpsSaving ? 'Guardando…' : 'Guardar'}
+                                </button>
+                                <button
+                                  onClick={() => setEditingVehicleId(null)}
+                                  disabled={gpsSaving}
+                                  className="px-2.5 py-1 text-xs font-medium text-t2 border border-border rounded hover:bg-hover"
+                                >
+                                  Cancelar
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  onClick={() => startEditImei(v.id, v.traccarDeviceId, v.simOperator, v.simNumber)}
+                                  className="px-2.5 py-1 text-xs font-medium text-primary border border-primary/30 rounded hover:bg-primary/5"
+                                >
+                                  {v.traccarDeviceId ? 'Editar' : 'Vincular'}
+                                </button>
+                                {v.traccarDeviceId && (
+                                  <button
+                                    onClick={() => handleUnlinkImei(v.id)}
+                                    disabled={gpsSaving}
+                                    className="px-2.5 py-1 text-xs font-medium text-danger border border-danger/30 rounded hover:bg-danger/5 disabled:opacity-50"
+                                  >
+                                    Desvincular
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {gpsSaveError && <p className="text-sm text-danger">{gpsSaveError}</p>}
+              <p className="text-xs text-muted">El IMEI se define durante la instalación física del equipo (equipo técnico de CHASKI AI) — nunca lo asigna el administrador de la asociación.</p>
+              <p className="text-xs text-muted">
+                Para activar/desactivar el Plan GPS Vehicular individual de un socio (por pago), ve a <strong>GPS</strong> en el menú
+                lateral → esta asociación → tab "Plan GPS Vehicular".
+              </p>
+            </div>
+          )}
+
+          {step === 5 && (
+            <div className="space-y-4">
+              <p className="text-xs text-t2">
+                Solicitudes de bloqueo remoto de motor de {org.name}. Solo el socio dueño puede solicitar (desde su panel); solo tú confirmas, cancelas o restauras — nunca el administrador de la asociación.
+              </p>
+
+              {/* Bloqueo directo (12 sept 2026): el socio llama por telefono
+                  en vez de solicitarlo digitalmente -- el motivo sigue siendo
+                  obligatorio, sin excepcion. */}
+              <div className="bg-danger/5 border border-danger/20 rounded-lg p-3.5 space-y-2">
+                <p className="text-sm font-semibold text-t1">Bloquear ahora (llamada telefónica del socio)</p>
+                <p className="text-xs text-t2">Para cuando el socio te llama directamente en vez de solicitarlo desde su panel. Se registra y se ejecuta de inmediato con el mismo motivo obligatorio.</p>
+                <div className="flex flex-wrap gap-2 items-start">
+                  <select
+                    value={directVehicleId}
+                    onChange={e => setDirectVehicleId(e.target.value)}
+                    className="h-9 px-2.5 border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary min-w-[220px]"
+                  >
+                    <option value="">Elegir unidad…</option>
+                    {lockableVehicles.map(v => (
+                      <option key={v.id} value={v.id}>{v.code} · {v.plate}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={directReason}
+                    onChange={e => setDirectReason(e.target.value)}
+                    placeholder="Motivo del bloqueo (obligatorio)…"
+                    className="h-9 px-2.5 border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary flex-1 min-w-[220px]"
+                  />
+                  <button
+                    onClick={handleDirectLock}
+                    disabled={!directVehicleId || !directReason.trim() || directBusy}
+                    className="h-9 px-3.5 text-sm font-medium bg-danger text-white rounded-lg hover:opacity-90 disabled:opacity-50"
+                  >
+                    {directBusy ? 'Bloqueando…' : 'Bloquear'}
+                  </button>
+                </div>
+                {lockableVehicles.length === 0 && <p className="text-xs text-t2">No hay unidades con GPS disponibles para bloquear (o todas ya tienen un bloqueo activo).</p>}
+                {directError && <p className="text-xs text-danger">{directError}</p>}
+              </div>
+
+              {lockLoading ? (
+                <p className="text-sm text-t2">Cargando solicitudes…</p>
+              ) : lockLoadError ? (
+                <p className="text-sm text-danger">{lockLoadError}</p>
+              ) : lockRequests.length === 0 ? (
+                <p className="text-sm text-t2">Sin solicitudes de bloqueo para esta asociación.</p>
+              ) : (
+                <div className="bg-bg border border-border rounded-lg overflow-hidden divide-y divide-border">
+                  {lockRequests.map(r => (
+                    <div key={r.id} className={`p-3.5 ${r.status === 'EJECUTADO' ? 'bg-danger/10' : ''}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-t1">
+                            Unidad {r.vehicle.code} · {r.vehicle.plate}
+                            <span className={`ml-2 text-[11px] px-1.5 py-0.5 rounded font-medium ${r.status === 'EJECUTADO' ? 'bg-danger text-white' : r.status === 'CONFIRMADO' ? 'bg-warn/10 text-warn' : 'bg-t2/10 text-t2'}`}>
+                              {r.status}
+                            </span>
+                          </p>
+                          <p className="text-sm text-t2 mt-1">Motivo: {r.requestReason}</p>
+                          <p className="text-xs text-muted mt-1">Solicitado: {new Date(r.createdAt).toLocaleString('es-PE')}</p>
+                        </div>
+                        <div className="flex gap-1.5 shrink-0">
+                          {r.status === 'SOLICITADO' && (
+                            <button onClick={() => handleConfirmLock(r.id)} disabled={lockActionId === r.id} className="px-2.5 py-1 text-xs font-medium bg-danger text-white rounded hover:opacity-90 disabled:opacity-50">
+                              {lockActionId === r.id ? 'Confirmando…' : 'Confirmar bloqueo'}
+                            </button>
+                          )}
+                          {(r.status === 'SOLICITADO' || r.status === 'CONFIRMADO') && (
+                            <button onClick={() => setLockReasonDraft({ id: r.id, action: 'cancel', reason: '' })} className="px-2.5 py-1 text-xs font-medium text-t2 border border-border rounded hover:bg-hover">
+                              Cancelar
+                            </button>
+                          )}
+                          {r.status === 'EJECUTADO' && (
+                            <button onClick={() => setLockReasonDraft({ id: r.id, action: 'restore', reason: '' })} className="px-2.5 py-1 text-xs font-medium text-ok border border-ok/30 rounded hover:bg-ok/5">
+                              Restaurar
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {lockReasonDraft?.id === r.id && (
+                        <div className="mt-3 space-y-2 border-t border-border pt-3">
+                          <textarea
+                            value={lockReasonDraft.reason}
+                            onChange={e => setLockReasonDraft(d => d && { ...d, reason: e.target.value })}
+                            placeholder={lockReasonDraft.action === 'cancel' ? 'Motivo de la cancelación…' : 'Motivo de la restauración…'}
+                            rows={2}
+                            className="w-full px-2.5 py-1.5 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                          />
+                          <div className="flex gap-1.5">
+                            <button onClick={handleLockReasonSubmit} disabled={!lockReasonDraft.reason.trim() || lockActionId === r.id} className="px-2.5 py-1 text-xs font-medium bg-primary text-white rounded hover:bg-primary-h disabled:opacity-50">
+                              {lockActionId === r.id ? 'Guardando…' : 'Confirmar'}
+                            </button>
+                            <button onClick={() => setLockReasonDraft(null)} className="px-2.5 py-1 text-xs font-medium text-t2 border border-border rounded hover:bg-hover">Cancelar</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {lockActionError && <p className="text-sm text-danger">{lockActionError}</p>}
+              <p className="text-xs text-muted">Si la unidad está en movimiento al confirmar, el corte espera a que se detenga por completo (no un instante) antes de ejecutarse — nunca con el vehículo en marcha.</p>
+            </div>
+          )}
+
+          {step === 6 && (
             <div className="space-y-1 text-sm">
               {[
                 ['Nombre', infoForm.name || '—'],
@@ -1279,6 +1832,9 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 ['Correo admin', activeAdmins[0]?.email || '—'],
                 ['Terminal 1', opForm.terminalOriginName || '—'],
                 ['Terminal 2', opForm.terminalDestinationName || '—'],
+                ['Radio GPS de terminal', `${opForm.gpsRadiusMeters} m`],
+                ['Tiempo mínimo — ida', `${opForm.minTripMinutesOutbound} min`],
+                ['Tiempo mínimo — vuelta', `${opForm.minTripMinutesReturn} min`],
                 ['Rutas adicionales', routes.length > 0 ? routes.map(r => `${r.origin} → ${r.destination}`).join(', ') : '—'],
                 ['Empresas integrantes', companies.length > 0 ? companies.map(co => co.name).join(', ') : '—'],
                 ['Plan', org.plan],
@@ -1316,102 +1872,214 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
 }
 
 
-// ─── Solicitudes comerciales ─────────────────────────────────────────────────
+// ─── Solicitudes comerciales ────────────────────────────────────
 const CR_STATUS_STYLE: Record<string, string> = {
   NUEVA: 'bg-primary/10 text-primary',
-  EN_PROCESO: 'bg-warn/10 text-warn',
-  PROPUESTA_ENVIADA: 'bg-teal/10 text-teal',
-  CERRADA: 'bg-t2/10 text-muted',
+  CONTACTADA: 'bg-warn/10 text-warn',
+  COTIZADA: 'bg-teal/10 text-teal',
+  CONVERTIDA: 'bg-ok/10 text-ok',
+  DESCARTADA: 'bg-t2/10 text-muted',
 };
 
-function SACommercialRequests() {
-  const [requests, setRequests] = useState<CommercialRequest[]>(COMMERCIAL_REQUESTS);
-  const [selected, setSelected] = useState<CommercialRequest | null>(null);
+const CR_SOLUTION_LABEL: Record<string, string> = {
+  OPERACION: 'Operación',
+  PRO: 'PRO',
+  GPS_VEHICULAR: 'GPS Vehicular',
+};
 
-  const advance = (id: string) => {
-    setRequests(prev => prev.map(r => {
-      if (r.id !== id) return r;
-      const next: Record<string, string> = { NUEVA: 'EN_PROCESO', EN_PROCESO: 'PROPUESTA_ENVIADA', PROPUESTA_ENVIADA: 'CERRADA' };
-      return { ...r, status: (next[r.status] ?? r.status) as CommercialRequest['status'] };
-    }));
+const CR_ANSWER_LABEL: Record<string, string> = {
+  city: 'Ciudad', routes: 'Rutas', totalUnits: 'Unidades totales', gpsUnits: 'Unidades GPS',
+  period: 'Periodo', comments: 'Comentarios', unitCode: 'Código de unidad', plate: 'Placa',
+  units: 'Unidades a cotizar', message: 'Mensaje',
+};
+
+// Las solicitudes llegan desde la landing pública sin autenticación (ver
+// src/lib/commercial-requests-api.ts) y se atienden aquí. El backend solo
+// expone "marcar contactada" -- cotización, propuesta y conversión a cliente
+// se registran manualmente por el Super Admin fuera de este listado (ver
+// docs/planes/landing-publica-y-solicitudes-comerciales.md §7, PENDIENTE DE
+// DECISIÓN si hace falta una pantalla dedicada para ese seguimiento).
+function SACommercialRequests({ onUseForNewOrg }: { onUseForNewOrg: (req: ApiCommercialRequest, suggestion: OnboardingSuggestion) => void }) {
+  const [requests, setRequests] = useState<ApiCommercialRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<ApiCommercialRequest | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [triageSummary, setTriageSummary] = useState<string | null>(null);
+  const [triageLoading, setTriageLoading] = useState(false);
+  const [onboardingLoading, setOnboardingLoading] = useState(false);
+  const [onboardingError, setOnboardingError] = useState('');
+
+  // Triaje automatico (ia-aplicada.md §2.1) -- resumen ejecutivo aparte del
+  // detalle real (siempre visible abajo), nunca lo reemplaza. Best-effort:
+  // si no hay resumen (Claude no configurado o fallo puntual), la tarjeta
+  // simplemente no aparece.
+  useEffect(() => {
+    if (!selected) { setTriageSummary(null); return; }
+    setTriageSummary(null);
+    setTriageLoading(true);
+    fetchCommercialRequestTriage(selected.id)
+      .then(res => setTriageSummary(res.summary))
+      .catch(() => setTriageSummary(null))
+      .finally(() => setTriageLoading(false));
+  }, [selected?.id]);
+
+  const load = () => {
+    setLoading(true);
+    setError(null);
+    fetchCommercialRequests()
+      .then(list => setRequests(list))
+      .catch(err => setError(err instanceof Error ? err.message : 'No se pudo cargar las solicitudes.'))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const markReviewed = async (id: string) => {
+    setSaving(true);
+    try {
+      const updated = await markCommercialRequestReviewed(id);
+      setRequests(prev => prev.map(r => (r.id === id ? updated : r)));
+      setSelected(prev => (prev && prev.id === id ? updated : prev));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo actualizar la solicitud.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Asistente de onboarding (ia-aplicada.md §2.5): pide la sugerencia y
+  // navega al wizard "Nueva asociación" ya pre-llenado -- el wizard mismo
+  // muestra el aviso de que hay que revisar, nunca crea nada por su cuenta.
+  const useForNewOrg = async (req: ApiCommercialRequest) => {
+    setOnboardingLoading(true);
+    setOnboardingError('');
+    try {
+      const suggestion = await fetchCommercialRequestOnboardingSuggestion(req.id);
+      onUseForNewOrg(req, suggestion);
+    } catch (err) {
+      setOnboardingError(err instanceof Error ? err.message : 'No se pudo generar la sugerencia.');
+    } finally {
+      setOnboardingLoading(false);
+    }
   };
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-6 py-4 border-b border-border bg-surface">
-        <h1 className="text-2xl font-bold text-t1">Solicitudes comerciales</h1>
-        <p className="text-sm text-t2 mt-0.5">Solicitudes recibidas desde la landing pública</p>
+      <div className="px-6 py-4 border-b border-border bg-surface flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-t1">Solicitudes comerciales</h1>
+          <p className="text-sm text-t2 mt-0.5">Solicitudes recibidas desde la landing pública</p>
+        </div>
+        <button onClick={load} className="text-sm text-t2 hover:text-t1 flex items-center gap-1.5">
+          <RefreshCw size={13} /> Actualizar
+        </button>
       </div>
+
+      {error && (
+        <div className="px-6 py-3 bg-danger/5 border-b border-danger/20 text-sm text-danger" role="alert">{error}</div>
+      )}
+
       <div className="flex flex-1 overflow-hidden">
         <div className={`flex-1 overflow-auto ${selected ? 'border-r border-border' : ''}`}>
-          <table className="w-full text-sm" aria-label="Solicitudes comerciales">
-            <thead className="sticky top-0">
-              <tr className="border-b border-border bg-bg">
-                <th className="text-left px-4 py-2.5 text-t2 font-medium">Organización</th>
-                <th className="text-left px-4 py-2.5 text-t2 font-medium">Contacto</th>
-                <th className="text-left px-4 py-2.5 text-t2 font-medium">Unidades</th>
-                <th className="text-left px-4 py-2.5 text-t2 font-medium">GPS</th>
-                <th className="text-left px-4 py-2.5 text-t2 font-medium">Periodo</th>
-                <th className="text-left px-4 py-2.5 text-t2 font-medium">Estado</th>
-                <th className="text-left px-4 py-2.5 text-t2 font-medium">Fecha</th>
-                <th className="w-8" />
-              </tr>
-            </thead>
-            <tbody>
-              {requests.map(r => (
-                <tr key={r.id} className="border-b border-border last:border-0 hover:bg-hover cursor-pointer" onClick={() => setSelected(r === selected ? null : r)}>
-                  <td className="px-4 py-3">
-                    <p className="font-medium text-t1">{r.orgName}</p>
-                    <p className="text-xs text-t2">{r.city}</p>
-                  </td>
-                  <td className="px-4 py-3 text-t1">{r.contactName}</td>
-                  <td className="px-4 py-3 font-medium text-t1">{r.totalUnits}</td>
-                  <td className="px-4 py-3 text-t1">{r.gpsUnits}</td>
-                  <td className="px-4 py-3 text-t2">{r.period}</td>
-                  <td className="px-4 py-3">
-                    <span className={`text-[11px] px-2 py-0.5 rounded font-medium ${CR_STATUS_STYLE[r.status]}`}>{r.status.replace(/_/g, ' ')}</span>
-                  </td>
-                  <td className="px-4 py-3 text-t2 font-mono">{r.createdAt}</td>
-                  <td className="px-4 py-3"><ChevronRight size={14} className="text-muted" /></td>
+          {loading ? (
+            <div className="p-6 text-sm text-t2">Cargando solicitudes…</div>
+          ) : requests.length === 0 ? (
+            <div className="p-6 text-sm text-t2">Todavía no hay solicitudes comerciales registradas.</div>
+          ) : (
+            <table className="w-full text-sm" aria-label="Solicitudes comerciales">
+              <thead className="sticky top-0">
+                <tr className="border-b border-border bg-bg">
+                  <th className="text-left px-4 py-2.5 text-t2 font-medium">Solución</th>
+                  <th className="text-left px-4 py-2.5 text-t2 font-medium">Organización / Contacto</th>
+                  <th className="text-left px-4 py-2.5 text-t2 font-medium">Correo</th>
+                  <th className="text-left px-4 py-2.5 text-t2 font-medium">Teléfono</th>
+                  <th className="text-left px-4 py-2.5 text-t2 font-medium">Estado</th>
+                  <th className="text-left px-4 py-2.5 text-t2 font-medium">Fecha</th>
+                  <th className="w-8" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {requests.map(r => (
+                  <tr key={r.id} className="border-b border-border last:border-0 hover:bg-hover cursor-pointer" onClick={() => setSelected(r === selected ? null : r)}>
+                    <td className="px-4 py-3 text-t1">{CR_SOLUTION_LABEL[r.solution] ?? r.solution}</td>
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-t1">{r.orgName || r.contactName}</p>
+                      {r.orgName && <p className="text-xs text-t2">{r.contactName}</p>}
+                    </td>
+                    <td className="px-4 py-3 text-t2">{r.contactEmail}</td>
+                    <td className="px-4 py-3 text-t2">{r.contactPhone || '—'}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-[11px] px-2 py-0.5 rounded font-medium ${CR_STATUS_STYLE[r.status]}`}>{r.status.replace(/_/g, ' ')}</span>
+                    </td>
+                    <td className="px-4 py-3 text-t2 font-mono">{r.createdAt.slice(0, 10)}</td>
+                    <td className="px-4 py-3"><ChevronRight size={14} className="text-muted" /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
 
         {selected && (
           <aside className="w-80 flex-shrink-0 overflow-auto p-4 bg-surface" aria-label="Detalle solicitud">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-base font-semibold text-t1">{selected.orgName}</h3>
+              <h3 className="text-base font-semibold text-t1">{selected.orgName || selected.contactName}</h3>
               <button onClick={() => setSelected(null)} className="text-muted hover:text-t1"><X size={16} /></button>
             </div>
             <div className="space-y-3 text-sm">
               <span className={`inline-block text-[11px] px-2 py-0.5 rounded font-medium ${CR_STATUS_STYLE[selected.status]}`}>
                 {selected.status.replace(/_/g, ' ')}
               </span>
+              {(triageLoading || triageSummary) && (
+                <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
+                  <p className="text-[11px] font-semibold text-primary uppercase tracking-wide mb-1">Resumen ejecutivo (IA)</p>
+                  <p className="text-sm text-t1 leading-relaxed">{triageLoading ? 'Generando resumen…' : triageSummary}</p>
+                </div>
+              )}
               <div className="border border-border rounded-lg divide-y divide-border">
-                {field('Ciudad', selected.city)}
-                {field('Rutas', selected.routes)}
+                {field('Solución', CR_SOLUTION_LABEL[selected.solution] ?? selected.solution)}
                 {field('Contacto', selected.contactName)}
                 {field('Correo', selected.contactEmail)}
-                {field('Teléfono', selected.contactPhone)}
-                {field('Unidades', String(selected.totalUnits))}
-                {field('Unidades GPS', String(selected.gpsUnits))}
-                {field('Periodo', selected.period)}
+                {selected.contactPhone && field('Teléfono', selected.contactPhone)}
                 {selected.ruc && field('RUC', selected.ruc, true)}
               </div>
-              {selected.comments && (
-                <div className="border border-border rounded-lg p-3">
-                  <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mb-1">Comentarios</p>
-                  <p className="text-t1">{selected.comments}</p>
+              {Object.keys(selected.answers ?? {}).length > 0 && (
+                <div className="border border-border rounded-lg divide-y divide-border">
+                  {Object.entries(selected.answers).map(([key, value]) => (
+                    <div key={key} className="flex justify-between gap-3 px-3 py-2">
+                      <span className="text-sm text-t2">{CR_ANSWER_LABEL[key] ?? key}</span>
+                      <span className="text-sm text-t1 font-medium text-right">{String(value ?? '—')}</span>
+                    </div>
+                  ))}
                 </div>
               )}
-              {selected.status !== 'CERRADA' && (
-                <button onClick={() => { advance(selected.id); setSelected(prev => prev ? { ...prev, status: (() => { const n: Record<string, string> = { NUEVA: 'EN_PROCESO', EN_PROCESO: 'PROPUESTA_ENVIADA', PROPUESTA_ENVIADA: 'CERRADA' }; return (n[prev.status] ?? prev.status) as CommercialRequest['status']; })() } : null); }}
-                  className="w-full py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h">
-                  {selected.status === 'NUEVA' ? 'Marcar en proceso' : selected.status === 'EN_PROCESO' ? 'Marcar propuesta enviada' : 'Cerrar solicitud'}
+              {selected.reviewedBy && (
+                <div className="border border-border rounded-lg p-3">
+                  <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mb-1">Atendida por</p>
+                  <p className="text-t1">{selected.reviewedBy.name}</p>
+                </div>
+              )}
+              {selected.status === 'NUEVA' && (
+                <button onClick={() => markReviewed(selected.id)} disabled={saving}
+                  className="w-full py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h disabled:opacity-60">
+                  {saving ? 'Guardando…' : 'Marcar como contactada'}
                 </button>
               )}
+              {(selected.solution === 'OPERACION' || selected.solution === 'PRO') && (
+                <button
+                  onClick={() => useForNewOrg(selected)}
+                  disabled={onboardingLoading}
+                  className="w-full py-2.5 border border-primary text-primary rounded-lg text-sm font-medium hover:bg-primary/5 disabled:opacity-60 flex items-center justify-center gap-1.5"
+                >
+                  <Sparkles size={13} />
+                  {onboardingLoading ? 'Preparando…' : 'Usar para nueva asociación (IA)'}
+                </button>
+              )}
+              {onboardingError && <p className="text-xs text-danger">{onboardingError}</p>}
+              <p className="text-xs text-t2">
+                La cotización, la propuesta y la conversión a cliente se registran manualmente por el Super Admin fuera de este listado.
+              </p>
             </div>
           </aside>
         )}
@@ -1420,934 +2088,12 @@ function SACommercialRequests() {
   );
 }
 
-// ─── Planes y suscripciones ───────────────────────────────────────────────────
-type ActivationMode = 'NORMAL' | 'PRUEBA_GRATUITA' | 'CORTESIA' | 'ADMINISTRATIVA';
-
-function ActivateModal({
-  sub, paymentApproved, onConfirm, onClose
-}: {
-  sub: Subscription;
-  paymentApproved: boolean;
-  onConfirm: (data: { startDate: string; endDate: string; mode: ActivationMode; reason: string; responsible: string; features: string[] }) => void;
-  onClose: () => void;
-}) {
-  const today = '2026-08-29';
-  const defaultEnd = sub.period === 'ANUAL' ? '2027-08-28' : '2026-09-28';
-  const [mode, setMode] = useState<ActivationMode>('NORMAL');
-  const [startDate, setStartDate] = useState(today);
-  const [endDate, setEndDate] = useState(defaultEnd);
-  const [reason, setReason] = useState('');
-  const [responsible, setResponsible] = useState('superadmin@acceso.chaski.test');
-  const [features, setFeatures] = useState<string[]>(PRO_FEATURES);
-
-  const requiresJustification = mode !== 'NORMAL';
-  const canSubmit = (!requiresJustification || reason.trim().length > 0) && responsible.trim().length > 0;
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto" role="dialog" aria-modal="true">
-      <div className="bg-surface rounded-lg shadow-xl w-full max-w-md my-8">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <h2 className="text-base font-semibold text-t1">Activar Plan PRO — {sub.orgName}</h2>
-          <button onClick={onClose} className="text-muted hover:text-t1"><X size={16} /></button>
-        </div>
-        <div className="p-5 space-y-4">
-          {/* Activation type */}
-          <div>
-            <label className="block text-sm font-medium text-t1 mb-2">Tipo de activación</label>
-            <div className="grid grid-cols-2 gap-2">
-              {([['NORMAL', 'Normal'], ['PRUEBA_GRATUITA', 'Prueba gratuita'], ['CORTESIA', 'Cortesía'], ['ADMINISTRATIVA', 'Administrativa']] as [ActivationMode, string][]).map(([v, l]) => (
-                <button key={v} onClick={() => setMode(v)}
-                  className={`py-1.5 text-sm rounded-lg border font-medium transition-colors ${mode === v ? 'bg-primary text-white border-primary' : 'border-border text-t2 hover:bg-hover'}`}>
-                  {l}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {!paymentApproved && mode === 'NORMAL' && (
-            <div className="bg-danger/5 border border-danger/20 rounded-lg p-3 flex items-start gap-2">
-              <AlertCircle size={13} className="text-danger mt-0.5" />
-              <p className="text-sm text-danger">No hay un pago aprobado para esta suscripción. Aprueba el pago antes de activar normalmente, o selecciona un tipo de activación especial.</p>
-            </div>
-          )}
-
-          {requiresJustification && (
-            <div className="bg-warn/5 border border-warn/20 rounded-lg p-3">
-              <p className="text-sm text-warn font-medium">Las activaciones especiales nunca quedan activas indefinidamente sin justificación. Asegúrate de establecer una fecha de vencimiento.</p>
-            </div>
-          )}
-
-          {/* Details summary */}
-          <div className="border border-border rounded-lg divide-y divide-border text-sm">
-            {field('Asociación', sub.orgName)}
-            {field('Plan', sub.plan)}
-            {field('Periodicidad', sub.period)}
-            {field('Unidades máx.', String(sub.units))}
-            {field('Unidades GPS máx.', String(sub.gpsUnits))}
-          </div>
-
-          {/* Dates */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-t1 mb-1">Fecha de inicio</label>
-              <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
-                className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-t1 mb-1">Vencimiento / renovación</label>
-              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
-                className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-            </div>
-          </div>
-
-          {/* Features */}
-          <div>
-            <p className="text-sm font-medium text-t1 mb-2">Funciones habilitadas (PRO)</p>
-            <div className="space-y-1">
-              {PRO_FEATURES.map(f => (
-                <label key={f} className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={features.includes(f)}
-                    onChange={e => setFeatures(prev => e.target.checked ? [...prev, f] : prev.filter(x => x !== f))}
-                    className="accent-primary" />
-                  <span className="text-sm text-t1">{f}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* Responsible + reason */}
-          <div>
-            <label className="block text-sm font-medium text-t1 mb-1">Responsable de la activación</label>
-            <input value={responsible} onChange={e => setResponsible(e.target.value)}
-              className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-t1 mb-1">
-              Motivo u observación {requiresJustification && <span className="text-danger">*</span>}
-            </label>
-            <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2}
-              placeholder={requiresJustification ? 'Requerido para activaciones especiales…' : 'Opcional…'}
-              className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-none" />
-          </div>
-        </div>
-        <div className="flex gap-3 justify-end px-5 pb-5">
-          <button onClick={onClose} className="px-4 py-2 border border-border rounded-lg text-sm text-t2 hover:bg-hover">Cancelar</button>
-          <button
-            onClick={() => onConfirm({ startDate, endDate, mode, reason, responsible, features })}
-            disabled={!canSubmit || (mode === 'NORMAL' && !paymentApproved)}
-            className="px-4 py-2 bg-ok text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50"
-          >
-            Confirmar activación PRO
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SAPlansSubscriptions({ onGoToPayments }: { onGoToPayments: () => void }) {
-  const [subs, setSubs] = useState<Subscription[]>(SUBSCRIPTIONS);
-  const [activating, setActivating] = useState<Subscription | null>(null);
-  const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
-
-  const getPaymentStatus = (subId: string): PaymentStatus | null => {
-    const pay = PAYMENTS.find(p => p.subscriptionId === subId);
-    return pay?.status ?? null;
-  };
-
-  const handleActivate = (sub: Subscription, data: { startDate: string; endDate: string; mode: ActivationMode; reason: string; responsible: string; features: string[] }) => {
-    setSubs(prev => prev.map(s => s.id !== sub.id ? s : {
-      ...s, status: 'ACTIVA', startDate: data.startDate, endDate: data.endDate,
-      activationType: data.mode, activatedBy: data.responsible,
-      activationReason: data.reason || 'Activación desde panel CHASKI AI',
-      features: data.features, updatedAt: '2026-08-29',
-    }));
-    const entry: AuditEntry = {
-      id: `a-act-${Date.now()}`, actor: data.responsible, actorRole: 'SUPERADMIN',
-      org: sub.orgName, action: 'ACTIVAR_PRO', resource: 'Suscripción',
-      resourceId: sub.id, timestamp: new Date().toISOString(),
-      before: sub.status, after: 'ACTIVA',
-      reason: data.reason || `Activación tipo ${data.mode}`,
-    };
-    setAuditEntries(prev => [entry, ...prev]);
-    setActivating(null);
-  };
-
-  return (
-    <div className="p-6 lg:p-8 space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-t1">Planes y suscripciones</h1>
-          <p className="text-sm text-t2 mt-0.5">Estado de suscripción por asociación</p>
-        </div>
-      </div>
-
-      {auditEntries.length > 0 && (
-        <div className="bg-ok/5 border border-ok/30 rounded-lg p-3 flex items-center gap-2">
-          <CheckCircle size={14} className="text-ok" />
-          <p className="text-sm text-ok">{auditEntries.length} activación{auditEntries.length > 1 ? 'es' : ''} registrada{auditEntries.length > 1 ? 's' : ''} en auditoría en esta sesión.</p>
-        </div>
-      )}
-
-      <div className="bg-surface border border-border rounded-lg overflow-hidden">
-        <div className="overflow-x-auto">
-        <table className="w-full text-sm" aria-label="Suscripciones">
-          <thead>
-            <tr className="border-b border-border bg-bg">
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Asociación</th>
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Plan</th>
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Estado</th>
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Periodo</th>
-              <th className="text-right px-4 py-2.5 text-t2 font-medium">Unidades</th>
-              <th className="text-right px-4 py-2.5 text-t2 font-medium">GPS</th>
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Vigencia</th>
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Pago</th>
-              <th className="px-4 py-2.5 text-t2 font-medium text-right">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {subs.map(s => {
-              const payStatus = getPaymentStatus(s.id);
-              const payApproved = payStatus === 'APROBADO';
-              const canActivate = (payApproved || s.plan === 'OPERACION') && s.status !== 'ACTIVA' && s.status !== 'CANCELADA';
-              return (
-                <tr key={s.id} className="border-b border-border last:border-0 hover:bg-hover/50">
-                  <td className="px-4 py-3 font-medium text-t1">{s.orgName}</td>
-                  <td className="px-4 py-3">
-                    <span className={`text-sm font-semibold ${s.plan === 'PRO' ? 'text-primary' : 'text-t2'}`}>{s.plan}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`text-[11px] px-2 py-0.5 rounded font-medium ${SUB_STATUS_STYLE[s.status]}`}>
-                      {SUB_STATUS_LABEL[s.status]}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-t2">{s.period}</td>
-                  <td className="px-4 py-3 text-right text-t1">{s.units || '—'}</td>
-                  <td className="px-4 py-3 text-right text-t1">{s.gpsUnits || '—'}</td>
-                  <td className="px-4 py-3 font-mono text-t2">
-                    {s.startDate ? `${s.startDate} → ${s.endDate ?? '?'}` : '—'}
-                  </td>
-                  <td className="px-4 py-3">
-                    {payStatus ? (
-                      <span className={`text-[11px] px-2 py-0.5 rounded font-medium ${PAY_STATUS_STYLE[payStatus]}`}>{PAY_STATUS_LABEL[payStatus]}</span>
-                    ) : (
-                      <button onClick={onGoToPayments} className="px-3 py-1.5 text-sm font-medium text-primary border border-primary/30 rounded-lg hover:bg-primary/5 transition-colors">Registrar pago</button>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {s.plan === 'PRO' && s.status !== 'ACTIVA' && (
-                      <button
-                        onClick={() => setActivating(s)}
-                        disabled={!canActivate && !payApproved}
-                        title={!payApproved ? 'Se requiere pago aprobado, o selecciona activación especial en el modal' : ''}
-                        className="px-3 py-1.5 text-sm bg-ok text-white rounded-lg font-medium hover:opacity-90 disabled:opacity-40"
-                      >
-                        Activar PRO
-                      </button>
-                    )}
-                    {s.status === 'ACTIVA' && (
-                      <span className="text-sm text-ok font-medium">✓ Activa</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        </div>
-      </div>
-
-      {activating && (
-        <ActivateModal
-          sub={activating}
-          paymentApproved={PAYMENTS.find(p => p.subscriptionId === activating.id)?.status === 'APROBADO'}
-          onConfirm={data => handleActivate(activating, data)}
-          onClose={() => setActivating(null)}
-        />
-      )}
-    </div>
-  );
-}
-
-// ─── Pagos ────────────────────────────────────────────────────────────────────
-function RegisterPaymentModal({ onClose, onSave }: { onClose: () => void; onSave: (p: Payment) => void }) {
-  const [form, setForm] = useState({
-    orgId: 'atipcar', concept: '', quoteNumber: '', amount: '',
-    currency: 'PEN', method: 'TRANSFERENCIA', bank: '', operationNumber: '',
-    paymentDate: '2026-08-29', observations: '',
-  });
-  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
-  const orgName = ORGANIZATIONS.find(o => o.id === form.orgId)?.name ?? '';
-  const sub = SUBSCRIPTIONS.find(s => s.orgId === form.orgId);
-
-  const handleSave = () => {
-    if (!form.concept || !form.amount || !form.paymentDate) return;
-    const p: Payment = {
-      id: `pay-${Date.now()}`, orgId: form.orgId, orgName,
-      subscriptionId: sub?.id ?? '',
-      concept: form.concept, quoteNumber: form.quoteNumber || undefined,
-      amount: parseFloat(form.amount), currency: form.currency as 'PEN' | 'USD',
-      method: form.method as Payment['method'], bank: form.bank || undefined,
-      operationNumber: form.operationNumber || undefined,
-      paymentDate: form.paymentDate, status: 'PENDIENTE',
-      observations: form.observations || undefined, createdAt: '2026-08-29',
-    };
-    onSave(p);
-    onClose();
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto" role="dialog" aria-modal="true">
-      <div className="bg-surface rounded-lg shadow-xl w-full max-w-md my-8">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <h2 className="text-base font-semibold text-t1">Registrar pago manual</h2>
-          <button onClick={onClose} className="text-muted hover:text-t1"><X size={16} /></button>
-        </div>
-        <div className="p-5 space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-t1 mb-1">Asociación *</label>
-            <select value={form.orgId} onChange={e => set('orgId', e.target.value)}
-              className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary">
-              {ORGANIZATIONS.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-t1 mb-1">Plan / servicio pagado</label>
-            <p className="text-sm text-t2 px-3 py-2 bg-bg border border-border rounded-lg">{sub ? `Plan ${sub.plan}` : 'Sin suscripción activa'}</p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-t1 mb-1">Número de cotización u orden</label>
-            <input value={form.quoteNumber} onChange={e => set('quoteNumber', e.target.value)} placeholder="COT-2026-XXXX"
-              className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-t1 mb-1">Concepto *</label>
-            <input value={form.concept} onChange={e => set('concept', e.target.value)} placeholder="Suscripción mensual PRO…"
-              className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-t1 mb-1">Importe *</label>
-              <input type="number" min="0" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00"
-                className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-t1 mb-1">Moneda</label>
-              <select value={form.currency} onChange={e => set('currency', e.target.value)}
-                className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary">
-                <option value="PEN">PEN (Soles)</option>
-                <option value="USD">USD (Dólares)</option>
-              </select>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-t1 mb-1">Método</label>
-              <select value={form.method} onChange={e => set('method', e.target.value)}
-                className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary">
-                <option value="TRANSFERENCIA">Transferencia</option>
-                <option value="DEPOSITO">Depósito</option>
-                <option value="OTRO">Otro</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-t1 mb-1">Banco</label>
-              <input value={form.bank} onChange={e => set('bank', e.target.value)} placeholder="BCP, Interbank…"
-                className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-t1 mb-1">N.° de operación</label>
-              <input value={form.operationNumber} onChange={e => set('operationNumber', e.target.value)} placeholder="XXXXXXXX"
-                className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-t1 mb-1">Fecha del pago *</label>
-              <input type="date" value={form.paymentDate} onChange={e => set('paymentDate', e.target.value)}
-                className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-t1 mb-1">Comprobante adjunto</label>
-            <div className="border border-dashed border-border rounded-lg px-3 py-3 text-center text-sm text-muted">
-              La carga de archivos aún no está habilitada. Registra el número de operación como referencia.
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-t1 mb-1">Observaciones</label>
-            <textarea value={form.observations} onChange={e => set('observations', e.target.value)} rows={2}
-              className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-none" />
-          </div>
-        </div>
-        <div className="flex gap-3 justify-end px-5 pb-5">
-          <button onClick={onClose} className="px-4 py-2 border border-border rounded-lg text-sm text-t2 hover:bg-hover">Cancelar</button>
-          <button onClick={handleSave} disabled={!form.concept || !form.amount || !form.paymentDate}
-            className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h disabled:opacity-50">
-            Guardar pago
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SAPayments({ onActivateSub }: { onActivateSub: () => void }) {
-  const [payments, setPayments] = useState<Payment[]>(PAYMENTS);
-  const [selected, setSelected] = useState<Payment | null>(null);
-  const [showRegister, setShowRegister] = useState(false);
-  const [rejectReason, setRejectReason] = useState('');
-  const [showRejectModal, setShowRejectModal] = useState(false);
-
-  const update = (id: string, patch: Partial<Payment>) =>
-    setPayments(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p));
-
-  const action = (id: string, status: PaymentStatus, extra: Partial<Payment> = {}) => {
-    update(id, { status, ...extra });
-    if (selected?.id === id) setSelected(prev => prev ? { ...prev, status, ...extra } : null);
-  };
-
-  return (
-    <div className="p-6 lg:p-8 space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-t1">Pagos</h1>
-          <p className="text-sm text-t2 mt-0.5">Registro y verificación de pagos de suscripción</p>
-        </div>
-        <button onClick={() => setShowRegister(true)} className="flex items-center gap-2 px-3.5 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h">
-          <Plus size={14} /> Registrar pago
-        </button>
-      </div>
-
-      <div className="flex gap-4 overflow-hidden" style={{ minHeight: 0 }}>
-        <div className={`flex-1 overflow-auto bg-surface border border-border rounded-lg ${selected ? 'border-r border-border' : ''}`}>
-          <table className="w-full text-sm" aria-label="Pagos">
-            <thead>
-              <tr className="border-b border-border bg-bg">
-                <th className="text-left px-4 py-2.5 text-t2 font-medium">Asociación</th>
-                <th className="text-left px-4 py-2.5 text-t2 font-medium">Concepto</th>
-                <th className="text-right px-4 py-2.5 text-t2 font-medium">Importe</th>
-                <th className="text-left px-4 py-2.5 text-t2 font-medium">Método</th>
-                <th className="text-left px-4 py-2.5 text-t2 font-medium">Fecha</th>
-                <th className="text-left px-4 py-2.5 text-t2 font-medium">Estado</th>
-                <th className="w-8" />
-              </tr>
-            </thead>
-            <tbody>
-              {payments.map(p => (
-                <tr key={p.id} className={`border-b border-border last:border-0 hover:bg-hover cursor-pointer ${selected?.id === p.id ? 'bg-primary/5' : ''}`}
-                  onClick={() => setSelected(p === selected ? null : p)}>
-                  <td className="px-4 py-3 font-medium text-t1">{p.orgName}</td>
-                  <td className="px-4 py-3 text-t2 max-w-xs truncate">{p.concept}</td>
-                  <td className="px-4 py-3 text-right font-mono font-medium text-t1">{p.currency} {p.amount.toLocaleString()}</td>
-                  <td className="px-4 py-3 text-t2">{p.method}</td>
-                  <td className="px-4 py-3 font-mono text-t2">{p.paymentDate}</td>
-                  <td className="px-4 py-3">
-                    <span className={`text-[11px] px-2 py-0.5 rounded font-medium ${PAY_STATUS_STYLE[p.status]}`}>
-                      {PAY_STATUS_LABEL[p.status]}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3"><ChevronRight size={14} className="text-muted" /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {selected && (
-          <aside className="w-80 flex-shrink-0 overflow-auto bg-surface border border-border rounded-lg p-4" aria-label="Detalle de pago">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-base font-semibold text-t1">{selected.orgName}</h3>
-              <button onClick={() => setSelected(null)} className="text-muted hover:text-t1"><X size={16} /></button>
-            </div>
-            <div className="space-y-3 text-sm">
-              <span className={`inline-block text-[11px] px-2 py-0.5 rounded font-medium ${PAY_STATUS_STYLE[selected.status]}`}>
-                {PAY_STATUS_LABEL[selected.status]}
-              </span>
-              <div className="border border-border rounded-lg divide-y divide-border">
-                {field('Concepto', selected.concept)}
-                {selected.quoteNumber && field('N.° cotización', selected.quoteNumber, true)}
-                {field('Importe', `${selected.currency} ${selected.amount.toLocaleString()}`)}
-                {field('Método', selected.method)}
-                {selected.bank && field('Banco', selected.bank)}
-                {selected.operationNumber && field('N.° operación', selected.operationNumber, true)}
-                {field('Fecha de pago', selected.paymentDate)}
-              </div>
-              {selected.observations && (
-                <div className="border border-border rounded-lg p-3">
-                  <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mb-1">Observaciones</p>
-                  <p className="text-t1">{selected.observations}</p>
-                </div>
-              )}
-
-              {/* Action buttons */}
-              <div className="space-y-2 pt-1">
-                {selected.status === 'PENDIENTE' && (
-                  <button onClick={() => action(selected.id, 'EN_REVISION')}
-                    className="w-full py-2.5 border border-border rounded-lg text-sm text-t1 hover:bg-hover flex items-center justify-center gap-1.5">
-                    <RefreshCw size={13} /> Marcar en revisión
-                  </button>
-                )}
-                {(selected.status === 'PENDIENTE' || selected.status === 'EN_REVISION' || selected.status === 'CORRECCION_SOLICITADA') && (
-                  <button onClick={() => action(selected.id, 'APROBADO', { approvedAt: '2026-08-29', reviewedBy: 'superadmin@acceso.chaski.test' })}
-                    className="w-full py-2.5 bg-ok text-white rounded-lg text-sm font-medium hover:opacity-90 flex items-center justify-center gap-1.5">
-                    <CheckCircle size={13} /> Aprobar pago
-                  </button>
-                )}
-                {selected.status === 'APROBADO' && (
-                  <button onClick={onActivateSub}
-                    className="w-full py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h flex items-center justify-center gap-1.5">
-                    <Activity size={13} /> Activar suscripción <ArrowRight size={13} />
-                  </button>
-                )}
-                {(selected.status === 'PENDIENTE' || selected.status === 'EN_REVISION') && (
-                  <button onClick={() => setShowRejectModal(true)}
-                    className="w-full py-2.5 border border-danger/30 text-danger rounded-lg text-sm hover:bg-danger/5 flex items-center justify-center gap-1.5">
-                    <X size={13} /> Rechazar pago
-                  </button>
-                )}
-                {(selected.status === 'PENDIENTE' || selected.status === 'EN_REVISION') && (
-                  <button onClick={() => action(selected.id, 'CORRECCION_SOLICITADA')}
-                    className="w-full py-2.5 border border-warn/30 text-warn rounded-lg text-sm hover:bg-warn/5 flex items-center justify-center gap-1.5">
-                    <AlertCircle size={13} /> Solicitar corrección
-                  </button>
-                )}
-              </div>
-            </div>
-          </aside>
-        )}
-      </div>
-
-      {showRejectModal && selected && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true">
-          <div className="bg-surface rounded-lg shadow-xl w-full max-w-sm p-5">
-            <h3 className="text-base font-semibold text-t1 mb-3">Rechazar pago</h3>
-            <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} rows={3}
-              placeholder="Motivo del rechazo (requerido)…"
-              className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary" />
-            <div className="flex gap-3 justify-end mt-3">
-              <button onClick={() => { setShowRejectModal(false); setRejectReason(''); }} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-hover">Cancelar</button>
-              <button
-                disabled={!rejectReason.trim()}
-                onClick={() => { action(selected.id, 'RECHAZADO', { rejectionReason: rejectReason }); setShowRejectModal(false); setRejectReason(''); }}
-                className="px-4 py-2 bg-danger text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50">
-                Confirmar rechazo
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showRegister && (
-        <RegisterPaymentModal
-          onClose={() => setShowRegister(false)}
-          onSave={p => setPayments(prev => [p, ...prev])}
-        />
-      )}
-    </div>
-  );
-}
-
-// ─── Dispositivos GPS ─────────────────────────────────────────────────────────
-
-type GPSRequestStatus = 'SOLICITADA' | 'COTIZADA' | 'PENDIENTE_PAGO' | 'PAGADA' | 'PROGRAMADA' | 'INSTALANDO' | 'EN_PRUEBAS' | 'ACTIVA';
-
-const GPS_REQUEST_FLOW: GPSRequestStatus[] = [
-  'SOLICITADA', 'COTIZADA', 'PENDIENTE_PAGO', 'PAGADA',
-  'PROGRAMADA', 'INSTALANDO', 'EN_PRUEBAS', 'ACTIVA',
-];
-
-const GPS_REQUEST_LABEL: Record<GPSRequestStatus, string> = {
-  SOLICITADA: 'Solicitada', COTIZADA: 'Cotizada', PENDIENTE_PAGO: 'Pendiente de pago',
-  PAGADA: 'Pagada', PROGRAMADA: 'Programada', INSTALANDO: 'Instalando',
-  EN_PRUEBAS: 'En pruebas', ACTIVA: 'Activa',
-};
-
-const GPS_REQUEST_SEED = [
-  {
-    id: 'GPS-VEH-2026-0042', owner: 'Mario Condori Apaza', email: 'socio@acceso.atipcar.test',
-    association: 'ATIPCAR', associationPlan: 'Operación', unit: '015', plate: 'Z5C-444',
-    units: 1, requestedAt: '29/08/2026 09:12', status: 'SOLICITADA' as GPSRequestStatus,
-    hardware: 'S/ 420 referencial', installation: 'S/ 120 referencial', monthly: 'S/ 30 referencial',
-  },
-  {
-    id: 'GPS-VEH-2026-0038', owner: 'Luisa Ticona Callo', email: 'l.ticona@acceso.atipcar.test',
-    association: 'ATIPCAR', associationPlan: 'Operación', unit: '004', plate: 'Z1A-123',
-    units: 1, requestedAt: '28/08/2026 16:40', status: 'PAGADA' as GPSRequestStatus,
-    hardware: 'S/ 420 referencial', installation: 'S/ 120 referencial', monthly: 'S/ 30 referencial',
-  },
-];
-
-function SAGPSRequests() {
-  const [requests, setRequests] = useState(GPS_REQUEST_SEED);
-  const [selectedId, setSelectedId] = useState(GPS_REQUEST_SEED[0].id);
-  const selected = requests.find(request => request.id === selectedId) ?? requests[0];
-
-  const advance = () => {
-    setRequests(current => current.map(request => {
-      if (request.id !== selected.id) return request;
-      const index = GPS_REQUEST_FLOW.indexOf(request.status);
-      if (index >= GPS_REQUEST_FLOW.length - 1) return request;
-      return { ...request, status: GPS_REQUEST_FLOW[index + 1] };
-    }));
-  };
-
-  const currentIndex = GPS_REQUEST_FLOW.indexOf(selected.status);
-  const nextStatus = GPS_REQUEST_FLOW[currentIndex + 1];
-
-  return (
-    <div className="p-6 lg:p-8 space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold text-t1">Solicitudes GPS Vehicular</h1>
-        <p className="text-sm text-t2 mt-0.5">Contratación individual por unidad · No modifica el plan de la asociación</p>
-      </div>
-
-      <div className="bg-warn/5 border border-warn/30 rounded-lg p-3 text-sm text-t2">
-        Los montos mostrados son referenciales y no constituyen una tarifa publicada.
-      </div>
-
-      <div className="grid lg:grid-cols-[1fr_360px] gap-5">
-        <div className="bg-surface border border-border rounded-lg overflow-hidden">
-          <div className="overflow-x-auto">
-          <table className="w-full text-sm" aria-label="Solicitudes GPS Vehicular">
-            <thead><tr className="bg-bg border-b border-border">
-              {['Solicitud','Socio','Asociación','Unidad','Estado','Fecha'].map(label => <th key={label} className="px-4 py-2.5 text-left text-t2 font-medium">{label}</th>)}
-            </tr></thead>
-            <tbody>{requests.map(request => (
-              <tr key={request.id} onClick={() => setSelectedId(request.id)}
-                className={'border-b border-border last:border-0 cursor-pointer ' + (selectedId === request.id ? 'bg-primary/5' : 'hover:bg-hover/50')}>
-                <td className="px-4 py-3 font-mono text-primary">{request.id}</td>
-                <td className="px-4 py-3"><p className="text-t1 font-medium">{request.owner}</p><p className="text-muted">{request.email}</p></td>
-                <td className="px-4 py-3"><p className="text-t1">{request.association}</p><p className="text-muted">Plan {request.associationPlan}</p></td>
-                <td className="px-4 py-3 text-t1">{request.unit} · <span className="font-mono">{request.plate}</span></td>
-                <td className="px-4 py-3"><span className="text-[11px] bg-primary/10 text-primary px-2 py-0.5 rounded">{GPS_REQUEST_LABEL[request.status]}</span></td>
-                <td className="px-4 py-3 text-t2">{request.requestedAt}</td>
-              </tr>
-            ))}</tbody>
-          </table>
-          </div>
-        </div>
-
-        <aside className="bg-surface border border-border rounded-lg overflow-hidden">
-          <div className="p-4 border-b border-border">
-            <p className="font-mono text-sm text-primary">{selected.id}</p>
-            <h2 className="text-base font-semibold text-t1 mt-1">{selected.owner}</h2>
-            <p className="text-sm text-t2">{selected.association} · Unidad {selected.unit} · {selected.plate}</p>
-          </div>
-          <div className="p-4 space-y-4">
-            <div>
-              <p className="text-[11px] uppercase tracking-wide text-t2 mb-2">Cotización referencial</p>
-              <div className="border border-border rounded divide-y divide-border text-sm">
-                <div className="p-2.5 flex justify-between"><span>Teltonika FMC130</span><strong>{selected.hardware}</strong></div>
-                <div className="p-2.5 flex justify-between"><span>Instalación técnica</span><strong>{selected.installation}</strong></div>
-                <div className="p-2.5 flex justify-between"><span>SIM + plataforma mensual</span><strong>{selected.monthly}</strong></div>
-              </div>
-            </div>
-            <div>
-              <p className="text-[11px] uppercase tracking-wide text-t2 mb-2">Flujo controlado</p>
-              <div className="space-y-2">
-                {GPS_REQUEST_FLOW.map((status, index) => (
-                  <div key={status} className="flex items-center gap-2 text-sm">
-                    <span className={'w-5 h-5 rounded-full flex items-center justify-center text-[11px] ' + (index <= currentIndex ? 'bg-ok text-white' : 'bg-bg text-muted border border-border')}>
-                      {index < currentIndex ? '✓' : index + 1}
-                    </span>
-                    <span className={index <= currentIndex ? 'text-t1 font-medium' : 'text-muted'}>{GPS_REQUEST_LABEL[status]}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            {nextStatus ? (
-              <button onClick={advance} className="w-full h-9 bg-primary text-white rounded text-sm font-medium">
-                Avanzar a: {GPS_REQUEST_LABEL[nextStatus]}
-              </button>
-            ) : (
-              <div className="bg-ok/10 text-ok rounded p-3 text-sm font-medium flex items-center gap-2"><CheckCircle size={14} /> Servicio activo</div>
-            )}
-            <p className="text-xs text-muted">La activación final exige pago verificado, dispositivo instalado y prueba de primera señal aprobada.</p>
-          </div>
-        </aside>
-      </div>
-    </div>
-  );
-}
-
-function SAInstallations() {
-  const installationFlow = ['PROGRAMADA', 'INSTALANDO', 'EN_PRUEBAS', 'ACTIVA'] as const;
-  const [stage, setStage] = useState<(typeof installationFlow)[number]>('PROGRAMADA');
-  const [checks, setChecks] = useState({ power: false, ignition: false, signal: false, traccar: false, link: false });
-  const allChecked = Object.values(checks).every(Boolean);
-  const stageIndex = installationFlow.indexOf(stage);
-  const toggle = (key: keyof typeof checks) => setChecks(current => ({ ...current, [key]: !current[key] }));
-
-  const advance = () => {
-    if (stage === 'EN_PRUEBAS' && !allChecked) return;
-    const next = installationFlow[stageIndex + 1];
-    if (next) setStage(next);
-  };
-
-  return (
-    <div className="p-6 lg:p-8 space-y-5">
-      <div><h1 className="text-2xl font-bold text-t1">Órdenes de instalación GPS</h1><p className="text-sm text-t2 mt-0.5">Coordinación técnica y aceptación de primera señal</p></div>
-      <div className="grid lg:grid-cols-[1fr_320px] gap-5">
-        <div className="bg-surface border border-border rounded-lg overflow-hidden">
-          <div className="p-5 border-b border-border flex items-start justify-between gap-4">
-            <div><p className="font-mono text-sm text-primary">OT-GPS-2026-0018</p><h2 className="text-base font-semibold text-t1 mt-1">Unidad 004 · Z1A-123</h2><p className="text-sm text-t2">ATIPCAR · Luisa Ticona Callo</p></div>
-            <span className="bg-primary/10 text-primary text-[11px] px-2 py-0.5 rounded font-medium">{GPS_REQUEST_LABEL[stage]}</span>
-          </div>
-          <div className="grid sm:grid-cols-2 gap-0 divide-y sm:divide-y-0 sm:divide-x divide-border">
-            <div className="p-5 text-sm space-y-3">
-              <p className="text-[11px] uppercase tracking-wide text-t2">Programación</p>
-              <div className="flex justify-between"><span className="text-t2">Fecha</span><strong>30/08/2026 · 10:00</strong></div>
-              <div className="flex justify-between"><span className="text-t2">Lugar</span><strong>Terminal Juli</strong></div>
-              <div className="flex justify-between"><span className="text-t2">Técnico</span><strong>Rudy Choque</strong></div>
-              <div className="flex justify-between"><span className="text-t2">Equipo</span><strong>FMC130</strong></div>
-              <div className="flex justify-between"><span className="text-t2">IMEI</span><strong className="font-mono">***********2639</strong></div>
-              <div className="flex justify-between"><span className="text-t2">SIM</span><strong className="font-mono">********4821</strong></div>
-            </div>
-            <div className="p-5">
-              <p className="text-[11px] uppercase tracking-wide text-t2 mb-3">Pruebas obligatorias</p>
-              <div className="space-y-2">
-                {[
-                  ['power','Alimentación principal'],
-                  ['ignition','Lectura de ignición'],
-                  ['signal','Primera señal GPS'],
-                  ['traccar','Recepción en Traccar'],
-                  ['link','Vínculo organización–unidad–dispositivo'],
-                ].map(([key,label]) => (
-                  <label key={key} className="flex items-center gap-2 text-sm text-t1 cursor-pointer">
-                    <input type="checkbox" checked={checks[key as keyof typeof checks]} onChange={() => toggle(key as keyof typeof checks)} />
-                    {label}
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-        <aside className="border border-border rounded-lg p-4 space-y-4">
-          <p className="text-sm font-semibold text-t1">Estado de la orden</p>
-          {installationFlow.map((item,index) => (
-            <div key={item} className="flex items-center gap-2 text-sm">
-              <span className={'w-6 h-6 rounded-full flex items-center justify-center ' + (index <= stageIndex ? 'bg-primary text-white' : 'bg-bg text-muted')}>{index + 1}</span>
-              <span className={index <= stageIndex ? 'text-t1 font-medium' : 'text-muted'}>{GPS_REQUEST_LABEL[item]}</span>
-            </div>
-          ))}
-          {stage !== 'ACTIVA' && (
-            <button onClick={advance} disabled={stage === 'EN_PRUEBAS' && !allChecked}
-              className="w-full h-9 bg-primary text-white rounded text-sm font-medium disabled:opacity-40">
-              {stage === 'PROGRAMADA' ? 'Iniciar instalación' : stage === 'INSTALANDO' ? 'Pasar a pruebas' : 'Aprobar y activar'}
-            </button>
-          )}
-          {stage === 'ACTIVA' && <div className="bg-ok/10 text-ok p-3 rounded text-sm font-medium">Instalación aprobada y suscripción activa.</div>}
-          <p className="text-xs text-muted">El técnico configura APN, dominio, puerto y conexión. El socio no recibe credenciales de Traccar.</p>
-        </aside>
-      </div>
-    </div>
-  );
-}
-
-function SAGPSSubscriptions() {
-  const [coveredByAssociation, setCoveredByAssociation] = useState(false);
-  return (
-    <div className="p-6 lg:p-8 space-y-5">
-      <div><h1 className="text-2xl font-bold text-t1">Suscripciones GPS por unidad</h1><p className="text-sm text-t2 mt-0.5">Cobertura individual y migración a PRO institucional sin duplicar dispositivos ni cobros</p></div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {[['Activas','2'],['Individuales',coveredByAssociation ? '1' : '2'],['Cubiertas por asociación',coveredByAssociation ? '1' : '0'],['En instalación','1']].map(([label,value]) => (
-          <div key={label} className="border border-border rounded-lg p-4"><p className="text-sm text-t2">{label}</p><p className="text-2xl font-bold text-t1 mt-1">{value}</p></div>
-        ))}
-      </div>
-      <div className="bg-surface border border-border rounded-lg overflow-hidden">
-        <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead><tr className="bg-bg border-b border-border">
-            {['Suscripción','Titular','Asociación','Unidad','Cobertura','Facturación','Estado','Acción'].map(label => <th key={label} className="px-4 py-2.5 text-left text-t2 font-medium">{label}</th>)}
-          </tr></thead>
-          <tbody>
-            <tr className="border-b border-border">
-              <td className="px-4 py-3 font-mono text-primary">GPS-SUB-0015</td>
-              <td className="px-4 py-3 text-t1">Mario Condori Apaza</td>
-              <td className="px-4 py-3"><p className="text-t1">ATIPCAR</p><p className="text-muted">{coveredByAssociation ? 'PRO' : 'Operación'}</p></td>
-              <td className="px-4 py-3 text-t1">015 · <span className="font-mono">Z5C-444</span></td>
-              <td className="px-4 py-3"><span className={coveredByAssociation ? 'bg-primary/10 text-primary px-2 py-0.5 rounded' : 'bg-warn/10 text-warn px-2 py-0.5 rounded'}>{coveredByAssociation ? 'Por asociación' : 'Individual'}</span></td>
-              <td className="px-4 py-3 text-t1">{coveredByAssociation ? 'Cubierta por ATIPCAR' : 'Mensual por unidad'}</td>
-              <td className="px-4 py-3"><span className="bg-ok/10 text-ok px-2 py-0.5 rounded">Activa</span></td>
-              <td className="px-4 py-3"><button onClick={() => setCoveredByAssociation(!coveredByAssociation)} className="px-2.5 py-1 text-sm font-medium text-primary border border-primary/30 rounded-lg hover:bg-primary/5 transition-colors">{coveredByAssociation ? 'Volver a individual' : 'Cubrir con PRO'}</button></td>
-            </tr>
-            <tr>
-              <td className="px-4 py-3 font-mono text-primary">GPS-SUB-0004</td>
-              <td className="px-4 py-3 text-t1">Luisa Ticona Callo</td>
-              <td className="px-4 py-3"><p className="text-t1">ATIPCAR</p><p className="text-muted">Operación</p></td>
-              <td className="px-4 py-3 text-t1">004 · <span className="font-mono">Z1A-123</span></td>
-              <td className="px-4 py-3"><span className="bg-warn/10 text-warn px-2 py-0.5 rounded">Individual</span></td>
-              <td className="px-4 py-3 text-t1">Pago verificado</td>
-              <td className="px-4 py-3"><span className="bg-primary/10 text-primary px-2 py-0.5 rounded">Instalación</span></td>
-              <td className="px-4 py-3"><button className="px-2.5 py-1 text-sm font-medium text-primary border border-primary/30 rounded-lg hover:bg-primary/5 transition-colors">Ver orden</button></td>
-            </tr>
-          </tbody>
-        </table>
-        </div>
-      </div>
-      <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 text-sm text-t2">
-        Al activar PRO para una asociación, el mismo IMEI, vehículo e historial se conservan. La suscripción individual cambia a “Cubierta por asociación”; se registra prorrateo o saldo a favor y nunca se cobra dos veces.
-      </div>
-    </div>
-  );
-}
-
-function SAGPSDevices() {
-  const [devices] = useState<GPSDevice[]>(GPS_DEVICES);
-  const [filter, setFilter] = useState('todas');
-
-  const orgs = ['todas', ...Array.from(new Set(devices.map(d => d.orgName)))];
-  const filtered = filter === 'todas' ? devices : devices.filter(d => d.orgName === filter);
-
-  return (
-    <div className="p-6 lg:p-8 space-y-5">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-t1">Dispositivos GPS</h1>
-          <p className="text-sm text-t2 mt-0.5">{devices.length} dispositivos registrados · Inventario técnico administrado</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <select value={filter} onChange={e => setFilter(e.target.value)}
-            className="h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary">
-            {orgs.map(o => <option key={o} value={o}>{o === 'todas' ? 'Todas las asociaciones' : o}</option>)}
-          </select>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        {(['EN_LINEA', 'INSTALADO', 'SIN_SENAL', 'DESCONECTADO', 'PENDIENTE'] as const).map(s => {
-          const count = devices.filter(d => d.status === s).length;
-          return (
-            <div key={s} className={`border rounded-lg px-4 py-4 text-center ${GPS_STATUS_STYLE[s].replace('text-', 'border-').replace('bg-', 'bg-')}`}>
-              <p className={`text-3xl font-bold ${GPS_STATUS_STYLE[s].split(' ')[1]}`}>{count}</p>
-              <p className="text-xs text-t2 mt-0.5">{s.replace(/_/g, ' ')}</p>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="bg-surface border border-border rounded-lg overflow-hidden">
-        <div className="overflow-x-auto">
-        <table className="w-full text-sm" aria-label="Dispositivos GPS">
-          <thead>
-            <tr className="border-b border-border bg-bg">
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">IMEI</th>
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Modelo</th>
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Asociación</th>
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Unidad</th>
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">SIM</th>
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Estado</th>
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Última señal</th>
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Firmware</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map(d => (
-              <tr key={d.id} className="border-b border-border last:border-0 hover:bg-hover/50">
-                <td className="px-4 py-3 font-mono text-t1">{d.imei}</td>
-                <td className="px-4 py-3 text-t2">{d.model}</td>
-                <td className="px-4 py-3 text-t1">{d.orgName}</td>
-                <td className="px-4 py-3 text-t2">{d.unitCode ? `${d.unitCode} · ${d.plate}` : '—'}</td>
-                <td className="px-4 py-3 font-mono text-t2">{d.simNumber ?? '—'}</td>
-                <td className="px-4 py-3">
-                  <span className={`text-[11px] px-2 py-0.5 rounded font-medium ${GPS_STATUS_STYLE[d.status]}`}>{d.status.replace(/_/g, ' ')}</span>
-                </td>
-                <td className="px-4 py-3 font-mono text-t2">{d.lastSignal ? d.lastSignal.slice(0, 16).replace('T', ' ') : '—'}</td>
-                <td className="px-4 py-3 font-mono text-t2">{d.firmwareVersion ?? '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        </div>
-      </div>
-      <p className="text-sm text-muted">Los estados se actualizarán al recibir telemetría válida.</p>
-    </div>
-  );
-}
-
-// ─── Config. de cobros ────────────────────────────────────────────────────────
-function SABillingConfig() {
-  const [saved, setSaved] = useState(false);
-  const [config, setConfig] = useState({
-    graceDays: '15',
-    suspendAfterGrace: true,
-    notifyBeforeExpiry: '7',
-    currency: 'PEN',
-    proMonthlyBase: '350',
-    proAnnualBase: '3500',
-    gpsMonthlyPerUnit: '18',
-    gpsMonthlySim: '12',
-  });
-  const set = (k: string, v: string | boolean) => setConfig(f => ({ ...f, [k]: v }));
-
-  return (
-    <div className="p-6 lg:p-8 space-y-5">
-      <h1 className="text-2xl font-bold text-t1">Configuración de cobros</h1>
-      <p className="text-sm text-t2">Parámetros globales de facturación. Cada suscripción puede tener condiciones distintas acordadas.</p>
-
-      {saved && (
-        <div className="bg-ok/5 border border-ok/30 rounded-lg p-3 flex items-center gap-2 text-sm text-ok">
-          <CheckCircle size={14} /> Configuración guardada
-        </div>
-      )}
-
-      <div className="bg-surface border border-border rounded-lg divide-y divide-border max-w-2xl">
-        <div className="px-4 py-3 flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium text-t1">Periodo de gracia (días)</p>
-            <p className="text-sm text-t2">Días adicionales al vencer antes de suspender.</p>
-          </div>
-          <input type="number" min="0" max="90" value={config.graceDays} onChange={e => set('graceDays', e.target.value)}
-            className="w-20 h-8 px-2 border border-border rounded text-sm text-right focus:outline-none focus:ring-2 focus:ring-primary" />
-        </div>
-        <div className="px-4 py-3 flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium text-t1">Suspender al finalizar gracia</p>
-            <p className="text-sm text-t2">Bloquear nuevas configuraciones automáticamente.</p>
-          </div>
-          <button onClick={() => set('suspendAfterGrace', !config.suspendAfterGrace)}
-            className={`w-10 h-5 rounded-full transition-colors relative ${config.suspendAfterGrace ? 'bg-primary' : 'bg-border'}`}>
-            <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${config.suspendAfterGrace ? 'left-5' : 'left-0.5'}`} />
-          </button>
-        </div>
-        <div className="px-4 py-3 flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium text-t1">Avisar antes del vencimiento (días)</p>
-            <p className="text-sm text-t2">Notificación al admin de la asociación.</p>
-          </div>
-          <input type="number" min="1" max="60" value={config.notifyBeforeExpiry} onChange={e => set('notifyBeforeExpiry', e.target.value)}
-            className="w-20 h-8 px-2 border border-border rounded text-sm text-right focus:outline-none focus:ring-2 focus:ring-primary" />
-        </div>
-      </div>
-
-      <div className="bg-surface border border-border rounded-lg p-4 space-y-3">
-        <h3 className="text-xs font-semibold text-t2 uppercase tracking-wide">Precios de referencia (S/)</h3>
-        <p className="text-sm text-muted">Estos valores son referencia. El precio acordado se define por suscripción.</p>
-        {[
-          { label: 'Plan PRO mensual (base)', key: 'proMonthlyBase' },
-          { label: 'Plan PRO anual (base)', key: 'proAnnualBase' },
-          { label: 'GPS Vehicular mensual por unidad', key: 'gpsMonthlyPerUnit' },
-          { label: 'SIM mensual por dispositivo', key: 'gpsMonthlySim' },
-        ].map(item => (
-          <div key={item.key} className="flex items-center justify-between gap-4">
-            <label className="text-sm text-t1 flex-1">{item.label}</label>
-            <div className="flex items-center gap-1">
-              <span className="text-sm text-t2">S/</span>
-              <input type="number" min="0" value={(config as unknown as Record<string, string>)[item.key]}
-                onChange={e => set(item.key, e.target.value)}
-                className="w-24 h-8 px-2 border border-border rounded text-sm text-right focus:outline-none focus:ring-2 focus:ring-primary" />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <button onClick={() => setSaved(true)} className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h">
-        Guardar configuración
-      </button>
-    </div>
-  );
-}
+// Nota (12 sept 2026, decidido con Jayde): las pantallas "Solicitudes GPS",
+// "Instalaciones GPS", "Suscripciones GPS" y "Config. de cobros" se
+// eliminaron -- eran 100% datos de ejemplo (nunca leian ni escribian nada
+// real). El registro real de GPS Vehicular es directo: Super Admin escribe
+// el IMEI/SIM en Asociaciones -> editar -> GPS (o desde Super Admin -> GPS),
+// ver plan-gps-vehicular.md §6.1.
 
 // ─── New Org Wizard (5 steps) ─────────────────────────────────────────────────
 const WIZARD_STEPS = ['Organización', 'Administrador', 'Operación', 'Plan y facturación', 'Confirmación'];
@@ -2460,31 +2206,43 @@ function MapPickerModal({
   );
 }
 
-function NewOrgWizard({ onBack }: { onBack: () => void }) {
+function NewOrgWizard({
+  onBack,
+  fromRequest,
+}: {
+  onBack: () => void;
+  // Presente solo cuando se llega desde "Usar para nueva asociación (IA)" en
+  // Solicitudes comerciales (ia-aplicada.md §2.5) -- el wizard arranca
+  // pre-llenado con la sugerencia, pero cada campo sigue siendo editable: no
+  // se crea nada hasta que el Super Admin confirme el ultimo paso, igual que
+  // si lo hubiera llenado a mano.
+  fromRequest?: { contactName: string; suggestion: OnboardingSuggestion } | null;
+}) {
   const [step, setStep] = useState(0);
   const [created, setCreated] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [mapTarget, setMapTarget] = useState<'terminal1' | 'terminal2' | null>(null);
   const [logoUploading, setLogoUploading] = useState(false);
+  const sug = fromRequest?.suggestion;
   const [form, setForm] = useState({
     // Step 0
-    name: '', logoUrl: '', ruc: '', city: '', legalRep: '', phone: '', email: '',
+    name: sug?.name ?? '', logoUrl: '', ruc: sug?.ruc ?? '', city: sug?.city ?? '', legalRep: '', phone: '', email: '',
     // Step 1
-    adminName: '', adminEmail: '', adminPhone: '',
+    adminName: sug?.adminName ?? '', adminEmail: sug?.adminEmail ?? '', adminPhone: sug?.adminPhone ?? '',
     // Step 2
-    terminal1: '', terminal1Address: '', terminal2: '', terminal2Address: '',
-    routes: [
-      { origin: '', destination: '' },
-      { origin: '', destination: '' },
-    ],
-    companies: '', config: '',
+    terminal1: sug?.terminal1 ?? '', terminal1Address: '', terminal2: sug?.terminal2 ?? '', terminal2Address: '',
+    routes:
+      sug?.routes && sug.routes.length > 0
+        ? sug.routes
+        : [
+            { origin: '', destination: '' },
+            { origin: '', destination: '' },
+          ],
+    companies: '', config: sug?.configNotes ?? '',
     // Step 3
-    plan: 'OPERACION' as 'OPERACION' | 'PRO',
-    period: 'MENSUAL' as 'MENSUAL' | 'ANUAL',
-    units: '', gpsUnits: '', startDate: '', agreedPrice: '', discount: '',
-    hardwareCost: '', installCost: '', simCost: '', serviceCost: '',
-    subStatus: 'PENDIENTE_PAGO' as string,
+    plan: sug?.plan ?? ('OPERACION' as 'OPERACION' | 'PRO'),
+    units: sug?.units ?? '', gpsUnits: sug?.gpsUnits ?? '',
   });
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
 
@@ -2542,9 +2300,9 @@ function NewOrgWizard({ onBack }: { onBack: () => void }) {
             <strong>{form.name || 'Nueva Org'}</strong> fue creada con plan {form.plan}.
           </p>
           {form.plan === 'PRO' && (
-            <div className="bg-warn/5 border border-warn/20 rounded-lg p-3 text-left mb-4">
-              <p className="text-sm font-medium text-warn">Plan PRO — {form.subStatus === 'PENDIENTE_PAGO' ? 'Pendiente de pago' : form.subStatus}</p>
-              <p className="text-sm text-t2 mt-1">El plan PRO no se activa automáticamente. Registra el pago en la sección Pagos y apruébalo para activarlo.</p>
+            <div className="bg-ok/5 border border-ok/20 rounded-lg p-3 text-left mb-4">
+              <p className="text-sm font-medium text-ok">Plan PRO — activo</p>
+              <p className="text-sm text-t2 mt-1">La asociación ya tiene acceso PRO real (GPS, alertas, asistente de IA). Si necesitas cambiarlo más adelante, hazlo desde Asociaciones → editar → Plan.</p>
             </div>
           )}
           <div className="bg-bg border border-border rounded-lg p-4 text-left mb-6">
@@ -2553,7 +2311,6 @@ function NewOrgWizard({ onBack }: { onBack: () => void }) {
               { task: 'Completar datos de la organización', done: !!form.name },
               { task: 'Configurar terminales y rutas', done: !!form.terminal1 },
               { task: 'Agregar empresas integrantes', done: !!form.companies },
-              { task: form.plan === 'PRO' ? 'Registrar y aprobar pago PRO' : 'Verificar plan Operación', done: false },
               { task: 'Invitar administrador', done: !!form.adminEmail },
             ].map((item, i) => (
               <div key={i} className="flex items-center gap-2 py-1.5">
@@ -2578,6 +2335,18 @@ function NewOrgWizard({ onBack }: { onBack: () => void }) {
         <button onClick={onBack} className="text-sm text-primary hover:underline">← Cancelar</button>
         <h1 className="text-2xl font-bold text-t1">Nueva asociación</h1>
       </div>
+
+      {fromRequest && (
+        <div className="mb-6 p-3 bg-primary/5 border border-primary/20 rounded-lg flex items-start gap-2 text-sm text-primary max-w-2xl">
+          <Sparkles size={14} className="mt-0.5 flex-shrink-0" />
+          <span>
+            Prellenado con la sugerencia de IA a partir de la solicitud comercial de <strong>{fromRequest.contactName}</strong>.
+            {sug && !sug.aiParsed && sug.routes.length === 0 && !sug.terminal1
+              ? ' No se pudo interpretar un corredor claro del texto de la solicitud -- completa terminales y rutas a mano.'
+              : ' Revisa cada campo antes de continuar: nada se crea hasta el último paso.'}
+          </span>
+        </div>
+      )}
 
       {/* Progress bar */}
       <div className="flex items-center mb-8 overflow-x-auto">
@@ -2875,22 +2644,9 @@ function NewOrgWizard({ onBack }: { onBack: () => void }) {
             {form.plan === 'PRO' && (
               <div className="bg-warn/5 border border-warn/20 rounded-lg p-3">
                 <p className="text-sm font-medium text-warn">Plan PRO seleccionado</p>
-                <p className="text-sm text-t2 mt-1">La asociación quedará con estado "PRO — Pendiente de pago" hasta que se registre y apruebe el pago correspondiente.</p>
+                <p className="text-sm text-t2 mt-1">Esto activa el Plan PRO de inmediato para la asociación (GPS, alertas, asistente de IA, etc.). Confirma el pago con el cliente antes de crearla así — el cambio de plan no pasa por ninguna aprobación intermedia.</p>
               </div>
             )}
-
-            {/* Periodicity */}
-            <div>
-              <label className="block text-sm font-medium text-t1 mb-2">Periodicidad</label>
-              <div className="flex gap-3">
-                {(['MENSUAL', 'ANUAL'] as const).map(p => (
-                  <button key={p} onClick={() => setForm(f => ({ ...f, period: p }))}
-                    className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${form.period === p ? 'bg-primary text-white border-primary' : 'border-border text-t2 hover:bg-hover'}`}>
-                    {p === 'MENSUAL' ? 'Mensual' : 'Anual'}
-                  </button>
-                ))}
-              </div>
-            </div>
 
             <div className="grid grid-cols-2 gap-3">
               {[
@@ -2905,42 +2661,7 @@ function NewOrgWizard({ onBack }: { onBack: () => void }) {
                 </div>
               ))}
             </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-t1 mb-1">Fecha prevista de inicio</label>
-                <input type="date" value={form.startDate} onChange={e => set('startDate', e.target.value)}
-                  className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-t1 mb-1">Estado inicial suscripción</label>
-                <select value={form.subStatus} onChange={e => set('subStatus', e.target.value)}
-                  className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary">
-                  <option value="BORRADOR">Borrador</option>
-                  <option value="PENDIENTE_PAGO">Pendiente de pago</option>
-                  <option value="PROGRAMADA">Programada</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="border border-border rounded-lg p-4 space-y-3">
-              <p className="text-xs font-semibold text-t2 uppercase tracking-wide">Costos acordados (S/ — opcionales)</p>
-              {[
-                { label: 'Precio acordado (servicio)', key: 'agreedPrice' },
-                { label: 'Descuento (%)', key: 'discount' },
-                { label: 'Hardware (dispositivos GPS)', key: 'hardwareCost' },
-                { label: 'Instalación', key: 'installCost' },
-                { label: 'SIM (anual)', key: 'simCost' },
-                { label: 'Servicio recurrente', key: 'serviceCost' },
-              ].map(f => (
-                <div key={f.key} className="flex items-center justify-between gap-3">
-                  <label className="text-sm text-t1 flex-1">{f.label}</label>
-                  <input type="number" min="0" value={(form as unknown as Record<string, string>)[f.key]} onChange={e => set(f.key, e.target.value)}
-                    placeholder="0"
-                    className="w-28 h-8 px-2 border border-border rounded text-sm text-right focus:outline-none focus:ring-2 focus:ring-primary" />
-                </div>
-              ))}
-            </div>
+            <p className="text-xs text-muted">Solo informativo (referencia de la cotización) — no se guarda todavía como dato propio de la asociación.</p>
           </div>
         )}
 
@@ -2963,11 +2684,8 @@ function NewOrgWizard({ onBack }: { onBack: () => void }) {
                 .map(route => route.origin + ' → ' + route.destination)
                 .join(' · ') || '—'],
               ['Plan', form.plan],
-              ['Periodicidad', form.period],
               ['Unidades', form.units || '—'],
               ['Unidades GPS', form.gpsUnits || '—'],
-              ['Estado suscripción', form.subStatus],
-              ['Precio acordado', form.agreedPrice ? `S/ ${form.agreedPrice}` : '—'],
             ].map(([k, v]) => (
               <div key={k} className="flex justify-between border-b border-border pb-2">
                 <span className="text-t2">{k}</span>
@@ -2976,7 +2694,7 @@ function NewOrgWizard({ onBack }: { onBack: () => void }) {
             ))}
             {form.plan === 'PRO' && (
               <div className="bg-warn/5 border border-warn/20 rounded-lg p-3">
-                <p className="text-sm font-medium text-warn">Al crear, el plan PRO quedará en estado "{form.subStatus}". No se activa automáticamente.</p>
+                <p className="text-sm font-medium text-warn">Al crear, la asociación queda con Plan PRO real de inmediato — confirma que el pago ya está acordado.</p>
               </div>
             )}
             <p className="text-sm text-muted">La organización se creará en estado borrador. Se enviará invitación al administrador.</p>
@@ -3024,53 +2742,119 @@ function NewOrgWizard({ onBack }: { onBack: () => void }) {
 }
 
 // ─── Tech health & placeholders ───────────────────────────────────────────────
+const HEALTH_SERVICE_LABEL: Record<string, string> = {
+  BASE_DE_DATOS: 'Base de datos',
+  TRACCAR: 'Traccar (GPS)',
+  NOTIFICACIONES: 'Notificaciones (Resend)',
+  CLOUDINARY: 'Cloudinary (imágenes)',
+  ASISTENTE_IA: 'Asistente AI (Claude)',
+};
+const HEALTH_STATUS_STYLE: Record<string, string> = {
+  OK: 'bg-ok/10 text-ok',
+  DEGRADADO: 'bg-warn/10 text-warn',
+  CAIDO: 'bg-danger/10 text-danger',
+};
+const HEALTH_HISTORY_DOT: Record<string, string> = {
+  OK: 'bg-ok',
+  DEGRADADO: 'bg-warn',
+  CAIDO: 'bg-danger',
+};
+
 function SATechHealth() {
-  const services = [
-    { name: 'API Principal', status: 'OK', latency: '42ms', uptime: '99.98%' },
-    { name: 'Base de datos', status: 'OK', latency: '8ms', uptime: '99.99%' },
-    { name: 'Kiosco QR', status: 'OK', latency: '120ms', uptime: '99.92%' },
-    { name: 'Notificaciones', status: 'DEGRADADO', latency: '850ms', uptime: '98.1%' },
-    { name: 'GPS PRO', status: 'OK', latency: '65ms', uptime: '99.95%' },
-    { name: 'PDF Export', status: 'OK', latency: '340ms', uptime: '99.88%' },
-  ];
+  const [rows, setRows] = useState<HealthCheckServiceStatus[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      fetchHealthStatus()
+        .then(list => { if (!cancelled) setRows(list); })
+        .catch(err => { if (!cancelled) setLoadError(err instanceof Error ? err.message : 'No se pudo cargar la salud técnica.'); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    };
+    poll();
+    const id = setInterval(poll, 30000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
   return (
     <div className="p-6 lg:p-8 space-y-6">
-      <h1 className="text-2xl font-bold text-t1">Salud técnica</h1>
-      <div className="bg-surface border border-border rounded-lg overflow-hidden">
-        <div className="overflow-x-auto">
-        <table className="w-full text-sm" aria-label="Estado de servicios">
-          <thead>
-            <tr className="border-b border-border bg-bg">
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Servicio</th>
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Estado</th>
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Latencia</th>
-              <th className="text-left px-4 py-2.5 text-t2 font-medium">Uptime 30d</th>
-            </tr>
-          </thead>
-          <tbody>
-            {services.map(s => (
-              <tr key={s.name} className="border-b border-border last:border-0">
-                <td className="px-4 py-3 font-medium text-t1">{s.name}</td>
-                <td className="px-4 py-3">
-                  <span className={`text-[11px] px-2 py-0.5 rounded font-medium ${s.status === 'OK' ? 'bg-ok/10 text-ok' : 'bg-warn/10 text-warn'}`}>{s.status}</span>
-                </td>
-                <td className="px-4 py-3 font-mono text-t2">{s.latency}</td>
-                <td className="px-4 py-3 font-mono text-t1">{s.uptime}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        </div>
+      <div>
+        <h1 className="text-2xl font-bold text-t1">Salud técnica</h1>
+        <p className="text-sm text-t2 mt-0.5">Monitoreo real de la propia infraestructura de CHASKI AI — no es el GPS de las asociaciones (eso vive en Super Admin → GPS). Un chequeo real corre cada 5 minutos.</p>
       </div>
-      <p className="text-sm text-muted">Datos de referencia.</p>
+
+      {loading ? (
+        <p className="text-sm text-t2">Cargando…</p>
+      ) : loadError ? (
+        <p className="text-sm text-danger">{loadError}</p>
+      ) : (
+        <div className="space-y-3">
+          {rows.map(r => (
+            <div key={r.service} className="bg-surface border border-border rounded-lg p-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2.5">
+                  <h3 className="text-sm font-semibold text-t1">{HEALTH_SERVICE_LABEL[r.service] ?? r.service}</h3>
+                  {r.status ? (
+                    <span className={`text-[11px] px-2 py-0.5 rounded font-medium ${HEALTH_STATUS_STYLE[r.status]}`}>{r.status}</span>
+                  ) : (
+                    <span className="text-[11px] px-2 py-0.5 rounded font-medium bg-t2/10 text-t2">SIN DATOS</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-4 text-sm">
+                  <span className="text-t2">Latencia: <span className="font-mono text-t1">{r.latencyMs == null ? '—' : `${r.latencyMs}ms`}</span></span>
+                  <span className="text-t2">Uptime 30d: <span className="font-mono text-t1">{r.uptime30d == null ? '—' : `${r.uptime30d}%`}</span></span>
+                </div>
+              </div>
+
+              {r.errorMessage && (
+                <p className="text-xs text-danger mt-2">{r.errorMessage}</p>
+              )}
+
+              {r.history.length > 0 && (
+                <div className="flex items-end gap-0.5 mt-3 h-5">
+                  {r.history.map((h, i) => (
+                    <div
+                      key={i}
+                      title={`${h.status} · ${new Date(h.checkedAt).toLocaleString('es-PE')}`}
+                      className={`flex-1 h-full rounded-sm ${HEALTH_HISTORY_DOT[h.status] ?? 'bg-t2/20'}`}
+                    />
+                  ))}
+                </div>
+              )}
+              {r.checkedAt && (
+                <p className="text-[11px] text-muted mt-1.5">Último chequeo: {new Date(r.checkedAt).toLocaleString('es-PE')}</p>
+              )}
+            </div>
+          ))}
+          {rows.length === 0 && <p className="text-sm text-t2">Todavía no hay chequeos registrados — el primero corre dentro de los próximos 5 minutos.</p>}
+        </div>
+      )}
     </div>
   );
 }
 
 function SAAudit() {
+  const [entries, setEntries] = useState<AuditEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchGlobalAudit()
+      .then(data => { if (!cancelled) setEntries(data); })
+      .catch(err => { if (!cancelled) setLoadError(err instanceof Error ? err.message : 'No se pudo cargar la auditoría.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <div className="p-6 lg:p-8 space-y-4">
       <h1 className="text-2xl font-bold text-t1">Auditoría</h1>
+      {loadError && (
+        <div className="bg-danger/5 border border-danger/20 rounded-lg p-3 text-sm text-danger">{loadError}</div>
+      )}
       <div className="bg-surface border border-border rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
         <table className="w-full text-sm" aria-label="Auditoría">
@@ -3085,7 +2869,11 @@ function SAAudit() {
             </tr>
           </thead>
           <tbody>
-            {AUDIT_LOG.map(e => (
+            {loading ? (
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-t2">Cargando auditoría…</td></tr>
+            ) : entries.length === 0 ? (
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-t2">Sin registros de auditoría todavía.</td></tr>
+            ) : entries.map(e => (
               <tr key={e.id} className="border-b border-border last:border-0 hover:bg-hover/50">
                 <td className="px-4 py-2.5 font-medium text-t1">{e.action}</td>
                 <td className="px-4 py-2.5 text-t2">{e.actor}</td>
@@ -3099,6 +2887,935 @@ function SAAudit() {
         </table>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Landing pública (contenido editable) ──────────────────────────────────
+// docs/planes/landing-publica-y-solicitudes-comerciales.md §9 -- alcance
+// actual: solo el contenido visual (hero, problemas/capacidades, planes,
+// referencia ATIPCAR, FAQ), guardado directo por sección, sin borrador ni
+// historial de versiones. El formulario comercial en sí (§8, preguntas
+// dinámicas) y SEO/páginas legales/modo mantenimiento quedan pendientes.
+const LANDING_ICON_OPTIONS = ['ListOrdered', 'FileText', 'Route', 'ArrowLeftRight', 'BarChart2', 'Shield'];
+
+const LANDING_SECTION_TABS: { key: keyof LandingContentData; label: string }[] = [
+  { key: 'HERO', label: 'Hero' },
+  { key: 'HERO_BACKGROUND', label: 'Landing fondo' },
+  { key: 'PROBLEMS', label: 'Problemas' },
+  { key: 'CAPABILITIES', label: 'Capacidades' },
+  { key: 'PLANS', label: 'Planes' },
+  { key: 'CLIENTS_SHOWCASE', label: 'Clientes de referencia' },
+  { key: 'FAQ', label: 'Preguntas frecuentes' },
+  { key: 'COMPANY', label: 'Datos de empresa' },
+  { key: 'FLEET_SHOWCASE', label: 'Carrusel de flota' },
+  { key: 'ABOUT', label: 'Sobre nosotros' },
+  { key: 'LEGAL_TERMS', label: 'Términos y condiciones' },
+  { key: 'LEGAL_PRIVACY', label: 'Política de privacidad' },
+  { key: 'LEGAL_COOKIES', label: 'Política de cookies' },
+];
+
+function LegalPageEditor({ page, onChange }: { page: LandingContentData['LEGAL_TERMS']; onChange: (page: LandingContentData['LEGAL_TERMS']) => void }) {
+  return (
+    <div className="space-y-4">
+      <LandingTextField label="Título" value={page.title} onChange={v => onChange({ ...page, title: v })} />
+      <div>
+        <label className="block text-xs font-medium text-t1 mb-1">Contenido</label>
+        <textarea
+          value={page.body}
+          onChange={e => onChange({ ...page, body: e.target.value })}
+          rows={18}
+          className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-y font-mono focus:outline-none focus:ring-2 focus:ring-primary"
+        />
+        <p className="text-xs text-muted mt-1">Un párrafo por línea en blanco. Esto es un borrador editable -- no está revisado legalmente.</p>
+      </div>
+    </div>
+  );
+}
+
+function LandingTextField({ label, value, onChange, multiline = false }: { label: string; value: string; onChange: (v: string) => void; multiline?: boolean }) {
+  return (
+    <div>
+      <label className="block text-xs font-medium text-t1 mb-1">{label}</label>
+      {multiline ? (
+        <textarea value={value} onChange={e => onChange(e.target.value)} rows={3}
+          className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary" />
+      ) : (
+        <input value={value} onChange={e => onChange(e.target.value)}
+          className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+      )}
+    </div>
+  );
+}
+
+// Editor generico para listas de objetos con campos de texto simples (usado
+// por Problemas y Preguntas frecuentes -- Capacidades tiene su propio editor
+// porque ademas necesita el selector de icono).
+function RepeatableEditor<T extends Record<string, string>>({
+  items, onChange, fields, addLabel, emptyItem,
+}: {
+  items: T[];
+  onChange: (items: T[]) => void;
+  fields: { key: keyof T; label: string; multiline?: boolean }[];
+  addLabel: string;
+  emptyItem: T;
+}) {
+  const update = (i: number, key: keyof T, value: string) => onChange(items.map((it, idx) => (idx === i ? { ...it, [key]: value } : it)));
+  const remove = (i: number) => onChange(items.filter((_, idx) => idx !== i));
+  return (
+    <div className="space-y-3">
+      {items.map((item, i) => (
+        <div key={i} className="border border-border rounded-lg p-3 space-y-2 relative">
+          <button type="button" onClick={() => remove(i)} className="absolute top-2 right-2 text-muted hover:text-danger" aria-label="Eliminar">
+            <X size={14} />
+          </button>
+          {fields.map(f => (
+            <div key={String(f.key)} className="pr-6">
+              <LandingTextField label={f.label} value={(item[f.key] as string) ?? ''} onChange={v => update(i, f.key, v)} multiline={f.multiline} />
+            </div>
+          ))}
+        </div>
+      ))}
+      <button type="button" onClick={() => onChange([...items, emptyItem])} className="text-sm text-primary font-medium flex items-center gap-1.5">
+        <Plus size={14} /> {addLabel}
+      </button>
+    </div>
+  );
+}
+
+// Un slot de imagen (foto de unidad, o nombre estilizado de la asociacion) --
+// mismo pipeline de subida que el logo de una asociacion (resizeImageFile +
+// uploadImage a Cloudinary), solo cambia el tamaño maximo y la carpeta.
+function FleetImageField({ label, value, onChange, folder, maxDimension }: {
+  label: string; value: string; onChange: (url: string) => void; folder: string; maxDimension: number;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleFile = async (file: File) => {
+    setError('');
+    if (file.size > 8 * 1024 * 1024) { setError('La imagen pesa demasiado (máximo 8 MB).'); return; }
+    setUploading(true);
+    try {
+      const resized = await resizeImageFile(file, maxDimension);
+      const { url } = await uploadImage(resized, folder);
+      onChange(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo subir la imagen.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div>
+      <label className="block text-xs font-medium text-t1 mb-1">{label}</label>
+      <div className="flex items-center gap-3">
+        <div className="w-24 h-16 border border-border rounded-lg bg-bg flex items-center justify-center overflow-hidden flex-shrink-0">
+          {value ? <img src={value} alt={label} className="max-w-full max-h-full object-contain" /> : <span className="text-[10px] text-muted">Sin imagen</span>}
+        </div>
+        <label className="px-3 py-1.5 text-sm border border-border rounded-lg cursor-pointer hover:bg-hover">
+          {uploading ? 'Subiendo…' : 'Subir imagen'}
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            disabled={uploading}
+            onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
+          />
+        </label>
+      </div>
+      {error && <p className="text-xs text-danger mt-1">{error}</p>}
+    </div>
+  );
+}
+
+function FleetShowcaseEditor({ value, onChange }: { value: LandingFleetShowcase; onChange: (value: LandingFleetShowcase) => void }) {
+  const items = value.items;
+  const update = (i: number, patch: Partial<LandingFleetItem>) =>
+    onChange({ ...value, items: items.map((it, idx) => (idx === i ? { ...it, ...patch } : it)) });
+  const remove = (i: number) => onChange({ ...value, items: items.filter((_, idx) => idx !== i) });
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-t2">
+        Cada asociación necesita la foto real de una de sus unidades, y su nombre como texto simple (se muestra con
+        la tipografía del sitio, ya no como imagen). Se muestran de a 2 por página en la landing.
+      </p>
+      <div>
+        <label className="block text-xs font-medium text-t1 mb-1">Segundos entre cada cambio de página</label>
+        <input
+          type="number"
+          min={1}
+          max={30}
+          value={value.intervalSeconds}
+          onChange={e => onChange({ ...value, intervalSeconds: Math.max(1, Number(e.target.value) || 1) })}
+          className="w-24 h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+        />
+      </div>
+      {items.map((item, i) => (
+        <div key={i} className="border border-border rounded-lg p-3 space-y-3 relative">
+          <button type="button" onClick={() => remove(i)} className="absolute top-2 right-2 text-muted hover:text-danger" aria-label="Eliminar">
+            <X size={14} />
+          </button>
+          <FleetImageField
+            label="Foto de la unidad"
+            value={item.vehicleImageUrl}
+            onChange={url => update(i, { vehicleImageUrl: url })}
+            folder="fleet-vehicles"
+            maxDimension={960}
+          />
+          <LandingTextField label="Nombre de la asociación" value={item.name} onChange={v => update(i, { name: v })} />
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => onChange({ ...value, items: [...items, { vehicleImageUrl: '', name: '' }] })}
+        className="text-sm text-primary font-medium flex items-center gap-1.5"
+      >
+        <Plus size={14} /> Agregar asociación
+      </button>
+    </div>
+  );
+}
+
+function HeroBackgroundEditor({ value, onChange }: { value: LandingContentData['HERO_BACKGROUND']; onChange: (value: LandingContentData['HERO_BACKGROUND']) => void }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-t2">
+        Una sola foto de fondo para el bloque principal de la landing (título, subtítulo y la vitrina de flota).
+        Usa una imagen clara/luminosa — el texto se muestra en color oscuro fijo sobre ella. Vacío = fondo plano de siempre.
+      </p>
+      <FleetImageField
+        label="Foto de fondo"
+        value={value.imageUrl}
+        onChange={url => onChange({ imageUrl: url })}
+        folder="landing-background"
+        maxDimension={2400}
+      />
+    </div>
+  );
+}
+
+function ClientsShowcaseEditor({ items, onChange }: { items: LandingContentData['CLIENTS_SHOWCASE']; onChange: (items: LandingContentData['CLIENTS_SHOWCASE']) => void }) {
+  const update = (i: number, patch: Partial<LandingContentData['CLIENTS_SHOWCASE'][number]>) =>
+    onChange(items.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
+  const remove = (i: number) => onChange(items.filter((_, idx) => idx !== i));
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-t2">
+        Cada cliente necesita 2 imágenes: el logo de la asociación y una imagen con las rutas que opera (ya diseñada —
+        no es texto que redacte el sistema). Todos se muestran juntos en una fila en la landing, sin rotar.
+      </p>
+      {items.map((item, i) => (
+        <div key={i} className="border border-border rounded-lg p-3 space-y-3 relative">
+          <button type="button" onClick={() => remove(i)} className="absolute top-2 right-2 text-muted hover:text-danger" aria-label="Eliminar">
+            <X size={14} />
+          </button>
+          <FleetImageField
+            label="Logo de la asociación"
+            value={item.logoUrl}
+            onChange={url => update(i, { logoUrl: url })}
+            folder="client-logos"
+            maxDimension={480}
+          />
+          <FleetImageField
+            label="Rutas que opera (imagen)"
+            value={item.routesImageUrl}
+            onChange={url => update(i, { routesImageUrl: url })}
+            folder="client-routes"
+            maxDimension={480}
+          />
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => onChange([...items, { logoUrl: '', routesImageUrl: '' }])}
+        className="text-sm text-primary font-medium flex items-center gap-1.5"
+      >
+        <Plus size={14} /> Agregar cliente
+      </button>
+    </div>
+  );
+}
+
+function CapabilitiesEditor({ items, onChange }: { items: LandingContentData['CAPABILITIES']; onChange: (items: LandingContentData['CAPABILITIES']) => void }) {
+  const update = (i: number, patch: Partial<LandingContentData['CAPABILITIES'][number]>) =>
+    onChange(items.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
+  const remove = (i: number) => onChange(items.filter((_, idx) => idx !== i));
+  return (
+    <div className="space-y-3">
+      {items.map((item, i) => (
+        <div key={i} className="border border-border rounded-lg p-3 space-y-2 relative">
+          <button type="button" onClick={() => remove(i)} className="absolute top-2 right-2 text-muted hover:text-danger" aria-label="Eliminar">
+            <X size={14} />
+          </button>
+          <div className="pr-6">
+            <label className="block text-xs font-medium text-t1 mb-1">Icono</label>
+            <select value={item.icon} onChange={e => update(i, { icon: e.target.value })}
+              className="w-full h-9 px-3 border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary">
+              {LANDING_ICON_OPTIONS.map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </div>
+          <div className="pr-6"><LandingTextField label="Título" value={item.label} onChange={v => update(i, { label: v })} /></div>
+          <div className="pr-6"><LandingTextField label="Descripción" value={item.desc} onChange={v => update(i, { desc: v })} multiline /></div>
+        </div>
+      ))}
+      <button type="button" onClick={() => onChange([...items, { icon: 'Shield', label: '', desc: '' }])} className="text-sm text-primary font-medium flex items-center gap-1.5">
+        <Plus size={14} /> Agregar capacidad
+      </button>
+    </div>
+  );
+}
+
+function PlanBlockEditor({ plan, onChange }: { plan: LandingContentData['PLANS']['operacion']; onChange: (plan: LandingContentData['PLANS']['operacion']) => void }) {
+  return (
+    <div className="border border-border rounded-lg p-4 space-y-3">
+      <LandingTextField label="Nombre del plan" value={plan.name} onChange={v => onChange({ ...plan, name: v })} />
+      <LandingTextField label="Descripción corta" value={plan.desc} onChange={v => onChange({ ...plan, desc: v })} />
+      <div>
+        <label className="block text-xs font-medium text-t1 mb-1">Características (una por línea)</label>
+        <textarea
+          value={plan.features.join('\n')}
+          onChange={e => onChange({ ...plan, features: e.target.value.split('\n') })}
+          rows={Math.max(4, plan.features.length)}
+          className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none font-mono focus:outline-none focus:ring-2 focus:ring-primary"
+        />
+      </div>
+    </div>
+  );
+}
+
+function SALandingContent() {
+  const [content, setContent] = useState<LandingContentData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<keyof LandingContentData>('HERO');
+  const [saving, setSaving] = useState(false);
+  const [savedTab, setSavedTab] = useState<keyof LandingContentData | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    setError(null);
+    setSavedTab(null);
+    fetchLandingContent()
+      .then(data => {
+        if (!data) { setError('No se pudo cargar el contenido de la landing.'); return; }
+        setContent(data);
+      })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const set = <K extends keyof LandingContentData>(key: K, value: LandingContentData[K]) => {
+    setContent(prev => (prev ? { ...prev, [key]: value } : prev));
+    setSavedTab(null);
+  };
+
+  const save = async () => {
+    if (!content) return;
+    setSaving(true);
+    setError(null);
+    setSavedTab(null);
+    try {
+      await updateLandingSection(tab, content[tab]);
+      setSavedTab(tab);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo guardar la sección.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-6 py-4 border-b border-border bg-surface flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-t1">Landing pública</h1>
+          <p className="text-sm text-t2 mt-0.5">Contenido de la página pública de CHASKI AI — se guarda directo, sin vista previa.</p>
+        </div>
+        <button onClick={load} className="text-sm text-t2 hover:text-t1 flex items-center gap-1.5">
+          <RefreshCw size={13} /> Actualizar
+        </button>
+      </div>
+
+      {error && (
+        <div className="px-6 py-3 bg-danger/5 border-b border-danger/20 text-sm text-danger" role="alert">{error}</div>
+      )}
+
+      {loading || !content ? (
+        <div className="p-6 text-sm text-t2">Cargando contenido de la landing…</div>
+      ) : (
+        <div className="flex flex-1 overflow-hidden">
+          <nav className="w-52 flex-shrink-0 border-r border-border overflow-auto py-3" aria-label="Secciones de la landing">
+            {LANDING_SECTION_TABS.map(t => (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`w-full text-left px-4 py-2 text-sm ${tab === t.key ? 'bg-primary/10 text-primary font-medium' : 'text-t2 hover:bg-hover hover:text-t1'}`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="flex-1 overflow-auto p-6 max-w-2xl">
+            {tab === 'HERO' && (
+              <div className="space-y-4">
+                <LandingTextField label="Frase corta (arriba del título)" value={content.HERO.tagline} onChange={v => set('HERO', { ...content.HERO, tagline: v })} />
+                <LandingTextField label="Título principal" value={content.HERO.title} onChange={v => set('HERO', { ...content.HERO, title: v })} multiline />
+                <LandingTextField label="Subtítulo" value={content.HERO.subtitle} onChange={v => set('HERO', { ...content.HERO, subtitle: v })} multiline />
+                <LandingTextField label="Línea chica (debajo del subtítulo)" value={content.HERO.subtitleCaption ?? ''} onChange={v => set('HERO', { ...content.HERO, subtitleCaption: v })} />
+                <LandingTextField label="Botón principal (ej. 'Solicitar demostración')" value={content.HERO.ctaPrimary} onChange={v => set('HERO', { ...content.HERO, ctaPrimary: v })} />
+                <LandingTextField label="Botón secundario (ej. 'Ingresar a la plataforma')" value={content.HERO.ctaSecondary} onChange={v => set('HERO', { ...content.HERO, ctaSecondary: v })} />
+              </div>
+            )}
+
+            {tab === 'HERO_BACKGROUND' && (
+              <HeroBackgroundEditor value={content.HERO_BACKGROUND} onChange={v => set('HERO_BACKGROUND', v)} />
+            )}
+
+            {tab === 'PROBLEMS' && (
+              <RepeatableEditor
+                items={content.PROBLEMS}
+                onChange={v => set('PROBLEMS', v)}
+                fields={[{ key: 'title', label: 'Título' }, { key: 'desc', label: 'Descripción', multiline: true }]}
+                addLabel="Agregar problema"
+                emptyItem={{ title: '', desc: '' }}
+              />
+            )}
+
+            {tab === 'CAPABILITIES' && (
+              <CapabilitiesEditor items={content.CAPABILITIES} onChange={v => set('CAPABILITIES', v)} />
+            )}
+
+            {tab === 'PLANS' && (
+              <div className="space-y-5">
+                <div>
+                  <p className="text-xs font-semibold text-t2 uppercase tracking-wide mb-2">Operación</p>
+                  <PlanBlockEditor plan={content.PLANS.operacion} onChange={v => set('PLANS', { ...content.PLANS, operacion: v })} />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-t2 uppercase tracking-wide mb-2">PRO</p>
+                  <PlanBlockEditor plan={content.PLANS.pro} onChange={v => set('PLANS', { ...content.PLANS, pro: v })} />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-t2 uppercase tracking-wide mb-2">GPS Vehicular</p>
+                  <PlanBlockEditor plan={content.PLANS.gpsVehicular} onChange={v => set('PLANS', { ...content.PLANS, gpsVehicular: v })} />
+                </div>
+              </div>
+            )}
+
+            {tab === 'CLIENTS_SHOWCASE' && (
+              <ClientsShowcaseEditor items={content.CLIENTS_SHOWCASE} onChange={v => set('CLIENTS_SHOWCASE', v)} />
+            )}
+
+            {tab === 'FAQ' && (
+              <RepeatableEditor
+                items={content.FAQ}
+                onChange={v => set('FAQ', v)}
+                fields={[{ key: 'question', label: 'Pregunta' }, { key: 'answer', label: 'Respuesta', multiline: true }]}
+                addLabel="Agregar pregunta"
+                emptyItem={{ question: '', answer: '' }}
+              />
+            )}
+
+            {tab === 'COMPANY' && (
+              <div className="space-y-4">
+                <LandingTextField label="Razón social" value={content.COMPANY.legalName} onChange={v => set('COMPANY', { ...content.COMPANY, legalName: v })} />
+                <LandingTextField label="RUC" value={content.COMPANY.ruc} onChange={v => set('COMPANY', { ...content.COMPANY, ruc: v })} />
+                <LandingTextField label="WhatsApp" value={content.COMPANY.whatsapp} onChange={v => set('COMPANY', { ...content.COMPANY, whatsapp: v })} />
+                <LandingTextField label="Dirección" value={content.COMPANY.address} onChange={v => set('COMPANY', { ...content.COMPANY, address: v })} />
+                <LandingTextField label="Correo de contacto" value={content.COMPANY.contactEmail} onChange={v => set('COMPANY', { ...content.COMPANY, contactEmail: v })} />
+                <div className="border-t border-border pt-4">
+                  <p className="text-xs text-t2 mb-3">Redes sociales -- deja el campo vacío para ocultar el ícono en el footer de la landing.</p>
+                  <LandingTextField label="Instagram (URL completa)" value={content.COMPANY.instagramUrl} onChange={v => set('COMPANY', { ...content.COMPANY, instagramUrl: v })} />
+                  <div className="mt-3"><LandingTextField label="Facebook (URL completa)" value={content.COMPANY.facebookUrl} onChange={v => set('COMPANY', { ...content.COMPANY, facebookUrl: v })} /></div>
+                  <div className="mt-3"><LandingTextField label="TikTok (URL completa)" value={content.COMPANY.tiktokUrl} onChange={v => set('COMPANY', { ...content.COMPANY, tiktokUrl: v })} /></div>
+                </div>
+              </div>
+            )}
+
+            {tab === 'FLEET_SHOWCASE' && (
+              <FleetShowcaseEditor value={content.FLEET_SHOWCASE} onChange={v => set('FLEET_SHOWCASE', v)} />
+            )}
+
+            {tab === 'ABOUT' && <LegalPageEditor page={content.ABOUT} onChange={v => set('ABOUT', v)} />}
+
+            {tab === 'LEGAL_TERMS' && <LegalPageEditor page={content.LEGAL_TERMS} onChange={v => set('LEGAL_TERMS', v)} />}
+            {tab === 'LEGAL_PRIVACY' && <LegalPageEditor page={content.LEGAL_PRIVACY} onChange={v => set('LEGAL_PRIVACY', v)} />}
+            {tab === 'LEGAL_COOKIES' && <LegalPageEditor page={content.LEGAL_COOKIES} onChange={v => set('LEGAL_COOKIES', v)} />}
+
+            <div className="flex items-center gap-3 pt-6 mt-6 border-t border-border">
+              <button onClick={save} disabled={saving}
+                className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h disabled:opacity-60">
+                {saving ? 'Guardando…' : 'Guardar sección'}
+              </button>
+              {savedTab === tab && <span className="text-sm text-ok flex items-center gap-1.5"><CheckCircle size={14} /> Guardado</span>}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Libro de Reclamaciones ─────────────────────────────────────────────────
+const COMPLAINT_STATUS_STYLE: Record<string, string> = {
+  RECIBIDO: 'bg-warn/10 text-warn',
+  EN_PROCESO: 'bg-primary/10 text-primary',
+  RESPONDIDO: 'bg-ok/10 text-ok',
+};
+
+// El envio llega desde la landing publica sin autenticacion (docs: requisito
+// legal INDECOPI, Ley 29571 -- ver src/lib/complaint-book-api.ts). Aqui el
+// Super Admin lo revisa y registra la respuesta al consumidor -- la norma
+// exige responder dentro de 30 dias calendario; este panel no bloquea nada
+// fuera de plazo, solo lo deja a la vista para que se pueda dar seguimiento.
+function SAComplaintBook() {
+  const [entries, setEntries] = useState<ComplaintBookEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<ComplaintBookEntry | null>(null);
+  const [responseText, setResponseText] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    setError(null);
+    fetchComplaints()
+      .then(list => setEntries(list))
+      .catch(err => setError(err instanceof Error ? err.message : 'No se pudo cargar el libro de reclamaciones.'))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const send = async () => {
+    if (!selected || !responseText.trim()) return;
+    setSaving(true);
+    try {
+      const updated = await respondComplaint(selected.id, responseText);
+      setEntries(prev => prev.map(e => (e.id === selected.id ? updated : e)));
+      setSelected(updated);
+      setResponseText('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo registrar la respuesta.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-6 py-4 border-b border-border bg-surface flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-t1">Libro de Reclamaciones</h1>
+          <p className="text-sm text-t2 mt-0.5">Reclamos y quejas recibidos desde la landing pública (/libro-de-reclamaciones)</p>
+        </div>
+        <button onClick={load} className="text-sm text-t2 hover:text-t1 flex items-center gap-1.5">
+          <RefreshCw size={13} /> Actualizar
+        </button>
+      </div>
+
+      {error && (
+        <div className="px-6 py-3 bg-danger/5 border-b border-danger/20 text-sm text-danger" role="alert">{error}</div>
+      )}
+
+      <div className="flex flex-1 overflow-hidden">
+        <div className={`flex-1 overflow-auto ${selected ? 'border-r border-border' : ''}`}>
+          {loading ? (
+            <div className="p-6 text-sm text-t2">Cargando reclamos…</div>
+          ) : entries.length === 0 ? (
+            <div className="p-6 text-sm text-t2">Todavía no hay reclamos ni quejas registrados.</div>
+          ) : (
+            <table className="w-full text-sm" aria-label="Libro de Reclamaciones">
+              <thead className="sticky top-0">
+                <tr className="border-b border-border bg-bg">
+                  <th className="text-left px-4 py-2.5 text-t2 font-medium">N.º</th>
+                  <th className="text-left px-4 py-2.5 text-t2 font-medium">Tipo</th>
+                  <th className="text-left px-4 py-2.5 text-t2 font-medium">Consumidor</th>
+                  <th className="text-left px-4 py-2.5 text-t2 font-medium">Correo</th>
+                  <th className="text-left px-4 py-2.5 text-t2 font-medium">Estado</th>
+                  <th className="text-left px-4 py-2.5 text-t2 font-medium">Fecha</th>
+                  <th className="w-8" />
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map(e => (
+                  <tr key={e.id} className="border-b border-border last:border-0 hover:bg-hover cursor-pointer" onClick={() => { setSelected(e === selected ? null : e); setResponseText(''); }}>
+                    <td className="px-4 py-3 text-t1 font-mono">{e.number}</td>
+                    <td className="px-4 py-3 text-t2">{e.type === 'RECLAMO' ? 'Reclamo' : 'Queja'}</td>
+                    <td className="px-4 py-3 font-medium text-t1">{e.consumerName}</td>
+                    <td className="px-4 py-3 text-t2">{e.consumerEmail}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-[11px] px-2 py-0.5 rounded font-medium ${COMPLAINT_STATUS_STYLE[e.status]}`}>{e.status.replace(/_/g, ' ')}</span>
+                    </td>
+                    <td className="px-4 py-3 text-t2 font-mono">{e.createdAt.slice(0, 10)}</td>
+                    <td className="px-4 py-3"><ChevronRight size={14} className="text-muted" /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {selected && (
+          <aside className="w-96 flex-shrink-0 overflow-auto p-4 bg-surface" aria-label="Detalle del reclamo">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-semibold text-t1">{selected.number}</h3>
+              <button onClick={() => setSelected(null)} className="text-muted hover:text-t1"><X size={16} /></button>
+            </div>
+            <div className="space-y-3 text-sm">
+              <span className={`inline-block text-[11px] px-2 py-0.5 rounded font-medium ${COMPLAINT_STATUS_STYLE[selected.status]}`}>
+                {selected.status.replace(/_/g, ' ')}
+              </span>
+              <div className="border border-border rounded-lg divide-y divide-border">
+                {field('Tipo', selected.type === 'RECLAMO' ? 'Reclamo' : 'Queja')}
+                {field('Consumidor', selected.consumerName)}
+                {field('Documento', selected.consumerDocument, true)}
+                {field('Correo', selected.consumerEmail)}
+                {selected.consumerPhone && field('Teléfono', selected.consumerPhone)}
+                {selected.consumerAddress && field('Domicilio', selected.consumerAddress)}
+                {selected.isMinor && field('Menor de edad, apoderado', selected.guardianName ?? '—')}
+                {field('Bien/servicio', selected.serviceDescription)}
+                {selected.claimedAmount != null && field('Monto reclamado', `S/ ${selected.claimedAmount.toFixed(2)}`)}
+              </div>
+              <div className="border border-border rounded-lg p-3">
+                <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mb-1">Detalle</p>
+                <p className="text-t1 whitespace-pre-line">{selected.detail}</p>
+              </div>
+              <div className="border border-border rounded-lg p-3">
+                <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mb-1">Pedido del consumidor</p>
+                <p className="text-t1 whitespace-pre-line">{selected.consumerRequest}</p>
+              </div>
+
+              {selected.status === 'RESPONDIDO' ? (
+                <div className="border border-ok/30 bg-ok/5 rounded-lg p-3">
+                  <p className="text-[11px] font-semibold text-ok uppercase tracking-wide mb-1">Respuesta enviada</p>
+                  <p className="text-t1 whitespace-pre-line">{selected.providerResponse}</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <label className="block text-xs font-medium text-t1">Registrar respuesta</label>
+                  <textarea value={responseText} onChange={e => setResponseText(e.target.value)} rows={4}
+                    className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary" />
+                  <button onClick={send} disabled={saving || !responseText.trim()}
+                    className="w-full py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h disabled:opacity-60">
+                    {saving ? 'Guardando…' : 'Registrar respuesta'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Aviso masivo (13 sept 2026, decidido con Jayde): ej. avisar un
+// mantenimiento programado a todas las asociaciones a la vez, sin importar
+// su plan (PRO, Operacion, GPS Vehicular todas reciben el mismo Aviso real
+// dentro de su panel -- nunca por WhatsApp). "Enviar a todas" es el default;
+// desmarcarlo habilita el filtro real por asociacion especifica.
+function SABroadcastNotice() {
+  const [orgs, setOrgs] = useState<Organization[]>([]);
+  const [loadingOrgs, setLoadingOrgs] = useState(true);
+  const [allOrgs, setAllOrgs] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [audience, setAudience] = useState<'CONDUCTORES' | 'SOCIOS' | 'AMBOS' | 'ADMINISTRADORES'>('AMBOS');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState<{ sent: number; organizations: string[] } | null>(null);
+
+  useEffect(() => {
+    fetchOrganizations()
+      .then(setOrgs)
+      .catch(() => { /* se degrada a lista vacia */ })
+      .finally(() => setLoadingOrgs(false));
+  }, []);
+
+  const toggleOrg = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const canSend = title.trim() !== '' && body.trim() !== '' && (allOrgs || selectedIds.size > 0);
+
+  const handleSend = async () => {
+    if (!canSend) return;
+    setSending(true);
+    setError('');
+    setResult(null);
+    try {
+      const res = await broadcastNotice({
+        title: title.trim(),
+        body: body.trim(),
+        audience,
+        organizationIds: allOrgs ? undefined : Array.from(selectedIds),
+      });
+      setResult(res);
+      setTitle('');
+      setBody('');
+      setSelectedIds(new Set());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo enviar el aviso.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="p-6 lg:p-8 space-y-5 max-w-2xl">
+      <div>
+        <h1 className="text-2xl font-bold text-t1">Configuración SaaS</h1>
+        <p className="text-sm text-t2 mt-0.5">
+          Aviso masivo a asociaciones — por ejemplo, un mantenimiento programado. Llega como un aviso real dentro del panel de cada
+          asociación (Administrador siempre lo ve; Socio/Conductor según la audiencia elegida), nunca por WhatsApp.
+        </p>
+      </div>
+
+      <div className="bg-surface border border-border rounded-lg p-5 space-y-4">
+        <div>
+          <label className="block text-xs font-medium text-t2 mb-1">Título</label>
+          <input
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            placeholder="Ej. Mantenimiento programado — sábado 20, 10pm a 12am"
+            className="w-full h-9 px-3 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-t2 mb-1">Mensaje</label>
+          <textarea
+            value={body}
+            onChange={e => setBody(e.target.value)}
+            rows={4}
+            placeholder="Detalle del aviso…"
+            className="w-full px-3 py-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-t2 mb-1">Audiencia</label>
+          <select
+            value={audience}
+            onChange={e => setAudience(e.target.value as typeof audience)}
+            className="h-9 px-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          >
+            <option value="AMBOS">Todos (socios, conductores y administrador)</option>
+            <option value="SOCIOS">Solo socios y administrador</option>
+            <option value="CONDUCTORES">Solo conductores y administrador</option>
+            <option value="ADMINISTRADORES">Solo administrador</option>
+          </select>
+          <p className="text-xs text-muted mt-1">
+            {audience === 'ADMINISTRADORES'
+              ? 'Solo lo ve el Administrador de cada asociación — Socio y Conductor nunca lo ven.'
+              : 'El Administrador de cada asociación siempre lo ve también, sin importar la audiencia elegida arriba.'}
+          </p>
+        </div>
+
+        <div className="border-t border-border pt-4">
+          <label className="flex items-center gap-2 text-sm text-t1 font-medium cursor-pointer">
+            <input type="checkbox" checked={allOrgs} onChange={e => setAllOrgs(e.target.checked)} />
+            Enviar a todas las asociaciones ({orgs.length})
+          </label>
+          <p className="text-xs text-muted mt-1 mb-2">
+            {allOrgs ? 'Desmarca la casilla de arriba para elegir asociaciones específicas.' : 'Elige una o varias asociaciones específicas:'}
+          </p>
+          <div className="border border-border rounded-lg max-h-56 overflow-y-auto divide-y divide-border">
+            {loadingOrgs ? (
+              <p className="px-3 py-3 text-sm text-t2">Cargando asociaciones…</p>
+            ) : orgs.length === 0 ? (
+              <p className="px-3 py-3 text-sm text-t2">Sin asociaciones registradas.</p>
+            ) : (
+              orgs.map(o => (
+                <label
+                  key={o.id}
+                  className={`flex items-center gap-2 px-3 py-2 text-sm ${allOrgs ? 'opacity-60' : 'hover:bg-hover cursor-pointer'}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={allOrgs || selectedIds.has(o.id)}
+                    disabled={allOrgs}
+                    onChange={() => toggleOrg(o.id)}
+                  />
+                  <span className="text-t1">{o.name}</span>
+                  <span className="text-xs text-t2">({o.plan})</span>
+                </label>
+              ))
+            )}
+          </div>
+          {!allOrgs && selectedIds.size === 0 && (
+            <p className="text-xs text-warn mt-1.5">Elige al menos una asociación, o marca "Enviar a todas".</p>
+          )}
+        </div>
+
+        <button
+          onClick={handleSend}
+          disabled={!canSend || sending}
+          className="px-4 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary-h disabled:opacity-50"
+        >
+          {sending ? 'Enviando…' : 'Enviar aviso'}
+        </button>
+        {error && <p className="text-sm text-danger">{error}</p>}
+        {result && (
+          <p className="text-sm text-ok">
+            Aviso enviado a {result.sent} asociación(es): {result.organizations.join(', ')}.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Cola real de soporte (13 sept 2026, decidido con Jayde) -- reemplaza el
+// placeholder fijo que tenia esta pantalla. El Administrador de cada
+// asociacion reporta desde su propio panel (SupportPage.tsx); aca se ve la
+// cola completa cruzando TODAS las asociaciones, mas reciente y ABIERTO
+// primero (mismo orden que ya aplica el backend).
+const TICKET_STATUS_LABEL: Record<SupportTicketStatus, string> = {
+  ABIERTO: 'Abierto',
+  EN_PROGRESO: 'En progreso',
+  RESUELTO: 'Resuelto',
+};
+const TICKET_STATUS_STYLE: Record<SupportTicketStatus, string> = {
+  ABIERTO: 'bg-warn/10 text-warn',
+  EN_PROGRESO: 'bg-primary/10 text-primary',
+  RESUELTO: 'bg-ok/10 text-ok',
+};
+
+function SASupportTickets() {
+  const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [filter, setFilter] = useState<'todos' | SupportTicketStatus>('todos');
+  const [replyDraft, setReplyDraft] = useState<{ id: string; status: 'EN_PROGRESO' | 'RESUELTO'; response: string } | null>(null);
+  const [replyBusy, setReplyBusy] = useState(false);
+  const [replyError, setReplyError] = useState('');
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError('');
+    fetchSupportTickets()
+      .then(setTickets)
+      .catch(err => setError(err instanceof Error ? err.message : 'No se pudieron cargar los tickets.'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(load, [load]);
+
+  const filtered = filter === 'todos' ? tickets : tickets.filter(t => t.status === filter);
+  const openCount = tickets.filter(t => t.status === 'ABIERTO').length;
+
+  const handleReplySubmit = async () => {
+    if (!replyDraft) return;
+    setReplyBusy(true);
+    setReplyError('');
+    try {
+      const updated = await respondSupportTicket(replyDraft.id, replyDraft.status, replyDraft.response.trim() || undefined);
+      setTickets(prev => prev.map(t => (t.id === updated.id ? updated : t)));
+      setReplyDraft(null);
+    } catch (err) {
+      setReplyError(err instanceof Error ? err.message : 'No se pudo guardar la respuesta.');
+    } finally {
+      setReplyBusy(false);
+    }
+  };
+
+  return (
+    <div className="p-6 lg:p-8 space-y-5">
+      <div>
+        <h1 className="text-2xl font-bold text-t1">Soporte</h1>
+        <p className="text-sm text-t2 mt-0.5">
+          Tickets reales reportados por administradores de cualquier asociación{openCount > 0 ? ` · ${openCount} abierto(s)` : ''}.
+        </p>
+      </div>
+
+      <div className="flex gap-1.5">
+        {(['todos', 'ABIERTO', 'EN_PROGRESO', 'RESUELTO'] as const).map(f => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`px-2.5 py-1.5 text-xs rounded border transition-colors ${filter === f ? 'bg-primary text-white border-primary' : 'border-border text-t2 hover:bg-hover'}`}
+          >
+            {f === 'todos' ? 'Todos' : TICKET_STATUS_LABEL[f]}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-t2">Cargando tickets…</p>
+      ) : error ? (
+        <p className="text-sm text-danger">{error}</p>
+      ) : filtered.length === 0 ? (
+        <p className="text-sm text-t2 bg-surface border border-border rounded-lg p-8 text-center">Sin tickets en este filtro.</p>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(t => (
+            <div key={t.id} className="bg-surface border border-border rounded-lg p-4">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs px-2 py-0.5 bg-t2/10 text-t2 rounded-full font-medium">{t.organizationName ?? 'Asociación'}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${TICKET_STATUS_STYLE[t.status]}`}>{TICKET_STATUS_LABEL[t.status]}</span>
+                  </div>
+                  <h3 className="text-sm font-semibold text-t1 mt-1.5">{t.subject}</h3>
+                  <p className="text-sm text-t2 mt-1 whitespace-pre-wrap">{t.message}</p>
+                  <p className="text-xs text-muted mt-1.5">Por {t.authorName} · {new Date(t.createdAt).toLocaleString('es-PE')}</p>
+                </div>
+                {t.status !== 'RESUELTO' && (
+                  <button
+                    onClick={() => setReplyDraft({ id: t.id, status: 'EN_PROGRESO', response: t.response ?? '' })}
+                    className="px-2.5 py-1 text-xs font-medium text-primary border border-primary/30 rounded hover:bg-primary/5 shrink-0"
+                  >
+                    Responder
+                  </button>
+                )}
+              </div>
+
+              {t.response && replyDraft?.id !== t.id && (
+                <div className="mt-3 bg-bg border border-border rounded-lg p-3">
+                  <p className="text-xs font-medium text-t1 mb-1">Tu respuesta{t.respondedBy ? ` · ${t.respondedBy}` : ''}</p>
+                  <p className="text-sm text-t2 whitespace-pre-wrap">{t.response}</p>
+                </div>
+              )}
+
+              {replyDraft?.id === t.id && (
+                <div className="mt-3 space-y-2 border-t border-border pt-3">
+                  <textarea
+                    value={replyDraft.response}
+                    onChange={e => setReplyDraft(d => d && { ...d, response: e.target.value })}
+                    placeholder="Respuesta para el administrador…"
+                    rows={3}
+                    className="w-full px-2.5 py-1.5 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <select
+                      value={replyDraft.status}
+                      onChange={e => setReplyDraft(d => d && { ...d, status: e.target.value as 'EN_PROGRESO' | 'RESUELTO' })}
+                      className="h-8 px-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    >
+                      <option value="EN_PROGRESO">Marcar en progreso</option>
+                      <option value="RESUELTO">Marcar resuelto</option>
+                    </select>
+                    <button onClick={handleReplySubmit} disabled={replyBusy} className="px-2.5 py-1 text-xs font-medium bg-primary text-white rounded hover:bg-primary-h disabled:opacity-50">
+                      {replyBusy ? 'Guardando…' : 'Guardar respuesta'}
+                    </button>
+                    <button onClick={() => setReplyDraft(null)} className="px-2.5 py-1 text-xs font-medium text-t2 border border-border rounded hover:bg-hover">Cancelar</button>
+                  </div>
+                  {replyError && <p className="text-xs text-danger">{replyError}</p>}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -3126,6 +3843,11 @@ export default function SuperAdminApp({
   const [section, setSection] = useState<Section>(
     () => (window.history.state as { chaskiSection?: Section } | null)?.chaskiSection ?? 'resumen'
   );
+  // Prellenado del wizard "Nueva asociación" cuando se llega desde "Usar
+  // para nueva asociación (IA)" en Solicitudes comerciales (ia-aplicada.md
+  // §2.5) -- se limpia al salir del wizard, para que un "Nueva asociación"
+  // normal (sin pasar por una solicitud) siga arrancando en blanco.
+  const [newOrgFromRequest, setNewOrgFromRequest] = useState<{ contactName: string; suggestion: OnboardingSuggestion } | null>(null);
 
   // Igual que en AdminApp: cambiar de seccion aqui era solo estado interno de
   // React, nunca tocaba la URL/historial del navegador -- por eso "atras"
@@ -3163,19 +3885,28 @@ export default function SuperAdminApp({
     >
       {section === 'resumen' && <SADashboard onNavigate={nav} />}
       {section === 'asociaciones' && <SAOrganizations onNew={() => nav('nueva-org')} onEnterAsAdmin={onEnterAsAdmin} />}
-      {section === 'nueva-org' && <NewOrgWizard onBack={() => nav('asociaciones')} />}
-      {section === 'solicitudes' && <SACommercialRequests />}
-      {section === 'planes-sub' && <SAPlansSubscriptions onGoToPayments={() => nav('pagos')} />}
-      {section === 'pagos' && <SAPayments onActivateSub={() => nav('planes-sub')} />}
-      {section === 'gps-solicitudes' && <SAGPSRequests />}
-      {section === 'gps-instalaciones' && <SAInstallations />}
-      {section === 'gps' && <SAGPSDevices />}
-      {section === 'gps-suscripciones' && <SAGPSSubscriptions />}
-      {section === 'cobros' && <SABillingConfig />}
+      {section === 'gps-overview' && <GPSOverviewPage />}
+      {section === 'pasajeros' && <PassengerProfilesPage />}
+      {section === 'nueva-org' && (
+        <NewOrgWizard
+          onBack={() => { setNewOrgFromRequest(null); nav('asociaciones'); }}
+          fromRequest={newOrgFromRequest}
+        />
+      )}
+      {section === 'solicitudes' && (
+        <SACommercialRequests
+          onUseForNewOrg={(req, suggestion) => {
+            setNewOrgFromRequest({ contactName: req.contactName, suggestion });
+            nav('nueva-org');
+          }}
+        />
+      )}
+      {section === 'landing' && <SALandingContent />}
+      {section === 'libro-reclamaciones' && <SAComplaintBook />}
       {section === 'salud' && <SATechHealth />}
-      {section === 'soporte' && <SAPlaceholder title="Soporte" />}
+      {section === 'soporte' && <SASupportTickets />}
       {section === 'auditoria' && <SAAudit />}
-      {section === 'configuracion' && <SAPlaceholder title="Configuración SaaS" />}
+      {section === 'configuracion' && <SABroadcastNotice />}
     </Shell>
   );
 }

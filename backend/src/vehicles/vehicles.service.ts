@@ -5,7 +5,34 @@ import { ChangeDriverDto } from './dto/change-driver.dto';
 import { ChangePartnerDto } from './dto/change-partner.dto';
 import { DeactivateVehicleDto } from './dto/deactivate-vehicle.dto';
 import { SetGpsDeviceDto } from './dto/set-gps-device.dto';
+import { SetGpsVehicularPlanDto } from './dto/set-gps-vehicular-plan.dto';
+import { SetMaintenanceDto } from './dto/set-maintenance.dto';
 import { JwtPayload } from '../auth/jwt.strategy';
+
+// El hash de la contraseña NUNCA debe llegar al navegador (mismo criterio
+// que people.service.ts) -- Vehicle incluye partner/currentDriver como
+// relacion completa en cada consulta de abajo, asi que se selecciona todo
+// MENOS passwordHash en vez de devolver la fila completa de Prisma.
+const PERSON_SAFE_SELECT = {
+  id: true,
+  organizationId: true,
+  name: true,
+  email: true,
+  dni: true,
+  phone: true,
+  role: true,
+  status: true,
+  googleId: true,
+  googleEmailVerifiedAt: true,
+  whatsappPhone: true,
+  boundDeviceId: true,
+  boundDeviceSetAt: true,
+  code: true,
+  company: true,
+  linkedUnit: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
 
 @Injectable()
 export class VehiclesService {
@@ -17,7 +44,7 @@ export class VehiclesService {
         organizationId,
         ...(route ? { OR: [{ routeAssignment: route as any }, { routeAssignment: 'AMBAS' }] } : {}),
       },
-      include: { company: true, partner: true, currentDriver: true, plateHistory: true },
+      include: { company: true, partner: { select: PERSON_SAFE_SELECT }, currentDriver: { select: PERSON_SAFE_SELECT }, plateHistory: true },
       orderBy: { code: 'asc' },
     });
   }
@@ -25,7 +52,7 @@ export class VehiclesService {
   async findOne(organizationId: string, id: string) {
     const vehicle = await this.prisma.vehicle.findUnique({
       where: { id },
-      include: { company: true, partner: true, currentDriver: true, plateHistory: true },
+      include: { company: true, partner: { select: PERSON_SAFE_SELECT }, currentDriver: { select: PERSON_SAFE_SELECT }, plateHistory: true },
     });
     if (!vehicle) throw new NotFoundException('Vehiculo no encontrado');
     if (vehicle.organizationId !== organizationId) {
@@ -67,7 +94,7 @@ export class VehiclesService {
     const updated = await this.prisma.vehicle.update({
       where: { id: vehicleId },
       data: { currentDriverId: dto.currentDriverId },
-      include: { company: true, partner: true, currentDriver: true, plateHistory: true },
+      include: { company: true, partner: { select: PERSON_SAFE_SELECT }, currentDriver: { select: PERSON_SAFE_SELECT }, plateHistory: true },
     });
     await this.prisma.auditEntry.create({
       data: {
@@ -95,7 +122,7 @@ export class VehiclesService {
     const updated = await this.prisma.vehicle.update({
       where: { id: vehicleId },
       data: { partnerId: dto.partnerId },
-      include: { company: true, partner: true, currentDriver: true, plateHistory: true },
+      include: { company: true, partner: { select: PERSON_SAFE_SELECT }, currentDriver: { select: PERSON_SAFE_SELECT }, plateHistory: true },
     });
     await this.prisma.auditEntry.create({
       data: {
@@ -119,7 +146,7 @@ export class VehiclesService {
     const updated = await this.prisma.vehicle.update({
       where: { id: vehicleId },
       data: { status: 'INACTIVO' },
-      include: { company: true, partner: true, currentDriver: true, plateHistory: true },
+      include: { company: true, partner: { select: PERSON_SAFE_SELECT }, currentDriver: { select: PERSON_SAFE_SELECT }, plateHistory: true },
     });
     await this.prisma.auditEntry.create({
       data: {
@@ -147,8 +174,12 @@ export class VehiclesService {
     const newValue = dto.traccarDeviceId?.trim() || null;
     const updated = await this.prisma.vehicle.update({
       where: { id: vehicleId },
-      data: { traccarDeviceId: newValue },
-      include: { company: true, partner: true, currentDriver: true, plateHistory: true },
+      data: {
+        traccarDeviceId: newValue,
+        ...(dto.simOperator !== undefined ? { simOperator: dto.simOperator || null } : {}),
+        ...(dto.simNumber !== undefined ? { simNumber: dto.simNumber?.trim() || null } : {}),
+      },
+      include: { company: true, partner: { select: PERSON_SAFE_SELECT }, currentDriver: { select: PERSON_SAFE_SELECT }, plateHistory: true },
     });
     await this.prisma.auditEntry.create({
       data: {
@@ -160,6 +191,74 @@ export class VehiclesService {
         resourceId: vehicleId,
         before: vehicle.traccarDeviceId ?? 'Sin dispositivo',
         after: newValue ?? 'Sin dispositivo',
+      },
+    });
+    return updated;
+  }
+
+  /**
+   * Prende/apaga el Plan GPS Vehicular individual de la unidad (13 sept
+   * 2026, decidido con Jayde). Nunca toca traccarDeviceId -- eso es el
+   * hardware instalado, esto es si el servicio individual esta pagado. En
+   * false, gps.controller.ts deja de mostrarle esta unidad a su Socio y
+   * Conductor (ver myVehicleIds).
+   */
+  async setGpsVehicularPlan(organizationId: string, actor: JwtPayload, vehicleId: string, dto: SetGpsVehicularPlanDto) {
+    const vehicle = await this.findOne(organizationId, vehicleId);
+    if (!vehicle.traccarDeviceId) {
+      throw new BadRequestException('Esta unidad todavia no tiene un equipo GPS vinculado -- no hay plan que activar.');
+    }
+    const updated = await this.prisma.vehicle.update({
+      where: { id: vehicleId },
+      data: {
+        gpsVehicularActivo: dto.activo,
+        gpsVehicularVenceEn: dto.venceEn !== undefined ? (dto.venceEn ? new Date(dto.venceEn) : null) : vehicle.gpsVehicularVenceEn,
+      },
+      include: { company: true, partner: { select: PERSON_SAFE_SELECT }, currentDriver: { select: PERSON_SAFE_SELECT }, plateHistory: true },
+    });
+    await this.prisma.auditEntry.create({
+      data: {
+        organizationId,
+        actorId: actor.sub,
+        actorRole: actor.role,
+        action: dto.activo ? 'ACTIVAR_PLAN_GPS_VEHICULAR' : 'DESACTIVAR_PLAN_GPS_VEHICULAR',
+        resource: `Unidad ${vehicle.code}`,
+        resourceId: vehicleId,
+        before: vehicle.gpsVehicularActivo ? 'Activo' : 'Inactivo',
+        after: dto.activo ? 'Activo' : 'Inactivo',
+        reason: dto.reason,
+      },
+    });
+    return updated;
+  }
+
+  /**
+   * Configura el seguimiento de mantenimiento predictivo de la unidad
+   * (plan-pro.md §11.1). El intervalo lo define el administrador, nunca el
+   * sistema -- solo se compara el kilometraje real (Traccar) contra estos
+   * dos valores para avisar cuando toca servicio.
+   */
+  async setMaintenance(organizationId: string, actor: JwtPayload, vehicleId: string, dto: SetMaintenanceDto) {
+    const vehicle = await this.findOne(organizationId, vehicleId);
+    const updated = await this.prisma.vehicle.update({
+      where: { id: vehicleId },
+      data: {
+        lastServiceKm: dto.lastServiceKm ?? null,
+        serviceIntervalKm: dto.serviceIntervalKm ?? null,
+        lastServiceAt: dto.lastServiceKm !== undefined ? new Date() : vehicle.lastServiceAt,
+      },
+      include: { company: true, partner: { select: PERSON_SAFE_SELECT }, currentDriver: { select: PERSON_SAFE_SELECT }, plateHistory: true },
+    });
+    await this.prisma.auditEntry.create({
+      data: {
+        organizationId,
+        actorId: actor.sub,
+        actorRole: actor.role,
+        action: 'CONFIGURAR_MANTENIMIENTO',
+        resource: `Unidad ${vehicle.code}`,
+        resourceId: vehicleId,
+        before: `Último servicio: ${vehicle.lastServiceKm ?? '—'} km · Intervalo: ${vehicle.serviceIntervalKm ?? '—'} km`,
+        after: `Último servicio: ${dto.lastServiceKm ?? '—'} km · Intervalo: ${dto.serviceIntervalKm ?? '—'} km`,
       },
     });
     return updated;

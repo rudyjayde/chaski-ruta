@@ -12,6 +12,70 @@ const STATUS_STYLE: Record<ManifestStatus, { label: string; cls: string }> = {
   CORREGIDO: { label: 'Corregido', cls: 'bg-primary/10 text-primary' },
 };
 
+// Generador minimo de PDF (mismo enfoque liviano que ya usa DriverApp.tsx
+// para el manifiesto impreso): un solo bloque de texto, sin imagenes ni
+// dependencias externas -- suficiente para que "Descargar PDF" (antes sin
+// ningun onClick) entregue un documento real con los datos del manifiesto.
+function pdfSafeText(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^\x20-\x7E]/g, ' ')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)');
+}
+
+function createPdfBlob(lines: string[]) {
+  const textCommands = lines.slice(0, 55).map((line, index) =>
+    (index === 0 ? '' : 'T* ') + '(' + pdfSafeText(line) + ') Tj'
+  ).join('\n');
+  const stream = 'BT\n/F1 9 Tf\n50 800 Td\n13 TL\n' + textCommands + '\nET';
+  const objects = [
+    '1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj',
+    '2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj',
+    '3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj',
+    '4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj',
+    '5 0 obj << /Length ' + stream.length + ' >> stream\n' + stream + '\nendstream\nendobj',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  objects.forEach(object => { offsets.push(pdf.length); pdf += object + '\n'; });
+  const xref = pdf.length;
+  pdf += 'xref\n0 ' + (objects.length + 1) + '\n0000000000 65535 f \n';
+  offsets.slice(1).forEach(offset => { pdf += String(offset).padStart(10, '0') + ' 00000 n \n'; });
+  pdf += 'trailer << /Size ' + (objects.length + 1) + ' /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF';
+  return new Blob([pdf], { type: 'application/pdf' });
+}
+
+function downloadManifestPdf(m: Manifest, orgName: string) {
+  const total = m.passengers.reduce((s, p) => s + p.fare, 0);
+  const lines = [
+    (orgName || 'CHASKI AI') + ' - MANIFIESTO ' + m.number,
+    'Ruta: ' + (m.route === 'JULI_PUNO' ? 'Juli -> Puno' : 'Puno -> Juli') + '   Fecha: ' + m.date + '   Salida: ' + m.departureTime,
+    'Unidad: ' + m.code + '   Placa: ' + m.plate + '   Empresa: ' + m.company + '   Conductor: ' + m.driverName,
+    'Estado: ' + m.status + '   Capacidad: ' + m.capacity,
+    '',
+    'Asiento | Pasajero | DNI | Origen | Destino | Tarifa | Pago',
+    ...m.passengers
+      .slice()
+      .sort((a, b) => a.seat - b.seat)
+      .map(p => `${p.seat} | ${p.name} | ${p.dni} | ${p.origin} | ${p.destination} | S/ ${p.fare} | ${p.paymentMethod}`),
+    '',
+    'Total pasajeros: ' + m.passengers.length,
+    'Recaudacion total: S/ ' + total,
+  ];
+  const blob = createPdfBlob(lines);
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `manifiesto-${m.number}.pdf`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function ManifestDetail({
   m, onClose, onCorrect, onAddPassenger, onCloseManifest, addingPassenger, closingManifest,
 }: {
@@ -78,7 +142,7 @@ function ManifestDetail({
               <h4 className="text-sm font-semibold text-t2 uppercase tracking-wide">Unidad</h4>
               <div className="text-sm space-y-1.5">
                 {[
-                  ['Asociación', 'ATIPCAR'],
+                  ['Asociación', org?.name ?? 'Sin dato'],
                   ['Empresa', m.company],
                   ['Código', m.code],
                   ['Vehículo', m.vehicleType],
@@ -257,7 +321,7 @@ function ManifestDetail({
               </button>
             )}
             {m.pdfGenerated && (
-              <button className="px-3 py-1.5 text-sm bg-primary text-white rounded hover:bg-primary-h flex items-center gap-1.5">
+              <button onClick={() => downloadManifestPdf(m, org?.name ?? '')} className="px-3 py-1.5 text-sm bg-primary text-white rounded hover:bg-primary-h flex items-center gap-1.5">
                 <Download size={12} /> Descargar PDF
               </button>
             )}

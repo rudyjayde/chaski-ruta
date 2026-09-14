@@ -12,15 +12,41 @@ export class PeopleService {
     private mail: MailService,
   ) {}
 
+  // El hash NUNCA debe llegar al navegador (ni al del admin que consulta a
+  // otra persona, ni al de la propia persona via /people/me) -- ningun
+  // frontend lo necesita (ver operacion-api.ts), por eso se selecciona todo
+  // MENOS passwordHash en vez de devolver la fila completa de Prisma.
+  private static readonly SAFE_SELECT = {
+    id: true,
+    organizationId: true,
+    name: true,
+    email: true,
+    dni: true,
+    phone: true,
+    role: true,
+    status: true,
+    googleId: true,
+    googleEmailVerifiedAt: true,
+    whatsappPhone: true,
+    boundDeviceId: true,
+    boundDeviceSetAt: true,
+    code: true,
+    company: true,
+    linkedUnit: true,
+    createdAt: true,
+    updatedAt: true,
+  } as const;
+
   findAll(organizationId: string) {
     return this.prisma.person.findMany({
       where: { organizationId },
       orderBy: [{ role: 'asc' }, { name: 'asc' }],
+      select: PeopleService.SAFE_SELECT,
     });
   }
 
   async findOne(organizationId: string, id: string) {
-    const person = await this.prisma.person.findUnique({ where: { id } });
+    const person = await this.prisma.person.findUnique({ where: { id }, select: PeopleService.SAFE_SELECT });
     if (!person || person.organizationId !== organizationId) {
       throw new NotFoundException('Persona no encontrada');
     }
@@ -45,18 +71,30 @@ export class PeopleService {
       );
     }
 
+    const normalizedEmail = dto.email.toLowerCase();
+    // La contraseña es por correo, no por fila (ver comentario de passwordHash
+    // en schema.prisma): si este correo ya tiene otra cuenta (p. ej. Socio) con
+    // contraseña definida, esta nueva cuenta (p. ej. Conductor) la hereda de
+    // una vez -- asi ambas siempre quedan en sincronia sin pedirle a la
+    // persona que la defina dos veces.
+    const sibling = await this.prisma.person.findFirst({
+      where: { email: normalizedEmail, passwordHash: { not: null } },
+    });
+
     const person = await this.prisma.person.create({
       data: {
         organizationId,
         name: dto.name,
-        email: dto.email.toLowerCase(),
+        email: normalizedEmail,
         dni: dto.dni,
         phone: dto.phone,
         role: dto.role,
         code: dto.code,
         company: dto.company,
         status: 'PENDIENTE',
+        passwordHash: sibling?.passwordHash,
       },
+      select: PeopleService.SAFE_SELECT,
     });
     await this.prisma.auditEntry.create({
       data: {
@@ -91,7 +129,11 @@ export class PeopleService {
   /** Activar o suspender una cuenta, con auditoria y motivo obligatorio para suspender. */
   async updateStatus(organizationId: string, actor: JwtPayload, personId: string, dto: UpdatePersonStatusDto) {
     const person = await this.findOne(organizationId, personId);
-    const updated = await this.prisma.person.update({ where: { id: personId }, data: { status: dto.status } });
+    const updated = await this.prisma.person.update({
+      where: { id: personId },
+      data: { status: dto.status },
+      select: PeopleService.SAFE_SELECT,
+    });
     await this.prisma.auditEntry.create({
       data: {
         organizationId,
@@ -125,6 +167,7 @@ export class PeopleService {
     const updated = await this.prisma.person.update({
       where: { id: personId },
       data: { boundDeviceId: null, boundDeviceSetAt: null },
+      select: PeopleService.SAFE_SELECT,
     });
     await this.prisma.auditEntry.create({
       data: {

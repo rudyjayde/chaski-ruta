@@ -1,3 +1,9 @@
+> **Antes de tocar cualquier pantalla de este proyecto**, lee primero la
+> sección "Separación obligatoria entre web y aplicación nativa" en
+> `CLAUDE.md` (raíz del proyecto). Este archivo (`AGENTS.md`) documenta el
+> scaffold técnico de Figma Make / React+Vite; la regla de qué es plataforma
+> web vs. app nativa vive en `CLAUDE.md`, no se repite aquí.
+
 # figma-make-app
 
 React + Vite + Tailwind CSS project running inside Figma Make.

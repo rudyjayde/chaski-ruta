@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "NoticeAudience" ADD VALUE 'ADMINISTRADORES';

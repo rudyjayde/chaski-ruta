@@ -3,6 +3,7 @@ import { TripsService } from './trips.service';
 import { AlertTripDto } from './dto/alert-trip.dto';
 import { CompleteTripDto } from './dto/complete-trip.dto';
 import { ResolveIncidentDto } from './dto/resolve-incident.dto';
+import { CancelTripDto } from './dto/cancel-trip.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -54,6 +55,18 @@ export class TripsController {
   ) {
     const orgId = resolveOrgId(user, organizationId);
     return this.trips.alert(orgId, user, id, dto);
+  }
+
+  @Post(':id/cancel')
+  @Roles('ADMINISTRADOR', 'SUPERADMIN')
+  cancel(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: CancelTripDto,
+    @Query('organizationId') organizationId?: string,
+  ) {
+    const orgId = resolveOrgId(user, organizationId);
+    return this.trips.cancel(orgId, user, id, dto);
   }
 
   @Post(':id/resolve-incident')

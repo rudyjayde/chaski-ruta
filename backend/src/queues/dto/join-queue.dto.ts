@@ -1,4 +1,4 @@
-import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsLatitude, IsLongitude, IsOptional, IsString } from 'class-validator';
 
 export class JoinQueueDto {
   @IsString()
@@ -14,4 +14,17 @@ export class JoinQueueDto {
   @IsOptional()
   @IsBoolean()
   isRelocation?: boolean;
+
+  // Ubicacion del celular al momento de "Inscribirme" (§3.3): chequeo puntual,
+  // una sola vez, NUNCA rastreo continuo. Se usa como evidencia de llegada
+  // cuando la unidad no tiene GPS de hardware (Traccar/Plan PRO) vinculado.
+  // Opcional porque un administrador/superadmin puede inscribir una unidad
+  // como caso de excepcion sin ubicacion (ver queues.service.ts -> join()).
+  @IsOptional()
+  @IsLatitude()
+  lat?: number;
+
+  @IsOptional()
+  @IsLongitude()
+  lng?: number;
 }

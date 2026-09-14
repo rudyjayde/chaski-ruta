@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { GpsService } from '../gps/gps.service';
 import { JwtPayload } from '../auth/jwt.strategy';
 import { JoinQueueDto } from './dto/join-queue.dto';
 import { ConfirmArrivalDto } from './dto/confirm-arrival.dto';
@@ -8,14 +9,19 @@ import { OverrideQueueDto } from './dto/override-queue.dto';
 
 type RouteDir = 'JULI_PUNO' | 'PUNO_JULI';
 
+// El hash de la contraseña NUNCA debe llegar al navegador (mismo criterio
+// que people.service.ts / vehicles.service.ts) -- select explicito en vez
+// de "driver: true" / "partner: true" / "currentDriver: true".
+const PERSON_QUEUE_SELECT = { id: true, name: true, dni: true, phone: true, email: true, code: true } as const;
+
 const ADVANCE_ORDER = ['INSCRITO', 'LLAMADO', 'EN_TERMINAL', 'EMBARCANDO', 'LISTO'] as const;
 
 // Estados desde los que el conductor ya puede prepararse para salir por su
-// cuenta (abrir manifiesto, cerrarlo, marcar salida) sin que el administrador
-// tenga que seguir avanzandolo manualmente por EN_TERMINAL/EMBARCANDO/LISTO.
+// cuenta (cerrar manifiesto, marcar salida) sin que el administrador tenga
+// que seguir avanzandolo manualmente por EN_TERMINAL/EMBARCANDO/LISTO.
 // EN_TERMINAL/EMBARCANDO/LISTO se mantienen en el modelo como registro
 // opcional (el administrador los puede seguir usando si quiere trazabilidad
-// mas fina), pero dejan de ser un requisito bloqueante.
+// mas fina), pero dejan de ser un requisito bloqueante para "Marcar salida".
 const SELF_SERVICE_STATUSES = new Set(ADVANCE_ORDER.slice(1)); // LLAMADO en adelante
 
 function opposite(route: RouteDir): RouteDir {
@@ -37,7 +43,10 @@ function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number):
 
 @Injectable()
 export class QueuesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private gps: GpsService,
+  ) {}
 
   private async getConfig(organizationId: string) {
     const config = await this.prisma.operationalConfig.findUnique({ where: { organizationId } });
@@ -47,41 +56,14 @@ export class QueuesService {
   }
 
   async list(organizationId: string, route: RouteDir) {
-    await this.sweepTimeouts(organizationId, route);
     return this.prisma.queueEntry.findMany({
       where: { organizationId, route },
-      include: { vehicle: { include: { company: true, partner: true } }, driver: true },
+      include: {
+        vehicle: { include: { company: true, partner: { select: PERSON_QUEUE_SELECT } } },
+        driver: { select: PERSON_QUEUE_SELECT },
+      },
       orderBy: { position: 'asc' },
     });
-  }
-
-  /**
-   * Via 1 del escape de 3 vias (§3.6): timeout automatico. Se revisa de forma
-   * perezosa (al leer la cola) en vez de con un cron aparte — suficiente para
-   * el volumen de una asociacion; si hace falta precision al segundo, esto se
-   * puede mover a un job programado despues sin cambiar la regla de negocio.
-   */
-  private async sweepTimeouts(organizationId: string, route: RouteDir) {
-    const now = new Date();
-    const expired = await this.prisma.queueEntry.findMany({
-      where: { organizationId, route, status: 'LLAMADO', timeoutAt: { lte: now } },
-    });
-    for (const entry of expired) {
-      await this.demoteToBack(entry.id, 'INSCRITO');
-      await this.prisma.auditEntry.create({
-        data: {
-          organizationId,
-          actorId: null,
-          actorRole: 'SISTEMA',
-          action: 'TIMEOUT_AUTOMATICO',
-          resource: `Cola ${route}`,
-          resourceId: entry.id,
-          before: entry.status,
-          after: 'INSCRITO (al final)',
-          reason: `Sin confirmacion tras ${entry.timeoutAt ? '' : ''}el tiempo de espera configurado`,
-        },
-      });
-    }
   }
 
   private async demoteToBack(entryId: string, newStatus: 'INSCRITO' | 'AUSENTE') {
@@ -92,7 +74,6 @@ export class QueuesService {
         escapeState: 'NINGUNO',
         chainDepartureAt: null,
         registeredAt: new Date(),
-        timeoutAt: null,
       },
     });
     const entry = await this.prisma.queueEntry.findUniqueOrThrow({ where: { id: entryId } });
@@ -109,8 +90,9 @@ export class QueuesService {
   /**
    * Cadena de predecesores (§3.5): reordena TODA la cola de una direccion por
    * hora real de salida del viaje que trajo a cada vehiculo (chainDepartureAt),
-   * y para los que no tienen ese dato (primera vuelta del dia) por hora de
-   * inscripcion — nunca por el orden en que alguien toco "inscribirme".
+   * y para los que no tienen ese dato (primera vuelta del dia, o una
+   * reubicacion -- ver join()) por hora de inscripcion — nunca por el orden
+   * en que alguien toco "inscribirme" sin mas contexto.
    */
   private async recomputeOrder(organizationId: string, route: RouteDir) {
     const entries = await this.prisma.queueEntry.findMany({ where: { organizationId, route } });
@@ -129,13 +111,19 @@ export class QueuesService {
   /**
    * Auto-Llamando en cola vacia (Jayde, 3 sept 2026 -- regla generalizada):
    * invariante que se aplica cada vez que la cola puede haber quedado sin
-   * nadie en Llamando (al confirmar llegada, al declinar el turno, al vencer
-   * un timeout, o al aplicar una excepcion manual). Si no hay NINGUNA unidad
-   * en estado LLAMADO para esta ruta, la primera unidad INSCRITA en orden
-   * pasa a Llamando automaticamente -- el administrador no tiene que apretar
-   * "Llamar siguiente" cuando en realidad no hay a quien mas llamar antes.
+   * nadie en Llamando (al inscribirse, al declinar el turno, o al aplicar
+   * una excepcion manual). Si no hay NINGUNA unidad en estado LLAMADO para
+   * esta ruta, la primera unidad INSCRITA en orden pasa a Llamando
+   * automaticamente -- el administrador no tiene que apretar "Llamar
+   * siguiente" cuando en realidad no hay a quien mas llamar antes.
    * Si ya hay alguien Llamando, o no hay ninguna unidad inscrita esperando,
    * no hace nada.
+   *
+   * Correccion (8 de septiembre de 2026): LLAMANDO ya no vence nunca por el
+   * paso del tiempo -- se elimina el timeout automatico (sweepTimeouts).
+   * Una unidad permanece en LLAMANDO indefinidamente hasta que su propio
+   * conductor presiona "Marcar salida"; el desbloqueo de una posicion
+   * depende siempre de una accion explicita, nunca de un cronometro.
    */
   private async maybeAutoPromote(organizationId: string, route: RouteDir) {
     const anyLlamando = await this.prisma.queueEntry.count({
@@ -149,10 +137,9 @@ export class QueuesService {
     });
     if (!next) return;
 
-    const config = await this.getConfig(organizationId);
     await this.prisma.queueEntry.update({
       where: { id: next.id },
-      data: { status: 'LLAMADO', timeoutAt: new Date(Date.now() + config.timeoutMinutes * 60000) },
+      data: { status: 'LLAMADO' },
     });
     await this.prisma.auditEntry.create({
       data: {
@@ -178,11 +165,9 @@ export class QueuesService {
    * ruta. Si mas adelante si va a salir, tiene que volver a inscribirse
    * desde cero (boton "Inscribirme"), igual que si llegara por primera vez.
    *
-   * Distinto del timeout automatico (via 1, sweepTimeouts) y de la excepcion
-   * manual del administrador con REQUEUE (via 3, override) -- esos siguen
-   * usando demoteToBack porque ahi la unidad no decidio voluntariamente
-   * salir de la fila: solo perdio su turno, o el administrador la esta
-   * reinscribiendo a proposito.
+   * Distinto de la excepcion manual del administrador con REQUEUE (override)
+   * -- ahi la unidad no decidio voluntariamente salir de la fila: el
+   * administrador la esta reinscribiendo a proposito.
    */
   private async withdrawFromQueue(entryId: string) {
     const entry = await this.prisma.queueEntry.findUniqueOrThrow({ where: { id: entryId } });
@@ -192,9 +177,21 @@ export class QueuesService {
     return entry;
   }
 
+  /**
+   * "Inscribirme" (plan-flujo-colas-hardware.md §2 paso 6). Correccion (8 de
+   * septiembre de 2026): ya no existen dos pasos separados ("Marcar llegada"
+   * + "Inscribirme") ni un tercero de confirmacion GPS aparte -- este unico
+   * paso hace las tres cosas: (a) si la unidad tenia un viaje activo en la
+   * direccion CONTRARIA, lo completa aqui mismo (antes vivia en
+   * trips.service.ts -> complete(), boton "Marcar llegada" en DriverApp.tsx);
+   * (b) confirma la evidencia GPS de que esta en la terminal de destino
+   * (antes vivia en confirmArrival(), boton "Confirmar llegada" separado);
+   * (c) valida el tiempo minimo (§3.4) y el candado de orden real de salida
+   * (§3.5) y crea la inscripcion, ya directamente en INSCRITO (nunca
+   * PREINSCRITO -- ese estado queda sin uso desde esta correccion, se
+   * mantiene en el modelo solo por compatibilidad con filas antiguas).
+   */
   async join(organizationId: string, actor: JwtPayload, route: RouteDir, dto: JoinQueueDto) {
-    await this.sweepTimeouts(organizationId, route);
-
     const vehicle = await this.prisma.vehicle.findUnique({ where: { id: dto.vehicleId } });
     if (!vehicle || vehicle.organizationId !== organizationId) {
       throw new NotFoundException('Vehiculo no encontrado en esta asociacion');
@@ -225,12 +222,19 @@ export class QueuesService {
       }
     }
 
-    // Regla dura universal (§3.1): con viaje activo, no puede entrar a NINGUNA cola.
+    // Regla dura universal (§3.1) -- MODIFICADA (correccion 8 de septiembre de
+    // 2026, fusion de "Marcar llegada" en "Inscribirme"): un viaje activo de
+    // esta unidad ya no bloquea por si solo la inscripcion. Si el viaje
+    // activo es justo en la direccion CONTRARIA a la que se quiere
+    // inscribir, se completa mas abajo como parte de este mismo paso. Si el
+    // viaje activo es en la MISMA direccion que se intenta inscribir, eso si
+    // sigue bloqueado — no tiene sentido re-inscribirse en la ruta que ya
+    // esta recorriendo.
     const activeTrip = await this.prisma.trip.findFirst({
       where: { organizationId, vehicleId: vehicle.id, status: 'ACTIVO' },
     });
-    if (activeTrip) {
-      throw new ForbiddenException('La unidad tiene un viaje activo — no puede inscribirse hasta cerrarlo');
+    if (activeTrip && activeTrip.route === route) {
+      throw new ForbiddenException('La unidad tiene un viaje activo en esta misma direccion — no puede inscribirse hasta llegar');
     }
 
     // Regla dura universal (§3.1) extendida: tampoco puede entrar a la cola contraria
@@ -279,15 +283,77 @@ export class QueuesService {
       );
     }
 
+    // Confirmacion de llegada por GPS (§3.3), fusionada aqui (correccion 8 de
+    // septiembre de 2026) -- misma fuente que antes en trips.service.ts ->
+    // complete(): hardware Traccar si esta unidad ya lo tiene vinculado (PRO
+    // real), si no exige el GPS del celular (chequeo puntual, nunca rastreo
+    // continuo). Sin ninguna de las dos, solo administrador/superadmin puede
+    // continuar (caso de excepcion), igual que ya permitia confirmArrival().
+    const config = await this.getConfig(organizationId);
+    const terminal =
+      route === 'JULI_PUNO'
+        ? { lat: config.terminalOriginLat, lng: config.terminalOriginLng }
+        : { lat: config.terminalDestinationLat, lng: config.terminalDestinationLng };
+
+    let evidence: 'PRESENCIA_TERMINAL' | 'REGISTRO_MOVIL' | 'SIN_EVIDENCIA' = 'SIN_EVIDENCIA';
+    let tripGpsStatus: 'SIN_GPS' | 'REGISTRO_MOVIL' | 'GPS_FISICO' = 'SIN_GPS';
+    let arrivalLat: number | null = null;
+    let arrivalLng: number | null = null;
+
+    // Radio de terminal (Jayde, 9 sept 2026): antes esta distancia solo
+    // rebajaba la calidad de la evidencia, nunca rechazaba nada -- ni
+    // siquiera se calculaba en Plan PRO. Ahora, en los dos planes, si SI hay
+    // una posicion real (hardware o celular) y esta fuera del radio
+    // configurado, se rechaza para cualquier rol -- el dato ya existe y
+    // contradice la presencia, nadie puede "forzarlo". La excepcion de
+    // administrador/superadmin de mas abajo sigue intacta y solo aplica
+    // cuando NO hay ninguna posicion disponible (nunca cuando la hay y dice
+    // que esta lejos).
+    const hardwarePosition = await this.gps.getVehiclePosition(organizationId, vehicle.id).catch(() => null);
+    if (hardwarePosition) {
+      tripGpsStatus = 'GPS_FISICO';
+      const distance = distanceMeters(hardwarePosition.lat, hardwarePosition.lng, terminal.lat, terminal.lng);
+      if (distance > config.gpsRadiusMeters) {
+        throw new ForbiddenException(
+          `El GPS del vehiculo indica que esta a ${Math.round(distance)}m del terminal -- fuera del radio permitido (${config.gpsRadiusMeters}m). Acercate al terminal para poder inscribirte.`,
+        );
+      }
+      evidence = 'PRESENCIA_TERMINAL';
+      arrivalLat = hardwarePosition.lat;
+      arrivalLng = hardwarePosition.lng;
+    } else if (dto.lat !== undefined && dto.lng !== undefined) {
+      tripGpsStatus = 'REGISTRO_MOVIL';
+      const distance = distanceMeters(dto.lat, dto.lng, terminal.lat, terminal.lng);
+      if (distance > config.gpsRadiusMeters) {
+        throw new ForbiddenException(
+          `Tu ubicacion esta a ${Math.round(distance)}m del terminal -- fuera del radio permitido (${config.gpsRadiusMeters}m). Acercate al terminal para poder inscribirte.`,
+        );
+      }
+      evidence = 'PRESENCIA_TERMINAL';
+      arrivalLat = dto.lat;
+      arrivalLng = dto.lng;
+    } else if (actor.role === 'CONDUCTOR') {
+      throw new BadRequestException(
+        'Falta la ubicacion del celular para confirmar la llegada. Revisa los permisos de ubicacion del navegador.',
+      );
+    }
+    // administrador/superadmin sin ninguna de las dos evidencias: sigue SIN_EVIDENCIA/SIN_GPS,
+    // caso de excepcion real (igual que ya permitia trips.service.ts -> complete()).
+
     // Ultimo viaje de esta unidad en la direccion contraria — da el gate de tiempo
     // minimo (§3.4) y la hora real de salida para la cadena de predecesores (§3.5).
-    const lastOppositeTrip = await this.prisma.trip.findFirst({
-      where: { organizationId, vehicleId: vehicle.id, route: opposite(route), status: 'COMPLETADO' },
-      orderBy: { actualDeparture: 'desc' },
-    });
+    // Con la fusion de arriba, si hay un viaje activo (siempre en la direccion
+    // contraria por el chequeo de mas arriba) es EXACTAMENTE el que se completa
+    // en este mismo paso — ya no hace falta una query aparte a un viaje ya
+    // COMPLETADO, se usa directamente.
+    const lastOppositeTrip =
+      activeTrip ??
+      (await this.prisma.trip.findFirst({
+        where: { organizationId, vehicleId: vehicle.id, route: opposite(route), status: 'COMPLETADO' },
+        orderBy: { actualDeparture: 'desc' },
+      }));
 
     if (lastOppositeTrip?.actualDeparture && !verifiedRelocation) {
-      const config = await this.getConfig(organizationId);
       const minMinutes =
         route === 'JULI_PUNO' ? config.minTripMinutesOutbound : config.minTripMinutesReturn;
       const minutesSince = (Date.now() - lastOppositeTrip.actualDeparture.getTime()) / 60000;
@@ -333,20 +399,46 @@ export class QueuesService {
       }
     }
 
-    const created = await this.prisma.queueEntry.create({
-      data: {
-        organizationId,
-        route,
-        position: 1, // se recalcula abajo con recomputeOrder
-        vehicleId: vehicle.id,
-        driverId,
-        status: 'PREINSCRITO',
-        evidence: 'SIN_EVIDENCIA',
-        deviceId: dto.deviceId,
-        chainDepartureAt: lastOppositeTrip?.actualDeparture ?? null,
-      },
+    // Reubicaciones (§3.9): orden en destino por llegada GPS REAL, nunca por
+    // un dato de un viaje viejo/no relacionado -- si se usara aqui el
+    // lastOppositeTrip de arriba (normalmente irrelevante en una reubicacion,
+    // que no tiene un viaje comercial real recien completado en ese sentido)
+    // el orden quedaria "ciego", elegido de antemano por una fecha vieja en
+    // vez de por cuando la unidad llego de verdad. Se deja chainDepartureAt en
+    // null a proposito para que recomputeOrder use registeredAt -- el
+    // instante de este mismo paso de "Inscribirme", justo cuando se confirmo
+    // la evidencia GPS de arriba.
+    const chainDepartureAt = verifiedRelocation ? null : lastOppositeTrip?.actualDeparture ?? null;
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      // Completa el viaje activo (si lo hay) como parte de este mismo paso —
+      // antes era la accion separada "Marcar llegada" (trips.service.ts -> complete()).
+      if (activeTrip) {
+        await tx.trip.update({
+          where: { id: activeTrip.id },
+          data: { status: 'COMPLETADO', actualArrival: new Date(), gpsStatus: tripGpsStatus },
+        });
+      }
+      return tx.queueEntry.create({
+        data: {
+          organizationId,
+          route,
+          position: 1, // se recalcula abajo con recomputeOrder
+          vehicleId: vehicle.id,
+          driverId,
+          status: 'INSCRITO',
+          evidence,
+          deviceId: dto.deviceId,
+          arrivalGpsLat: arrivalLat,
+          arrivalGpsLng: arrivalLng,
+          arrivalCheckedAt: new Date(),
+          chainDepartureAt,
+        },
+      });
     });
     await this.recomputeOrder(organizationId, route);
+    await this.maybeAutoPromote(organizationId, route);
+
     await this.prisma.auditEntry.create({
       data: {
         organizationId,
@@ -356,10 +448,27 @@ export class QueuesService {
         resource: `Cola ${route}`,
         resourceId: created.id,
         before: null,
-        after: 'PREINSCRITO',
+        after: 'INSCRITO',
+        evidence,
         reason: `Unidad ${vehicle.code}`,
       },
     });
+    if (activeTrip) {
+      await this.prisma.auditEntry.create({
+        data: {
+          organizationId,
+          actorId: actor.sub,
+          actorRole: actor.role,
+          action: 'COMPLETAR_VIAJE',
+          resource: 'Viaje',
+          resourceId: activeTrip.id,
+          before: 'ACTIVO',
+          after: 'COMPLETADO',
+          evidence: tripGpsStatus,
+          reason: 'Completado como parte del mismo paso de "Inscribirme" en la cola contraria',
+        },
+      });
+    }
 
     // Si esta inscripcion se hizo usando una autorizacion de "inscripcion
     // retrasada", se consume (no sirve una segunda vez). Si NO se uso pero
@@ -383,10 +492,12 @@ export class QueuesService {
   }
 
   /**
-   * Verificacion de llegada por GPS del celular (§3.3): chequeo puntual UNA VEZ,
-   * nunca rastreo. Si cae dentro del radio configurado, evidencia fuerte
-   * (PRESENCIA_TERMINAL); si no, evidencia mas debil pero NUNCA bloquea por si
-   * sola (misma regla de "nunca castigar solo con señal debil" que en PRO).
+   * Legado: confirmacion de llegada por GPS como paso separado. Desde la
+   * correccion del 8 de septiembre de 2026 esto ya vive fusionado dentro de
+   * join() y las inscripciones nuevas nunca quedan en PREINSCRITO -- este
+   * metodo se mantiene solo por compatibilidad con filas PREINSCRITO que
+   * hayan quedado de antes del corte (no hay ninguna forma de crear una
+   * fila nueva en ese estado).
    */
   async confirmArrival(organizationId: string, actor: JwtPayload, entryId: string, dto: ConfirmArrivalDto) {
     const entry = await this.findOwnedEntry(organizationId, actor, entryId);
@@ -399,7 +510,7 @@ export class QueuesService {
     const withinRadius = distance <= config.gpsRadiusMeters;
     const evidence = withinRadius ? 'PRESENCIA_TERMINAL' : 'REGISTRO_MOVIL';
 
-    const updated = await this.prisma.queueEntry.update({
+    await this.prisma.queueEntry.update({
       where: { id: entryId },
       data: {
         status: 'INSCRITO',
@@ -423,11 +534,6 @@ export class QueuesService {
       },
     });
 
-    // Auto-Llamando en cola vacia (Jayde, 3 sept 2026 -- regla generalizada,
-    // ver maybeAutoPromote): si en esta cola no hay NINGUNA unidad en
-    // Llamando, esta unidad (o la que corresponda por orden) pasa a Llamando
-    // de inmediato -- no hace falta que el administrador apriete "Llamar
-    // siguiente" cuando no hay a quien mas llamar antes.
     await this.maybeAutoPromote(organizationId, entry.route as RouteDir);
 
     return this.prisma.queueEntry.findUniqueOrThrow({ where: { id: entryId } });
@@ -442,13 +548,7 @@ export class QueuesService {
       throw new BadRequestException(`No se puede pasar de ${entry.status} a ${dto.toStatus} directamente`);
     }
 
-    const config = await this.getConfig(organizationId);
-    const data: Record<string, unknown> = { status: dto.toStatus };
-    // Al llamar, arranca el reloj del timeout automatico (via 1 del escape de 3 vias).
-    if (dto.toStatus === 'LLAMADO') {
-      data.timeoutAt = new Date(Date.now() + config.timeoutMinutes * 60000);
-    }
-    const updated = await this.prisma.queueEntry.update({ where: { id: entryId }, data });
+    const updated = await this.prisma.queueEntry.update({ where: { id: entryId }, data: { status: dto.toStatus } });
     await this.prisma.auditEntry.create({
       data: {
         organizationId,
@@ -465,7 +565,7 @@ export class QueuesService {
   }
 
   /**
-   * Via 2 del escape de 3 vias (§3.6): declaracion explicita del conductor
+   * Via 2 del escape de 2 vias (§3.6): declaracion explicita del conductor
    * ("me inscribo mas tarde" en Cola, "no voy a salir todavia" en Inicio).
    * Lo retira POR COMPLETO de esta cola -- ver withdrawFromQueue.
    */
@@ -493,9 +593,10 @@ export class QueuesService {
   }
 
   /**
-   * Via 3 del escape de 3 vias (§3.6): intervencion manual del gerente/administrador,
-   * SIEMPRE con motivo obligatorio — y el mismo mecanismo que reusa el boton de
-   * alerta / incidentes reales (§3.7): nunca autoservicio del interesado.
+   * Via 2 (unica via de intervencion manual restante, §3.6): intervencion del
+   * gerente/administrador, SIEMPRE con motivo obligatorio — el mismo
+   * mecanismo que reusa el boton de alerta / incidentes reales (§3.7): nunca
+   * autoservicio del interesado.
    */
   async override(organizationId: string, actor: JwtPayload, entryId: string, dto: OverrideQueueDto) {
     const entry = await this.getEntryOrThrow(organizationId, entryId);
@@ -523,23 +624,19 @@ export class QueuesService {
   }
 
   /**
-   * Salida de terminal: cierra la fila en cola y abre el Trip real. Aqui nace
-   * la referencia de cadena de predecesores para el proximo vehiculo que use
-   * esta misma unidad al re-inscribirse en la cola contraria.
-   */
-  /**
    * Prepara el viaje (Trip en PROGRAMADO, sin actualDeparture todavia) que
    * necesita el conductor para poder abrir su manifiesto ANTES de salir.
-   * Disponible desde que la unidad es LLAMADA en adelante (DOCUMENTO_MAESTRO
-   * §6.4: el conductor es autonomo desde que lo llaman, sin pasos intermedios
-   * del administrador). Si ya existe un viaje PROGRAMADO para esta
-   * unidad/entrada, lo reutiliza (no crea uno nuevo cada vez que el
-   * conductor reabre la pantalla).
+   * Correccion (8 de septiembre de 2026): disponible UNICAMENTE mientras la
+   * unidad esta LLAMADA -- no "LLAMADA o mas adelante en la fila". El
+   * manifiesto nunca se prepara antes (no hay viaje que llenar) ni en un
+   * estado posterior (plan-operacion.md §3.8). Si ya existe un viaje
+   * PROGRAMADO para esta unidad/entrada, lo reutiliza (no crea uno nuevo
+   * cada vez que el conductor reabre la pantalla).
    */
   async prepareTrip(organizationId: string, actor: JwtPayload, entryId: string) {
     const entry = await this.findOwnedEntry(organizationId, actor, entryId);
-    if (!SELF_SERVICE_STATUSES.has(entry.status as (typeof ADVANCE_ORDER)[number])) {
-      throw new BadRequestException('La unidad debe estar Llamada (o mas adelante en la fila) para preparar el manifiesto');
+    if (entry.status !== 'LLAMADO') {
+      throw new BadRequestException('La unidad debe estar Llamada para preparar el manifiesto');
     }
 
     const existing = await this.prisma.trip.findFirst({
@@ -562,9 +659,13 @@ export class QueuesService {
   /**
    * "Marcar salida" (plan-flujo-colas-hardware.md §2.4) -- el propio
    * conductor dueno de la unidad, o un administrador, pueden despachar.
-   * Reutiliza el viaje PROGRAMADO que dejo prepareTrip() si el conductor ya
-   * habia empezado su manifiesto; si no existe (despacho directo del
-   * administrador, caso de excepcion), lo crea y activa de una vez.
+   * Correccion (8 de septiembre de 2026): no existe despacho sin manifiesto,
+   * ni como flujo normal ni como excepcion administrativa -- ni siquiera en
+   * un caso de accidente/robo/celular perdido (esos casos se resuelven
+   * reasignando el dispositivo o interviniendo la cola, nunca saltandose el
+   * manifiesto). Por eso ya no se crea un viaje "directo" cuando no existe
+   * uno PROGRAMADO: siempre tiene que existir ya, con su manifiesto CERRADO
+   * (o CORREGIDO/CON_INCIDENCIA -- cualquier estado despues de BORRADOR).
    */
   async depart(organizationId: string, actor: JwtPayload, entryId: string) {
     const entry = await this.findOwnedEntry(organizationId, actor, entryId);
@@ -572,47 +673,44 @@ export class QueuesService {
       throw new BadRequestException('La unidad debe estar Llamada (o mas adelante en la fila) para salir a viaje');
     }
 
+    const pending = await this.prisma.trip.findFirst({
+      where: { organizationId, vehicleId: entry.vehicleId, route: entry.route as RouteDir, status: 'PROGRAMADO' },
+      include: { manifest: true },
+    });
+    if (!pending) {
+      throw new BadRequestException(
+        'Falta preparar el manifiesto antes de marcar salida -- no existe despacho sin manifiesto',
+      );
+    }
+    if (!pending.manifest || pending.manifest.status === 'BORRADOR') {
+      throw new BadRequestException(
+        'El manifiesto de este viaje todavia no esta cerrado -- cierralo antes de marcar salida',
+      );
+    }
+
     const predecessor = await this.prisma.trip.findFirst({
       where: { organizationId, vehicleId: entry.vehicleId, route: opposite(entry.route as RouteDir), status: 'COMPLETADO' },
       orderBy: { actualDeparture: 'desc' },
     });
 
+    const now = new Date();
     const config = await this.getConfig(organizationId);
     const minMinutes =
       entry.route === 'JULI_PUNO' ? config.minTripMinutesOutbound : config.minTripMinutesReturn;
-    const now = new Date();
     const scheduledArrival = new Date(now.getTime() + minMinutes * 60000);
 
     const trip = await this.prisma.$transaction(async (tx) => {
-      const pending = await tx.trip.findFirst({
-        where: { organizationId, vehicleId: entry.vehicleId, route: entry.route as RouteDir, status: 'PROGRAMADO' },
+      const activated = await tx.trip.update({
+        where: { id: pending.id },
+        data: {
+          status: 'ACTIVO',
+          actualDeparture: now,
+          scheduledArrival,
+          predecessorTripId: predecessor?.id ?? null,
+        },
       });
-      const activated = pending
-        ? await tx.trip.update({
-            where: { id: pending.id },
-            data: {
-              status: 'ACTIVO',
-              actualDeparture: now,
-              scheduledArrival,
-              predecessorTripId: predecessor?.id ?? null,
-            },
-          })
-        : await tx.trip.create({
-            data: {
-              organizationId,
-              vehicleId: entry.vehicleId,
-              driverId: entry.driverId,
-              route: entry.route,
-              status: 'ACTIVO',
-              actualDeparture: now,
-              scheduledArrival,
-              gpsStatus: 'SIN_GPS',
-              predecessorTripId: predecessor?.id ?? null,
-            },
-          });
-      // Si el conductor ya habia abierto su manifiesto sobre el viaje
-      // PROGRAMADO, la hora de salida que quedo ahi (provisional, del
-      // momento en que abrio el manifiesto) se actualiza a la real.
+      // La hora de salida que quedo en el manifiesto (provisional, del
+      // momento en que se preparo el viaje) se actualiza a la real.
       await tx.manifest.updateMany({
         where: { tripId: activated.id },
         data: { departureTime: now.toISOString().slice(11, 16) },
@@ -768,9 +866,9 @@ export class QueuesService {
     return this.prisma.delayedRegistrationRequest.findMany({
       where: { organizationId },
       include: {
-        requestingVehicle: { include: { currentDriver: true } },
-        blockedByVehicle: { include: { currentDriver: true } },
-        resolvedBy: true,
+        requestingVehicle: { include: { currentDriver: { select: PERSON_QUEUE_SELECT } } },
+        blockedByVehicle: { include: { currentDriver: { select: PERSON_QUEUE_SELECT } } },
+        resolvedBy: { select: PERSON_QUEUE_SELECT },
       },
       orderBy: { createdAt: 'desc' },
     });

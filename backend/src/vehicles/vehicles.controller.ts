@@ -5,6 +5,8 @@ import { ChangeDriverDto } from './dto/change-driver.dto';
 import { ChangePartnerDto } from './dto/change-partner.dto';
 import { DeactivateVehicleDto } from './dto/deactivate-vehicle.dto';
 import { SetGpsDeviceDto } from './dto/set-gps-device.dto';
+import { SetGpsVehicularPlanDto } from './dto/set-gps-vehicular-plan.dto';
+import { SetMaintenanceDto } from './dto/set-maintenance.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -90,5 +92,34 @@ export class VehiclesController {
   ) {
     const orgId = resolveOrgId(user, organizationId);
     return this.vehicles.setGpsDevice(orgId, user, id, dto);
+  }
+
+  // Prende/apaga el Plan GPS Vehicular individual (por falta de pago, etc.):
+  // solo Super Admin, motivo obligatorio -- misma logica que gps-device.
+  @Post(':id/gps-vehicular-plan')
+  @Roles('SUPERADMIN')
+  setGpsVehicularPlan(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: SetGpsVehicularPlanDto,
+    @Query('organizationId') organizationId?: string,
+  ) {
+    const orgId = resolveOrgId(user, organizationId);
+    return this.vehicles.setGpsVehicularPlan(orgId, user, id, dto);
+  }
+
+  // Mantenimiento predictivo (plan-pro.md §11.1): administrador o Super Admin
+  // registran el ultimo servicio y el intervalo -- el socio solo lo lee
+  // (GET /vehicles ya incluye estos campos).
+  @Post(':id/maintenance')
+  @Roles('ADMINISTRADOR', 'SUPERADMIN')
+  setMaintenance(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: SetMaintenanceDto,
+    @Query('organizationId') organizationId?: string,
+  ) {
+    const orgId = resolveOrgId(user, organizationId);
+    return this.vehicles.setMaintenance(orgId, user, id, dto);
   }
 }

@@ -21,4 +21,12 @@ export class AuditController {
     const orgId = resolveOrgId(user, organizationId);
     return this.audit.findMany(orgId);
   }
+
+  // Panel SaaS de Super Admin (fuera del modo "entrar como administrador"):
+  // auditoria de TODAS las asociaciones a la vez, no de una sola.
+  @Get('all')
+  @Roles('SUPERADMIN')
+  findAllAcrossOrgs() {
+    return this.audit.findAllAcrossOrgs();
+  }
 }

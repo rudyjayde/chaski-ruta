@@ -36,6 +36,15 @@ export class OrganizationsController {
     return this.orgs.findAll();
   }
 
+  // Metricas reales de negocio para "Resumen" de Super Admin -- declarado
+  // ANTES de cualquier ruta con :id para que Nest nunca confunda "metrics"
+  // con un id de asociacion.
+  @Get('metrics')
+  @Roles('SUPERADMIN')
+  metrics() {
+    return this.orgs.getMetrics();
+  }
+
   // Cualquier persona autenticada (admin, socio, conductor o super admin) puede ver
   // el directorio publico de asociaciones ACTIVAS — solo nombre y RUC, sin datos
   // operativos. Se usa en la pantalla de bienvenida para mostrar 'otras asociaciones'.
@@ -56,5 +65,12 @@ export class OrganizationsController {
   @Roles('SUPERADMIN')
   update(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: UpdateOrganizationDto) {
     return this.orgs.update(id, user, dto);
+  }
+
+  // Checklist real de onboarding de esta asociacion (ver organizations.service.ts).
+  @Get(':id/onboarding')
+  @Roles('SUPERADMIN')
+  onboarding(@Param('id') id: string) {
+    return this.orgs.getOnboardingStatus(id);
   }
 }

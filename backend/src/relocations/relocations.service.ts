@@ -3,6 +3,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { JwtPayload } from '../auth/jwt.strategy';
 import { CreateRelocationDto } from './dto/create-relocation.dto';
 
+// El hash de la contraseña NUNCA debe llegar al navegador (mismo criterio
+// que people.service.ts / vehicles.service.ts) -- select explicito en vez
+// de "currentDriver: true".
+const PERSON_NAME_SELECT = { id: true, name: true } as const;
+
 @Injectable()
 export class RelocationsService {
   constructor(private prisma: PrismaService) {}
@@ -10,7 +15,7 @@ export class RelocationsService {
   findMany(organizationId: string) {
     return this.prisma.relocationOrder.findMany({
       where: { organizationId },
-      include: { units: { include: { vehicle: { include: { currentDriver: true } } } } },
+      include: { units: { include: { vehicle: { include: { currentDriver: { select: PERSON_NAME_SELECT } } } } } },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -18,7 +23,7 @@ export class RelocationsService {
   async findOne(organizationId: string, id: string) {
     const order = await this.prisma.relocationOrder.findUnique({
       where: { id },
-      include: { units: { include: { vehicle: { include: { currentDriver: true } } } } },
+      include: { units: { include: { vehicle: { include: { currentDriver: { select: PERSON_NAME_SELECT } } } } } },
     });
     if (!order || order.organizationId !== organizationId) {
       throw new NotFoundException('Orden de reubicacion no encontrada');
@@ -43,7 +48,7 @@ export class RelocationsService {
         internalOrder,
         units: { create: dto.vehicleIds.map((vehicleId) => ({ vehicleId })) },
       },
-      include: { units: { include: { vehicle: { include: { currentDriver: true } } } } },
+      include: { units: { include: { vehicle: { include: { currentDriver: { select: PERSON_NAME_SELECT } } } } } },
     });
 
     await this.prisma.auditEntry.create({

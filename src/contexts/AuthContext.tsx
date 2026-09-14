@@ -1,21 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
-import type { AuthUser, Person, Role } from '../types';
-import { DEMO_ACCOUNTS, PEOPLE } from '../data/demo';
+import type { AuthUser, Role } from '../types';
 
-const CUSTOM_PEOPLE_KEY = 'atipcar-custom-people-v1';
-const PERSON_LINKS_KEY = 'atipcar-person-links-v1';
 const TOKEN_KEY = 'chaski-auth-token';
-
-type PersonWithRoles = Person & {
-  roles?: Person['role'][];
-  accessStatus?: 'INVITADO' | 'ACTIVO' | 'BLOQUEADO';
-};
-
-interface AuthorizedIdentity {
-  name: string;
-  org: string;
-  code?: string;
-}
 
 // Forma que devuelve el backend real en GET /auth/me (ver backend/src/auth/auth.service.ts getProfile()).
 type BackendPersonRole = 'SUPERADMIN' | 'ADMINISTRADOR' | 'SOCIO' | 'CONDUCTOR';
@@ -41,11 +27,17 @@ export interface ProfileOption {
   organizationName: string | null;
 }
 
+// Resultado de un login por contraseña: entra directo (accessToken), o el
+// correo tiene mas de una cuenta y hace falta elegir panel primero
+// (selectToken, mismo flujo de "¿A cual panel quieres entrar?" que Google).
+export type LoginResult =
+  | { ok: true }
+  | { ok: false; error?: string; selectToken?: string };
+
 interface AuthContextValue {
   user: AuthUser | null;
   restoring: boolean;
-  login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
-  loginAs: (email: string, requestedRole?: Role, identity?: AuthorizedIdentity) => void;
+  login: (email: string, password: string) => Promise<LoginResult>;
   loginWithToken: (token: string) => Promise<void>;
   fetchProfileOptions: (selectToken: string) => Promise<ProfileOption[]>;
   loginWithSelectedProfile: (selectToken: string, personId: string) => Promise<void>;
@@ -53,24 +45,6 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
-
-function readStoredArray<T>(key: string): T[] {
-  try { return JSON.parse(localStorage.getItem(key) ?? '[]') as T[]; } catch { return []; }
-}
-
-function readStoredRecord<T>(key: string): Record<string, T> {
-  try { return JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, T>; } catch { return {}; }
-}
-
-function personRoles(person: PersonWithRoles): Person['role'][] {
-  return person.roles?.length ? person.roles : [person.role];
-}
-
-function mapRole(role: Person['role']): Role {
-  if (role === 'CONDUCTOR') return 'driver';
-  if (role === 'SOCIO') return 'partner';
-  return 'admin';
-}
 
 // Mapeo de roles del backend real (Prisma PersonRole) al tipo Role del frontend.
 // SUPERADMIN es el caso que el mapeo de datos demo no necesitaba cubrir.
@@ -138,31 +112,67 @@ async function selectProfileApi(selectToken: string, personId: string): Promise<
   return res.json() as Promise<{ accessToken: string }>;
 }
 
-function findAuthorizedPerson(email: string): PersonWithRoles | null {
-  const links = readStoredRecord<Partial<PersonWithRoles>>(PERSON_LINKS_KEY);
-  const custom = readStoredArray<PersonWithRoles>(CUSTOM_PEOPLE_KEY);
-  const people = [...PEOPLE, ...custom].map(person => ({ ...person, ...(links[person.id] ?? {}) })) as PersonWithRoles[];
-  const normalized = email.trim().toLowerCase();
-  return people.find(person =>
-    person.email.toLowerCase() === normalized &&
-    person.status === 'ACTIVO' &&
-    person.accessStatus !== 'BLOQUEADO'
-  ) ?? null;
+// Login real por correo + contraseña (POST /auth/login, ver backend
+// AuthService.loginWithPassword). Devuelve lo mismo que el login de Google:
+// token directo, o un selectToken si el correo tiene mas de una cuenta.
+async function loginWithPasswordApi(email: string, password: string): Promise<
+  | { accessToken: string }
+  | { selectToken: string }
+> {
+  const apiUrl = import.meta.env.VITE_API_URL as string | undefined;
+  if (!apiUrl) {
+    throw new Error('Falta configurar VITE_API_URL.');
+  }
+  const res = await fetch(`${apiUrl}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    let message = 'Usuario o contraseña incorrectos.';
+    try {
+      const body = await res.json();
+      if (body?.message) message = Array.isArray(body.message) ? body.message.join(', ') : body.message;
+    } catch {
+      // sin cuerpo JSON, se usa el mensaje generico
+    }
+    throw new Error(message);
+  }
+  return res.json();
 }
 
-function buildUser(person: PersonWithRoles, requestedRole?: Role): AuthUser {
-  const availableRoles = personRoles(person).map(mapRole);
-  const role = requestedRole && availableRoles.includes(requestedRole)
-    ? requestedRole
-    : availableRoles[0];
-  return {
-    email: person.email,
-    name: person.name,
-    role,
-    org: person.company || 'ATIPCAR',
-    orgId: 'atipcar',
-    code: person.linkedUnit || person.code,
-  };
+// Solicita el enlace de "definir/restablecer contraseña" (POST /auth/forgot-password).
+// Siempre resuelve igual exista o no la cuenta -- el backend nunca revela cual es el caso.
+export async function requestPasswordResetApi(email: string): Promise<void> {
+  const apiUrl = import.meta.env.VITE_API_URL as string | undefined;
+  if (!apiUrl) throw new Error('Falta configurar VITE_API_URL.');
+  const res = await fetch(`${apiUrl}/auth/forgot-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) throw new Error('No se pudo procesar la solicitud. Intenta de nuevo.');
+}
+
+// Confirma el enlace recibido por correo y guarda la nueva contraseña (POST /auth/reset-password).
+export async function resetPasswordApi(token: string, password: string): Promise<void> {
+  const apiUrl = import.meta.env.VITE_API_URL as string | undefined;
+  if (!apiUrl) throw new Error('Falta configurar VITE_API_URL.');
+  const res = await fetch(`${apiUrl}/auth/reset-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, password }),
+  });
+  if (!res.ok) {
+    let message = 'El enlace expiró o no es válido. Solicita uno nuevo.';
+    try {
+      const body = await res.json();
+      if (body?.message) message = Array.isArray(body.message) ? body.message.join(', ') : body.message;
+    } catch {
+      // sin cuerpo JSON, se usa el mensaje generico
+    }
+    throw new Error(message);
+  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -182,43 +192,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setRestoring(false));
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    await new Promise(r => setTimeout(r, 800));
-    const account = DEMO_ACCOUNTS.find(
-      a => a.email.toLowerCase() === email.toLowerCase() && a.password === password
-    );
-    if (account) {
-      setUser({ email: account.email, name: account.name, role: account.role, org: account.org, orgId: account.orgId, code: account.code });
+  // Login real por correo + contraseña (alternativa a Google). Si el correo
+  // tiene mas de una cuenta, en vez de entrar directo devuelve selectToken
+  // para que la pantalla de login muestre "¿A cual panel quieres entrar?"
+  // (mismo componente que ya usa el login de Google, ver AuthCallbackPage).
+  const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
+    try {
+      const result = await loginWithPasswordApi(email, password);
+      if ('selectToken' in result) {
+        return { ok: false, selectToken: result.selectToken };
+      }
+      await loginWithToken(result.accessToken);
       return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Error de conexión' };
     }
-
-    if (findAuthorizedPerson(email)) {
-      return { ok: false, error: 'Este correo está autorizado. Usa Continuar con Google para validar tu identidad.' };
-    }
-    return { ok: false, error: 'Usuario o contraseña incorrectos' };
-  }, []);
-
-  const loginAs = useCallback((email: string, requestedRole?: Role, identity?: AuthorizedIdentity) => {
-    const account = DEMO_ACCOUNTS.find(a => a.email.toLowerCase() === email.toLowerCase());
-    if (account) {
-      setUser({ email: account.email, name: account.name, role: account.role, org: account.org, orgId: account.orgId, code: account.code });
-      return;
-    }
-
-    if (identity && requestedRole) {
-      setUser({
-        email,
-        name: identity.name,
-        role: requestedRole,
-        org: identity.org,
-        orgId: 'atipcar',
-        code: identity.code,
-      });
-      return;
-    }
-
-    const person = findAuthorizedPerson(email);
-    if (person) setUser(buildUser(person, requestedRole));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Login real: recibe el JWT que el backend emitió tras el OAuth de Google
@@ -248,7 +237,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, restoring, login, loginAs, loginWithToken, fetchProfileOptions, loginWithSelectedProfile, logout }}>
+    <AuthContext.Provider value={{ user, restoring, login, loginWithToken, fetchProfileOptions, loginWithSelectedProfile, logout }}>
       {children}
     </AuthContext.Provider>
   );

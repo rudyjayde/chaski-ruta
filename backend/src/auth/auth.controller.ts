@@ -4,10 +4,14 @@ import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { GoogleProfile } from './google.strategy';
+import { GoogleAuthGuard } from './google-auth.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from './jwt.strategy';
 import { DevLoginDto } from './dto/dev-login.dto';
+import { LoginDto } from './dto/login.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -17,29 +21,46 @@ export class AuthController {
   ) {}
 
   // Paso 1: el navegador entra aqui y Passport lo redirige a la pantalla de Google.
+  // ?flow=landing (boton de la landing publica) vs sin flow (login interno
+  // /ingresar) viaja de ida y vuelta en el `state` de OAuth -- ver GoogleAuthGuard.
   @Get('google')
-  @UseGuards(AuthGuard('google'))
+  @UseGuards(GoogleAuthGuard)
   googleLogin() {
-    // Nunca se ejecuta: AuthGuard('google') intercepta y redirige antes.
+    // Nunca se ejecuta: GoogleAuthGuard intercepta y redirige antes.
   }
 
   // Paso 2: Google redirige de vuelta aqui despues de que la persona inicia sesion.
   // Si el correo tiene una sola cuenta, entra directo (?token=). Si tiene mas de
   // una (Socio + Conductor), en vez de token se manda un selectToken corto para
   // que el frontend muestre "¿A cual panel quieres entrar?" antes de dar acceso.
+  //
+  // Landing (?flow=landing en el paso 1, devuelto por Google como state) usa una
+  // version distinta que NUNCA rechaza un correo desconocido -- lo convierte en
+  // visitante (?visitorToken=) en vez de dar error, porque cualquiera puede
+  // entrar por la landing. El login interno (sin flow) mantiene el rechazo claro
+  // de siempre para alguien que se equivoco de correo.
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   async googleCallback(@Req() req: Request, @Res() res: Response) {
     const googleProfile = req.user as GoogleProfile;
-    const result = await this.authService.loginWithGoogle(googleProfile);
-
+    const fromLanding = req.query.state === 'landing';
     const frontendUrl = this.config.get<string>('FRONTEND_URL');
+    const flowSuffix = fromLanding ? '&flow=landing' : '';
+
+    const result = fromLanding
+      ? await this.authService.loginOrCreateVisitorWithGoogle(googleProfile)
+      : await this.authService.loginWithGoogle(googleProfile);
+
+    if ('visitorToken' in result) {
+      res.redirect(`${frontendUrl}/auth/callback?visitorToken=${result.visitorToken}${flowSuffix}`);
+      return;
+    }
     if ('selectToken' in result) {
-      res.redirect(`${frontendUrl}/auth/callback?select=${result.selectToken}`);
+      res.redirect(`${frontendUrl}/auth/callback?select=${result.selectToken}${flowSuffix}`);
       return;
     }
     // El frontend debe tener una ruta /auth/callback que lea ?token= y lo guarde.
-    res.redirect(`${frontendUrl}/auth/callback?token=${result.accessToken}`);
+    res.redirect(`${frontendUrl}/auth/callback?token=${result.accessToken}${flowSuffix}`);
   }
 
   // Lista los paneles disponibles para el selectToken emitido arriba.
@@ -60,6 +81,27 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   me(@CurrentUser() user: JwtPayload) {
     return this.authService.getProfile(user.sub);
+  }
+
+  // Login alternativo por correo + contraseña (ver AuthService.loginWithPassword).
+  @Post('login')
+  async login(@Body() dto: LoginDto) {
+    return this.authService.loginWithPassword(dto.email, dto.password);
+  }
+
+  // Solicita el enlace para definir/restablecer contraseña. Siempre responde
+  // igual exista o no la cuenta -- nunca revela si un correo esta registrado.
+  @Post('forgot-password')
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    await this.authService.requestPasswordReset(dto.email);
+    return { ok: true, message: 'Si el correo está registrado, te enviamos un enlace para continuar.' };
+  }
+
+  // Confirma el enlace enviado por correo y guarda la nueva contraseña.
+  @Post('reset-password')
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    await this.authService.resetPassword(dto.token, dto.password);
+    return { ok: true };
   }
 
   // SOLO para los agentes de prueba (conductor/admin/superadmin) en desarrollo.

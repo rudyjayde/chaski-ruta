@@ -60,7 +60,7 @@ export default function CompaniesPage() {
     <div className="flex flex-col h-full">
       <div className="px-6 py-4 border-b border-border bg-surface">
         <h1 className="text-2xl font-bold text-t1">Empresas integrantes</h1>
-        <p className="text-sm text-t2 mt-0.5">ATIPCAR · {companies.length} empresas</p>
+        <p className="text-sm text-t2 mt-0.5">{org?.name ?? 'Tu asociación'} · {companies.length} empresas</p>
       </div>
 
       {loading ? (

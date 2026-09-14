@@ -1,13 +1,19 @@
-import { useState, useEffect, useCallback } from 'react';
-import { AuthProvider, useAuth, type ProfileOption } from './contexts/AuthContext';
+import { useState, useEffect, useCallback, type FormEvent } from 'react';
+import { AuthProvider, useAuth, resetPasswordApi, type ProfileOption } from './contexts/AuthContext';
 import Landing from './pages/Landing';
+import LegalPage from './pages/LegalPage';
+import AboutPage from './pages/AboutPage';
+import ComplaintBookPage from './pages/ComplaintBookPage';
+import { LEGAL_PAGE_SLUGS, type LegalPageSlug } from './lib/landing-content-api';
 import Login from './pages/Login';
 import AssociationPortal from '../AssociationPortal';
 import AdminApp from './pages/admin/AdminApp';
 import DriverApp from './pages/driver/DriverApp';
 import PartnerApp from './pages/partner/PartnerApp';
 import SuperAdminApp from './pages/superadmin/SuperAdminApp';
-import { MANIFESTS } from './data/demo';
+import VisitorAccountPage from './pages/VisitorAccountPage';
+import { setVisitorToken } from './lib/visitor-auth-api';
+import { verifyManifestPublic, type ManifestPublicVerification } from './lib/operacion-api';
 import { getActingOrgId, getActingOrgName, setActingOrg } from './lib/acting-org';
 
 function useRouter() {
@@ -15,7 +21,11 @@ function useRouter() {
 
   const navigate = useCallback((to: string) => {
     window.history.pushState({}, '', to);
-    setPath(to);
+    // `path` solo debe llevar la ruta (sin query string) para que comparaciones
+    // como `path === '/'` sigan funcionando cuando `to` trae parametros, ej.
+    // navigate('/?account=1') -- la URL real (con query) queda en la barra de
+    // direcciones via pushState; quien la necesite la lee de window.location.search.
+    setPath(new URL(to, window.location.origin).pathname);
   }, []);
 
   useEffect(() => {
@@ -60,76 +70,28 @@ function Platform({ onLogout }: { onLogout: () => void }) {
 }
 
 
-const MANIFEST_RECORDS_KEY = 'atipcar-manifest-verification-v1';
 const CHASKI_WORDMARK_URL = 'https://res.cloudinary.com/sgf8nwgk/image/upload/v1788027352/chaski-AI-nombre_1_1.png';
 const ATIPCAR_WORDMARK_URL = 'https://res.cloudinary.com/sgf8nwgk/image/upload/v1788058385/ATIPCAR-LOGO-NOMBre.png';
 
-type VerificationPassenger = {
-  seat: number;
-  name: string;
-  dni: string;
-  origin: string;
-  destination: string;
-  fare: number;
-  paymentMethod: string;
-};
-
-type StoredManifestRecord = {
-  status: string;
-  pdfDataUrl?: string;
-  number: string;
-  route: string;
-  departure: string;
-  arrival: string;
-  downloadedAt: string;
-  code: string;
-  plate: string;
-  model: string;
-  capacity: number;
-  association: string;
-  company: string;
-  driver: string;
-  dni: string;
-  license: string;
-  passengers: VerificationPassenger[];
-  total: number;
-};
-
-function manifestVerificationToken(id: string, number: string, code: string) {
-  return 'atp_' + btoa(id + '|' + number + '|' + code).replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-}
-
 function ManifestVerificationPage({ token }: { token: string }) {
-  const storedRecords = (() => {
-    try {
-      return JSON.parse(localStorage.getItem(MANIFEST_RECORDS_KEY) ?? '{}') as Record<string, StoredManifestRecord>;
-    } catch {
-      return {} as Record<string, StoredManifestRecord>;
-    }
-  })();
-  const stored = storedRecords[token];
-  const source = MANIFESTS.find(manifest =>
-    manifestVerificationToken(manifest.id, manifest.number, manifest.code) === token
-  );
-  const record: StoredManifestRecord | null = stored ?? (source ? {
-    status: 'VALIDO',
-    number: source.number,
-    route: source.route === 'JULI_PUNO' ? 'Juli → Puno' : 'Puno → Juli',
-    departure: source.date + ' ' + source.departureTime,
-    arrival: source.arrivalTime ?? 'Pendiente de cierre',
-    downloadedAt: 'PDF aún no emitido',
-    code: source.code,
-    plate: source.plate,
-    model: source.vehicleType,
-    capacity: source.capacity,
-    association: 'ATIPCAR',
-    company: source.company,
-    driver: source.driverName,
-    dni: 'Protegido',
-    license: 'Protegida',
-    passengers: source.passengers,
-    total: source.passengers.reduce((sum, passenger) => sum + passenger.fare, 0),
-  } : null);
+  const [record, setRecord] = useState<ManifestPublicVerification | null | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRecord(undefined);
+    verifyManifestPublic(token).then((result) => {
+      if (!cancelled) setRecord(result);
+    });
+    return () => { cancelled = true; };
+  }, [token]);
+
+  if (record === undefined) {
+    return (
+      <main className="min-h-screen bg-[#f4f7fb] flex items-center justify-center p-6">
+        <p className="text-sm text-[#667085]">Verificando manifiesto…</p>
+      </main>
+    );
+  }
 
   if (!record) {
     return (
@@ -137,12 +99,15 @@ function ManifestVerificationPage({ token }: { token: string }) {
         <section className="w-full max-w-xl bg-white border border-[#d8dee9] p-8 text-center">
           <img src={CHASKI_WORDMARK_URL} alt="CHASKI AI" className="h-7 mx-auto object-contain" />
           <h1 className="text-xl font-semibold text-[#101828] mt-8">Manifiesto no verificado</h1>
-          <p className="text-sm text-[#667085] mt-2">El código no existe, fue revocado o no corresponde a un manifiesto emitido por ATIPCAR.</p>
+          <p className="text-sm text-[#667085] mt-2">El código no existe, fue revocado o no corresponde a un manifiesto emitido.</p>
           <p className="font-mono text-xs text-[#98a2b3] mt-5 break-all">{token}</p>
         </section>
       </main>
     );
   }
+
+  const routeLabel = record.route === 'JULI_PUNO' ? 'Juli → Puno' : 'Puno → Juli';
+  const total = record.passengers.reduce((sum, passenger) => sum + passenger.fare, 0);
 
   return (
     <main className="min-h-screen bg-[#f4f7fb] text-[#101828]">
@@ -167,13 +132,10 @@ function ManifestVerificationPage({ token }: { token: string }) {
             <div className="p-6 md:p-8 md:border-r border-[#d8dee9]">
               <h2 className="text-xs font-semibold text-[#155eef] uppercase">Información del viaje</h2>
               <dl className="mt-4 grid grid-cols-[130px_1fr] gap-y-3 text-sm">
-                <dt className="text-[#667085]">Ruta</dt><dd className="font-medium">{record.route}</dd>
-                <dt className="text-[#667085]">Salida</dt><dd>{record.departure}</dd>
-                <dt className="text-[#667085]">Llegada / cierre</dt><dd>{record.arrival}</dd>
-                <dt className="text-[#667085]">Descargado</dt><dd>{record.downloadedAt}</dd>
+                <dt className="text-[#667085]">Ruta</dt><dd className="font-medium">{routeLabel}</dd>
+                <dt className="text-[#667085]">Salida</dt><dd>{record.date} {record.departureTime}</dd>
+                <dt className="text-[#667085]">Llegada / cierre</dt><dd>{record.arrivalTime ?? 'Pendiente de cierre'}</dd>
                 <dt className="text-[#667085]">Conductor</dt><dd>{record.driver}</dd>
-                <dt className="text-[#667085]">DNI</dt><dd>{record.dni}</dd>
-                <dt className="text-[#667085]">Licencia</dt><dd>{record.license}</dd>
               </dl>
             </div>
             <div className="p-6 md:p-8">
@@ -217,14 +179,7 @@ function ManifestVerificationPage({ token }: { token: string }) {
               </table>
             </div>
             <div className="mt-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <p className="font-semibold">Total recaudado: S/ {record.total.toFixed(2)}</p>
-              {record.pdfDataUrl ? (
-                <a href={record.pdfDataUrl} target="_blank" rel="noreferrer" className="inline-flex justify-center px-4 py-2.5 bg-[#155eef] text-white text-sm font-semibold hover:bg-[#004eeb]">
-                  Visualizar PDF emitido
-                </a>
-              ) : (
-                <span className="text-xs text-[#667085]">El PDF estará disponible después de la primera emisión.</span>
-              )}
+              <p className="font-semibold">Total recaudado: S/ {total.toFixed(2)}</p>
             </div>
           </div>
         </section>
@@ -250,11 +205,25 @@ function AuthCallbackPage({ navigate }: { navigate: (to: string) => void }) {
   const [profiles, setProfiles] = useState<ProfileOption[] | null>(null);
   const [selectToken, setSelectToken] = useState<string | null>(null);
   const [choosing, setChoosing] = useState(false);
+  // Si vino del boton de la landing (?flow=landing), el destino tras el login
+  // es la misma landing (Landing.tsx refleja el estado real solo, sin abrir
+  // nada por su cuenta) -- nunca otra pantalla aparte. El login interno de
+  // /ingresar sigue entrando directo a /portal como siempre.
+  const [destination, setDestination] = useState('/portal');
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const select = params.get('select');
     const token = params.get('token');
+    const visitorToken = params.get('visitorToken');
+    const dest = params.get('flow') === 'landing' ? '/' : '/portal';
+    setDestination(dest);
+
+    if (visitorToken) {
+      setVisitorToken(visitorToken);
+      navigate('/');
+      return;
+    }
 
     if (select) {
       setSelectToken(select);
@@ -269,7 +238,7 @@ function AuthCallbackPage({ navigate }: { navigate: (to: string) => void }) {
       return;
     }
     loginWithToken(token)
-      .then(() => navigate('/portal'))
+      .then(() => navigate(dest))
       .catch(err => setError(err instanceof Error ? err.message : 'No se pudo iniciar sesión.'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -280,7 +249,7 @@ function AuthCallbackPage({ navigate }: { navigate: (to: string) => void }) {
     setError(null);
     try {
       await loginWithSelectedProfile(selectToken, personId);
-      navigate('/portal');
+      navigate(destination);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo iniciar sesión.');
       setChoosing(false);
@@ -334,6 +303,106 @@ function AuthCallbackPage({ navigate }: { navigate: (to: string) => void }) {
   );
 }
 
+// Pantalla que abre el enlace del correo de "Recuperar acceso" (ver
+// MailService.sendPasswordResetEmail / POST /auth/reset-password). El token
+// viaja en el query string, nunca en el path, para no quedar en logs de
+// servidor tan facilmente como un path si algo lo registrara por error.
+function ResetPasswordPage({ navigate }: { navigate: (to: string) => void }) {
+  const token = new URLSearchParams(window.location.search).get('token') ?? '';
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [done, setDone] = useState(false);
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (password.length < 8) {
+      setError('La contraseña debe tener al menos 8 caracteres.');
+      return;
+    }
+    if (password !== confirm) {
+      setError('Las contraseñas no coinciden.');
+      return;
+    }
+    setLoading(true);
+    try {
+      await resetPasswordApi(token, password);
+      setDone(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo actualizar la contraseña.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!token) {
+    return (
+      <main className="min-h-screen flex items-center justify-center px-4">
+        <p className="text-sm text-danger">Enlace inválido. Solicita uno nuevo desde "Recuperar acceso".</p>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-bg flex items-center justify-center px-4">
+      <div className="w-full max-w-sm bg-surface border border-border rounded-lg p-6 shadow-sm">
+        <h1 className="text-base font-semibold text-t1 mb-5">Definir nueva contraseña</h1>
+
+        {done ? (
+          <>
+            <p className="text-sm text-t2 mb-5">Tu contraseña quedó actualizada. Ya puedes iniciar sesión con ella.</p>
+            <button
+              onClick={() => navigate('/ingresar')}
+              className="w-full h-10 bg-primary hover:bg-primary-h text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Ir a iniciar sesión
+            </button>
+          </>
+        ) : (
+          <form onSubmit={handleSubmit} noValidate>
+            <div className="mb-4">
+              <label htmlFor="new-password" className="block text-sm font-medium text-t1 mb-1">Nueva contraseña</label>
+              <input
+                id="new-password"
+                type="password"
+                autoComplete="new-password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+                minLength={8}
+                className="w-full h-10 px-3 border border-border rounded-lg text-sm text-t1 bg-surface focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+              />
+            </div>
+            <div className="mb-4">
+              <label htmlFor="confirm-password" className="block text-sm font-medium text-t1 mb-1">Confirmar contraseña</label>
+              <input
+                id="confirm-password"
+                type="password"
+                autoComplete="new-password"
+                value={confirm}
+                onChange={e => setConfirm(e.target.value)}
+                required
+                minLength={8}
+                className="w-full h-10 px-3 border border-border rounded-lg text-sm text-t1 bg-surface focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+              />
+            </div>
+            {error && <p className="text-danger text-sm mb-4">{error}</p>}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full h-10 bg-primary hover:bg-primary-h text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-60"
+            >
+              {loading ? 'Guardando…' : 'Guardar contraseña'}
+            </button>
+          </form>
+        )}
+      </div>
+    </main>
+  );
+}
+
 function Router() {
   const { user, restoring, logout } = useAuth();
   const { path, navigate } = useRouter();
@@ -357,8 +426,28 @@ function Router() {
     return <ManifestVerificationPage token={token} />;
   }
 
+  // Paginas legales y Libro de Reclamaciones -- publicas, sin cuenta ni
+  // asociacion, por eso se resuelven aqui arriba, antes de esperar a que
+  // termine de restaurarse la sesion o de saber si hay usuario.
+  if (path.startsWith('/legal/')) {
+    const slug = path.slice('/legal/'.length).replace(/\/$/, '');
+    if (slug in LEGAL_PAGE_SLUGS) {
+      return <LegalPage slug={slug as LegalPageSlug} onBack={() => navigate('/')} />;
+    }
+  }
+  if (path === '/libro-de-reclamaciones') {
+    return <ComplaintBookPage onBack={() => navigate('/')} />;
+  }
+  if (path === '/empresa') {
+    return <AboutPage onBack={() => navigate('/')} />;
+  }
+
   if (path === '/auth/callback') {
     return <AuthCallbackPage navigate={navigate} />;
+  }
+
+  if (path === '/restablecer-contrasena') {
+    return <ResetPasswordPage navigate={navigate} />;
   }
 
   // Al refrescar la página, React vuelve a montar todo con user=null mientras
@@ -377,7 +466,7 @@ function Router() {
   }
 
   if (path === '/' || path === '') {
-    return <Landing onNavigateToLogin={() => navigate('/ingresar')} />;
+    return <Landing onNavigateToLogin={() => navigate('/ingresar')} navigate={navigate} />;
   }
 
   if (path === '/ingresar') {
@@ -387,6 +476,10 @@ function Router() {
         onNavigateToLanding={() => navigate('/')}
       />
     );
+  }
+
+  if (path === '/mi-cuenta') {
+    return <VisitorAccountPage navigate={navigate} />;
   }
 
   if (path === '/portal') {
@@ -430,7 +523,7 @@ function Router() {
     );
   }
 
-  return <Landing onNavigateToLogin={() => navigate('/ingresar')} />;
+  return <Landing onNavigateToLogin={() => navigate('/ingresar')} navigate={navigate} />;
 }
 
 export default function App() {

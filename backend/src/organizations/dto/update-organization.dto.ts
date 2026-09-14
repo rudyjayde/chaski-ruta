@@ -1,4 +1,4 @@
-import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
 
 export class UpdateOrganizationDto {
   // Renovacion de directiva/marca (p. ej. la asociacion cambia de nombre
@@ -40,12 +40,24 @@ export class UpdateOrganizationDto {
   @IsBoolean()
   driverLiveMapEnabled?: boolean;
 
-  // Solo Super Admin, desde el panel de la asociacion (no hay flujo de pago
-  // real conectado todavia -- ver plan-pro.md). Desbloquea GPS Vehicular y
-  // el Asistente AI para esa asociacion.
+  // Solo Super Admin, desde el panel de la asociacion. El pago se coordina
+  // por fuera de la plataforma (cotizacion desde la landing + acuerdo directo
+  // con Jayde, decision 11 sept 2026 -- ya no habra un modulo de Pagos
+  // interno) -- este es el UNICO interruptor real que activa/desactiva PRO.
+  // Desbloquea GPS Vehicular y el Asistente AI para esa asociacion.
   @IsOptional()
   @IsIn(['OPERACION', 'PRO'])
   plan?: 'OPERACION' | 'PRO';
+
+  // Obligatorio solo cuando `plan` de verdad cambia (lo exige el service, no
+  // aqui, porque aqui no se sabe todavia cual es el plan actual) -- deja
+  // registrado EN LA AUDITORIA por que se activo o desactivo PRO (ej. "pago
+  // confirmado por transferencia, referencia 00123"), ya que no hay ningun
+  // otro rastro de facturacion en el sistema.
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  reason?: string;
 
   @IsOptional()
   @IsIn(['ACTIVA', 'EN_CONFIGURACION', 'SUSPENDIDA'])
@@ -54,4 +66,13 @@ export class UpdateOrganizationDto {
   @IsOptional()
   @IsString()
   logoUrl?: string;
+
+  // Dias de gracia del Plan GPS Vehicular al bajar de PRO a Operacion (13
+  // sept 2026, editable por Super Admin desde el tab "Plan GPS Vehicular") --
+  // 10 es el acuerdo comercial por defecto, no un limite fijo del sistema.
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(365)
+  gpsVehicularGraceDays?: number;
 }

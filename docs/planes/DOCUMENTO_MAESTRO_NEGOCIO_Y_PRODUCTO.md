@@ -11,6 +11,16 @@ Este archivo explica el negocio de CHASKI AI, la propuesta publica de la landing
 
 Claude Code debe leer este documento antes de analizar o modificar la plataforma. Cuando una pantalla, dato de prueba o documento anterior contradiga este archivo, prevalece este documento. Los precios, contratos, obligaciones legales y datos aun marcados como pendientes no deben inventarse.
 
+**Corrección y ampliación (8 de septiembre de 2026):** la plataforma se
+construye sobre cuatro superficies -- landing publica, plataforma web,
+aplicacion nativa y backend compartido -- detalladas en
+`plataformas-web-y-app-nativa.md`. La landing administrable y el formulario
+comercial dinamico se detallan en `landing-publica-y-solicitudes-
+comerciales.md`. Las propuestas de inteligencia artificial aplicadas al
+negocio, incluida la deteccion automatica de accidentes, se detallan en
+`ia-aplicada.md`. Los tres son un desglose de este documento, no un
+reemplazo -- ante cualquier duda, manda este maestro.
+
 ## 2. Jerarquia del negocio
 
 ```text
@@ -146,6 +156,23 @@ Una cuenta de Google identifica a la persona, pero no la convierte automaticamen
 - Presentar posiciones GPS simuladas como reales.
 - Publicar precios no aprobados.
 
+### 4.7 Landing administrable y formulario comercial dinamico (agregado 8 de septiembre de 2026)
+
+El Super Admin administra la landing sin tocar codigo -- contenido,
+imagenes, tarjetas de los tres ofrecimientos, SEO, paginas legales y modo
+mantenimiento -- con flujo de borrador, previsualizacion, publicacion e
+historial. El formulario comercial es dinamico: el Super Admin puede
+agregar, activar/desactivar y reordenar preguntas, y estas pueden variar
+segun la solucion elegida (Operacion, PRO o GPS Vehicular). Cada Solicitud
+comercial ya enviada conserva las preguntas y respuestas exactas que el
+cliente vio, aunque el formulario cambie despues.
+
+**Regla obligatoria: el contenido comercial nunca es el sistema real.**
+Editar una tarjeta publica de un plan, o cambiar el texto de la landing, no
+activa ningun modulo ni permiso dentro de una asociacion real -- son capas
+completamente separadas. Detalle completo en
+`landing-publica-y-solicitudes-comerciales.md`.
+
 ## 5. Producto CHASKI RUTA
 
 ### 5.1 Flujo principal
@@ -166,6 +193,26 @@ Cola -> llamado de pasajeros -> registro de pasajeros y asientos
 - El GPS se vincula al vehiculo, nunca a la persona.
 - Una persona puede tener varios roles en una sola cuenta.
 - Ninguna integracion ausente debe simularse como disponible.
+
+### 5.3 Cuatro superficies (agregado 8 de septiembre de 2026)
+
+CHASKI RUTA se construye sobre cuatro superficies distintas que comparten un
+mismo backend NestJS + Prisma + PostgreSQL -- ninguna regla de negocio vive
+solo en un frontend, y ninguna se duplica de forma distinta en otro:
+
+1. **Landing publica:** responsive, capta solicitudes comerciales, no crea
+   nada por si sola.
+2. **Plataforma web (React + Vite, este repositorio):** desktop-first,
+   Super Admin y administracion completa de la asociacion.
+3. **Aplicacion movil nativa:** proyecto independiente en Flutter (decidido
+   el 8 de septiembre de 2026, pendiente de construir -- se construye
+   despues de consolidar el sistema web). Para CONDUCTOR, SOCIO y
+   ADMINISTRADOR -- nunca SUPERADMIN. **No es un envoltorio de la web: no
+   usa Capacitor, WebView ni PWA.** Esa decision anterior queda eliminada.
+4. **Backend compartido.**
+
+Detalle completo de usuarios, permisos y estado real de cada superficie en
+`plataformas-web-y-app-nativa.md`.
 
 ## 6. ATIPCAR como primer cliente
 
@@ -188,6 +235,10 @@ ATIPCAR puede contener varias empresas integrantes. La asociacion controla la op
 - Configura el plan y sus limites.
 - Verifica pagos y activa PRO o GPS Vehicular.
 - Gestiona dispositivos, SIM, instalaciones e integracion tecnica.
+- Atiende las solicitudes comerciales que llegan desde la landing publica
+  (ver `landing-publica-y-solicitudes-comerciales.md`).
+- Administra la landing publica: contenido, tarjetas de planes, SEO,
+  paginas legales y modo mantenimiento (agregado 8 de septiembre de 2026).
 - No opera la cola diaria ni aprueba manifiestos por defecto.
 
 #### Administrador o gerente de ATIPCAR
@@ -213,6 +264,12 @@ ATIPCAR puede contener varias empresas integrantes. La asociacion controla la op
 - Opera la cola, pasajeros, asientos, manifiesto, salida, viaje y llegada.
 - Solo puede operar vehiculos autorizados.
 - Recibe funciones GPS limitadas si su unidad asignada tiene GPS activo.
+
+**Que canal usa cada rol (agregado 8 de septiembre de 2026):** el detalle de
+que ve cada rol en la plataforma web frente a la futura aplicacion nativa
+(Flutter, pendiente de construir) vive en `plataformas-web-y-app-nativa.md`
+§2 -- no se repite aqui para evitar que quede desactualizado en dos lugares
+a la vez.
 
 ### 6.3 Alta y vinculacion de personas y vehiculos
 

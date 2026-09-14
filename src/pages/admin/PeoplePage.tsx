@@ -9,6 +9,7 @@ import {
   X,
 } from 'lucide-react';
 import type { Person, Unit } from '../../types';
+import { useAdminDemo } from './AdminApp';
 import {
   fetchPeople, createPerson, type CreatePersonInput,
   fetchVehicles, fetchCompanies, type CompanyOption,
@@ -510,6 +511,7 @@ function LinkUnitModal({
 }
 
 function PersonDetail({ person, onClose, onLink, onStatusChanged }: { person: Person; onClose: () => void; onLink: () => void; onStatusChanged: (message: string) => void }) {
+  const { org } = useAdminDemo();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [resettingDevice, setResettingDevice] = useState(false);
@@ -566,7 +568,7 @@ function PersonDetail({ person, onClose, onLink, onStatusChanged }: { person: Pe
     <aside className="w-80 flex-shrink-0 border-l border-border bg-surface flex flex-col" aria-label="Detalle de persona">
       <div className="px-4 py-3 border-b border-border flex items-center justify-between"><h3 className="text-base font-semibold text-t1">Detalle</h3><button onClick={onClose} aria-label="Cerrar"><X size={16} /></button></div>
       <div className="flex-1 overflow-auto p-4 space-y-3 text-sm">
-        <div className="text-center py-3"><div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-lg mx-auto mb-2">{person.name[0]}</div><p className="text-sm font-semibold text-t1">{person.name}</p><p className="text-t2 mt-0.5">{person.role} · {person.company ?? 'ATIPCAR'}</p><span className={`inline-block mt-1 text-[11px] px-2 py-0.5 rounded font-medium ${STATUS_STYLE[person.status]}`}>{person.status}</span></div>
+        <div className="text-center py-3"><div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-lg mx-auto mb-2">{person.name[0]}</div><p className="text-sm font-semibold text-t1">{person.name}</p><p className="text-t2 mt-0.5">{person.role} · {person.company ?? org?.name ?? 'Sin dato'}</p><span className={`inline-block mt-1 text-[11px] px-2 py-0.5 rounded font-medium ${STATUS_STYLE[person.status]}`}>{person.status}</span></div>
         {error && <div className="p-2.5 bg-danger/5 text-danger border border-danger/30 rounded-lg text-sm">{error}</div>}
         <div className="border border-border rounded-lg divide-y divide-border">
           {[{ label: 'DNI', value: maskDni(person.dni) }, { label: 'Correo', value: person.email }, { label: 'Teléfono', value: person.phone || 'No registrado' }, { label: 'Unidad', value: person.linkedUnit || person.code || 'Sin vincular' }].map(row => <div key={row.label} className="flex justify-between gap-3 px-3 py-2"><span className="text-t2">{row.label}</span><span className="text-t1 font-medium truncate max-w-[170px]">{row.value}</span></div>)}
@@ -688,6 +690,7 @@ function CreatePersonModal({
 }
 
 export default function PeoplePage() {
+  const { org } = useAdminDemo();
   const [tab, setTab] = useState<PersonTab>('conductores');
   const [search, setSearch] = useState('');
   const [filterCompany, setFilterCompany] = useState('');
@@ -747,7 +750,7 @@ export default function PeoplePage() {
   return (
     <div className="flex flex-col h-full">
       <div className="px-6 py-4 border-b border-border bg-surface flex items-center justify-between gap-4">
-        <div><h1 className="text-2xl font-bold text-t1">Personas</h1><p className="text-sm text-t2 mt-0.5">ATIPCAR · {counts.socios} socios · {counts.conductores} conductores · {people.length} registros</p></div>
+        <div><h1 className="text-2xl font-bold text-t1">Personas</h1><p className="text-sm text-t2 mt-0.5">{org?.name ?? 'Tu asociación'} · {counts.socios} socios · {counts.conductores} conductores · {people.length} registros</p></div>
         <div className="flex items-center gap-2">
           {tab === 'conductores' && <button onClick={() => setShowDriverRegistration(true)} className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h"><UserPlus size={15} /> Registrar conductor</button>}
           {tab === 'socios' && <button onClick={() => setShowSocioRegistration(true)} className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h"><UserPlus size={15} /> Registrar socio</button>}
@@ -770,7 +773,7 @@ export default function PeoplePage() {
         <div className="flex-1 overflow-auto">
           <table className="w-full text-sm" aria-label="Tabla de personas">
             <thead className="bg-bg sticky top-0"><tr className="text-left text-t2 border-b border-border"><th className="px-4 py-2.5 font-medium">Nombre</th><th className="px-4 py-2.5 font-medium">DNI</th><th className="px-4 py-2.5 font-medium">Correo</th><th className="px-4 py-2.5 font-medium">Empresa</th><th className="px-4 py-2.5 font-medium">Código</th>{(tab === 'conductores' || tab === 'socios') && <th className="px-4 py-2.5 font-medium">Unidad</th>}<th className="px-4 py-2.5 font-medium">Estado</th><th /></tr></thead>
-            <tbody>{filteredPeople.map(person => <tr key={person.id} onClick={() => setSelected(person)} className="border-b border-border hover:bg-hover cursor-pointer"><td className="px-4 py-3 font-medium text-t1">{person.name}</td><td className="px-4 py-3 font-mono text-t2">{maskDni(person.dni)}</td><td className="px-4 py-3 text-t2">{person.email}</td><td className="px-4 py-3 text-t2">{person.company ?? 'ATIPCAR'}</td><td className="px-4 py-3 font-mono font-semibold">{person.code ?? '—'}</td>{(tab === 'conductores' || tab === 'socios') && <td className="px-4 py-3 text-t2">{person.linkedUnit || person.code || 'Sin vincular'}</td>}<td className="px-4 py-3"><span className={`text-[11px] px-2 py-0.5 rounded font-medium ${STATUS_STYLE[person.status]}`}>{person.status}</span></td><td className="px-4 py-3"><ChevronRight size={14} className="text-muted" /></td></tr>)}</tbody>
+            <tbody>{filteredPeople.map(person => <tr key={person.id} onClick={() => setSelected(person)} className="border-b border-border hover:bg-hover cursor-pointer"><td className="px-4 py-3 font-medium text-t1">{person.name}</td><td className="px-4 py-3 font-mono text-t2">{maskDni(person.dni)}</td><td className="px-4 py-3 text-t2">{person.email}</td><td className="px-4 py-3 text-t2">{person.company ?? org?.name ?? 'Sin dato'}</td><td className="px-4 py-3 font-mono font-semibold">{person.code ?? '—'}</td>{(tab === 'conductores' || tab === 'socios') && <td className="px-4 py-3 text-t2">{person.linkedUnit || person.code || 'Sin vincular'}</td>}<td className="px-4 py-3"><span className={`text-[11px] px-2 py-0.5 rounded font-medium ${STATUS_STYLE[person.status]}`}>{person.status}</span></td><td className="px-4 py-3"><ChevronRight size={14} className="text-muted" /></td></tr>)}</tbody>
           </table>
           {filteredPeople.length === 0 && !loadError && <div className="py-16 text-center text-sm text-t2">No hay registros para los filtros seleccionados.</div>}
         </div>

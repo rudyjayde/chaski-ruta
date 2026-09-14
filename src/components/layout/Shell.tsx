@@ -2,7 +2,9 @@ import { useState, useEffect, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, Bell, RefreshCw, LogOut, ChevronDown, User, Sun, Moon } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { fetchMyOrganization } from '../../lib/operacion-api';
+import { fetchMyOrganization, fetchNoticesUnreadCount, markNoticesRead } from '../../lib/operacion-api';
+
+const NOTICES_POLL_MS = 30000;
 
 
 const CHASKI_LOGO_URL = 'https://res.cloudinary.com/sgf8nwgk/image/upload/e_trim,f_png,q_auto/v1788027352/chaski-AI-nombre_1_1.png';
@@ -39,9 +41,16 @@ interface ShellProps {
   children: ReactNode;
   isSuperAdmin?: boolean;
   onLogout?: () => void;
+  // Reemplaza la etiqueta de plan por defecto (derivada de Organization.plan)
+  // -- lo usan Socio/Conductor cuando SU unidad especifica tiene GPS
+  // Vehicular contratado aparte, aunque la asociacion siga en Plan Operación
+  // (plan-gps-vehicular.md: es un complemento por unidad, no un plan de la
+  // asociacion completa, asi que Organization.plan solo no alcanza para
+  // saber esto).
+  planLabelOverride?: string;
 }
 
-export default function Shell({ navItems, activeSection, onNavigate, children, isSuperAdmin = false, onLogout }: ShellProps) {
+export default function Shell({ navItems, activeSection, onNavigate, children, isSuperAdmin = false, onLogout, planLabelOverride }: ShellProps) {
   const { user, logout } = useAuth();
   const handleLogout = onLogout ?? logout;
   const [collapsed, setCollapsed] = useState(false);
@@ -77,15 +86,47 @@ export default function Shell({ navItems, activeSection, onNavigate, children, i
 
   const orgDisplay = isSuperAdmin ? 'CHASKI AI' : user?.org ?? '';
   const [orgLogoUrl, setOrgLogoUrl] = useState<string | null>(null);
+  const [orgPlan, setOrgPlan] = useState<'OPERACION' | 'PRO' | null>(null);
   useEffect(() => {
     if (isSuperAdmin) return;
     let cancelled = false;
     fetchMyOrganization()
-      .then(org => { if (!cancelled) setOrgLogoUrl(org?.logoUrl ?? null); })
-      .catch(() => { /* se degrada al nombre en texto */ });
+      .then(org => {
+        if (cancelled) return;
+        setOrgLogoUrl(org?.logoUrl ?? null);
+        setOrgPlan(org?.plan ?? null);
+      })
+      .catch(() => { /* se degrada al nombre en texto, sin etiqueta de plan */ });
     return () => { cancelled = true; };
   }, [isSuperAdmin]);
   const logoSrc = isSuperAdmin ? CHASKI_LOGO_URL : orgLogoUrl;
+
+  // Etiqueta de plan (12 sept 2026): antes solo se veia el rol (Administrador/
+  // Socio/Conductor), sin ninguna pista de si la asociacion tiene PRO,
+  // Operación, o (para una unidad puntual) GPS Vehicular.
+  const planLabel = planLabelOverride ?? (orgPlan === 'PRO' ? 'Plan PRO' : orgPlan === 'OPERACION' ? 'Plan Operación' : null);
+
+  // Campanita real (12 sept 2026): cuenta avisos privados sin leer (ej.
+  // resultado de una solicitud de bloqueo de motor) -- antes esto era
+  // decorativo, siempre mostraba el punto rojo sin ningun dato real detras.
+  const [unreadCount, setUnreadCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      fetchNoticesUnreadCount()
+        .then(({ count }) => { if (!cancelled) setUnreadCount(count); })
+        .catch(() => { /* se degrada a 0, nunca inventa un numero */ });
+    };
+    poll();
+    const id = setInterval(poll, NOTICES_POLL_MS);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  const hasAvisos = navItems.some(item => item.id === 'avisos');
+  const handleBellClick = () => {
+    markNoticesRead().then(() => setUnreadCount(0)).catch(() => { /* reintenta en el proximo poll */ });
+    if (hasAvisos) onNavigate('avisos');
+  };
 
   return (
     <div className="flex h-full bg-bg">
@@ -163,6 +204,14 @@ export default function Shell({ navItems, activeSection, onNavigate, children, i
             {logoSrc ? <BrandLogo src={logoSrc} alt={orgDisplay} compact /> : <span className="text-sm font-medium text-t1 truncate">{orgDisplay}</span>}
             <span className="text-border">·</span>
             <span className="text-sm text-t2">{roleLabel[user?.role ?? '']}</span>
+            {planLabel && (
+              <>
+                <span className="text-border">·</span>
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${planLabel === 'Plan PRO' ? 'bg-ok/10 text-ok' : planLabel === 'Plan GPS Vehicular' ? 'bg-primary/10 text-primary' : 'bg-t2/10 text-t2'}`}>
+                  {planLabel}
+                </span>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
@@ -173,9 +222,9 @@ export default function Shell({ navItems, activeSection, onNavigate, children, i
             </div>
 
             {/* Notifications */}
-            <button className="relative text-t2 hover:text-t1 p-1" aria-label="Notificaciones" title="Notificaciones">
+            <button onClick={handleBellClick} className="relative text-t2 hover:text-t1 p-1" aria-label="Notificaciones" title={unreadCount > 0 ? `${unreadCount} sin leer` : 'Notificaciones'}>
               <Bell size={18} />
-              <span className="absolute top-0 right-0 w-2 h-2 bg-accent rounded-full" />
+              {unreadCount > 0 && <span className="absolute top-0 right-0 w-2 h-2 bg-accent rounded-full" />}
             </button>
 
             {/* Account menu */}

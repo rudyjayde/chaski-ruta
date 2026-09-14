@@ -24,6 +24,20 @@ export class PeopleController {
     return this.people.findAll(orgId);
   }
 
+  // Autoservicio: cualquier rol puede leer SU PROPIO registro (dni, telefono,
+  // licencia, etc.) -- a diferencia de findAll() de arriba, que sigue siendo
+  // solo Administrador/Super Admin porque expone el directorio completo de la
+  // asociacion. Sin esto, Socio/Conductor no tenian forma de leer su propio
+  // perfil sin pasar por el endpoint restringido (bug real: PartnerApp.tsx /
+  // DriverApp.tsx llamaban a fetchPeople() dentro de un Promise.all que
+  // fallaba entero con 403, dejando "Mis unidades" vacio). Debe declararse
+  // ANTES de @Get(':id') para que "me" no se interprete como un id.
+  @Get('me')
+  @Roles('ADMINISTRADOR', 'SUPERADMIN', 'SOCIO', 'CONDUCTOR')
+  findMe(@CurrentUser() user: JwtPayload) {
+    return this.people.findOne(user.organizationId!, user.sub);
+  }
+
   @Get(':id')
   findOne(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Query('organizationId') organizationId?: string) {
     const orgId = resolveOrgId(user, organizationId);

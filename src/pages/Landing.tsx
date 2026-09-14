@@ -1,10 +1,127 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { CheckCircle, ChevronDown, Menu, X, ArrowRight, BarChart2, ListOrdered, FileText, Route, ArrowLeftRight, Shield, Loader2, Moon, Sun } from 'lucide-react';
+import { submitCommercialRequest } from '../lib/commercial-requests-api';
+import { AccountPanelContent } from './VisitorAccountPage';
+import { useAuth } from '../contexts/AuthContext';
+import { getVisitorToken, fetchVisitorMe, clearVisitorToken } from '../lib/visitor-auth-api';
+import { fetchLandingContent, type LandingContentData, type LandingPlan, type LandingFleetItem } from '../lib/landing-content-api';
+import {
+  CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Menu, X, BarChart2, ListOrdered, FileText, Route,
+  ArrowLeftRight, ArrowRight, Shield, Loader2, Moon, Sun, User, type LucideIcon,
+} from 'lucide-react';
 
 const WORDMARK_URL = 'https://res.cloudinary.com/sgf8nwgk/image/upload/e_trim,f_png,q_auto/v1788027352/chaski-AI-nombre_1_1.png';
-const TAGLINE = 'Plataformas inteligentes para modernas operaciones';
 const LANDING_THEME_KEY = 'chaski-landing-theme';
 type LandingTheme = 'light' | 'dark';
+
+// Contenido por defecto de la landing -- el mismo texto real de siempre.
+// Se usa como valor inicial mientras se espera la respuesta de
+// GET /landing-content, y como respaldo si esa llamada falla -- asi la
+// landing publica nunca queda en blanco. Super Admin puede sobreescribir
+// cualquiera de estos textos (docs/planes/landing-publica-y-solicitudes-
+// comerciales.md §9).
+//
+// IMPORTANTE: este objeto debe coincidir exactamente con los defaults de
+// backend/src/landing-content/landing-content.service.ts. Si cambias un
+// texto aqui, cambialo alla tambien -- son dos copias de la misma regla, y
+// ya encontramos un bug real (FleetPage vs. SeatMap, capacidad de Master)
+// causado justo por eso: dos lugares con el mismo dato escrito por separado
+// que se desincronizaron.
+const DEFAULT_LANDING_CONTENT: LandingContentData = {
+  HERO: {
+    tagline: 'Plataformas inteligentes para modernas operaciones',
+    title: 'Creamos plataformas digitales para asociaciones de transporte y operaciones logísticas.',
+    subtitle: 'Centralizamos colas, ventas, manifiestos, viajes y control operativo en un solo sistema.',
+    subtitleCaption: 'Para asociaciones de transporte y operaciones logísticas.',
+    ctaPrimary: 'Solicitar demostración',
+    ctaSecondary: 'Ingresar a la plataforma',
+  },
+  HERO_BACKGROUND: { imageUrl: '' },
+  PROBLEMS: [
+    { title: 'Colas sin control', desc: 'Posiciones disputadas, excepciones sin registro y jornadas que empiezan en conflicto.' },
+    { title: 'Manifiestos en papel', desc: 'Documentos extraviados, errores de registro y sin trazabilidad de correcciones.' },
+    { title: 'Desequilibrio de flota', desc: 'Vehículos acumulados en un terminal mientras el otro carece de unidades.' },
+    { title: 'Sin auditoría real', desc: 'Decisiones sin respaldo, responsabilidades difusas y datos inconsistentes.' },
+    { title: 'Múltiples sistemas', desc: 'Hojas de cálculo, grupos de WhatsApp y registros sueltos sin integración.' },
+    { title: 'Recaudación opaca', desc: 'Totales sin trazabilidad por método de pago ni verificación de tarifas.' },
+  ],
+  CAPABILITIES: [
+    { icon: 'ListOrdered', label: 'Gestión de colas', desc: 'Cola digital por dirección con posicionamiento justo, llamado confirmado y excepciones auditadas.' },
+    { icon: 'FileText', label: 'Ventas y manifiestos', desc: 'Registro de pasajeros por asiento, cierre de manifiesto con PDF y correcciones versionadas.' },
+    { icon: 'Route', label: 'Control de viajes', desc: 'Seguimiento del ciclo completo: salida, tránsito y llegada con registro de evidencia.' },
+    { icon: 'ArrowLeftRight', label: 'Reubicaciones', desc: 'Detección de desequilibrio, orden de traslado, compensación y auditoría sin manipular la cola.' },
+    { icon: 'BarChart2', label: 'Reportes operativos', desc: 'Producción por unidad, empresa y jornada. Ausencias, incidencias y recaudación.' },
+    { icon: 'Shield', label: 'Auditoría completa', desc: 'Cada acción registrada con actor, recurso, valores antes/después, motivo y marca de tiempo.' },
+  ],
+  // Debe coincidir con los defaults del backend (landing-content.service.ts)
+  // -- actualizado 13 sept 2026 tras auditar el codigo real: ver el
+  // comentario extendido alla sobre que se quito (Kiosco QR nunca se
+  // construyo, Auditoria no tiene version "extendida" distinta), que se
+  // corrigio (reubicaciones/reportes/correcciones de manifiesto SIEMPRE
+  // estuvieron disponibles desde Operacion, nunca fueron exclusivas de PRO)
+  // y donde va mantenimiento predictivo/deteccion de accidentes (necesitan
+  // GPS real para funcionar -- van en PRO y GPS Vehicular, nunca en
+  // Operacion sola).
+  PLANS: {
+    operacion: {
+      name: 'Operación',
+      desc: 'Para asociaciones que comienzan su digitalización — sin necesidad de hardware.',
+      features: ['Gestión de colas digitales', 'Ventas, manifiestos y correcciones con historial de versiones', 'Control de viajes de punta a punta', 'Reubicaciones de flota con compensación y sugerencia automática de traslado', 'Reportes de producción por unidad y eficiencia por ruta/empresa', 'Auditoría completa de cada acción', 'Avisos internos a socios y conductores', 'Soporte por correo'],
+    },
+    pro: {
+      name: 'PRO',
+      desc: 'Para asociaciones que quieren visibilidad de flota completa y asistente de inteligencia artificial.',
+      features: ['Todo en Operación', 'Asistente de inteligencia artificial conversacional para conductores', 'Mapa en vivo, historial e inventario de dispositivos de toda la flota para el administrador', 'Mantenimiento predictivo y detección automática de posibles accidentes en toda la flota', 'Alertas de seguridad graves notificadas directo al administrador', 'Reporte de recaudación por empresa', 'Soporte prioritario'],
+    },
+    gpsVehicular: {
+      name: 'GPS Vehicular',
+      desc: 'Para socios que desean controlar una o varias unidades, aunque su asociación permanezca en Operación.',
+      features: ['Equipo Teltonika instalado y configurado por nuestro equipo técnico', 'Ubicación en vivo y estado de conexión de la unidad', 'Historial real de recorridos pintado en el mapa', 'Mantenimiento predictivo comparado con el kilometraje real de la unidad', 'Detección automática de posibles accidentes, con verificación humana siempre', 'Alertas automáticas: desconexión, corte de energía, posible remolque y fuera de ruta', 'Bloqueo remoto de motor: el socio solicita, CHASKI AI confirma y ejecuta', 'Visible solo para el socio dueño y su conductor asignado'],
+    },
+  },
+  CLIENTS_SHOWCASE: [],
+  FAQ: [
+    { question: '¿CHASKI RUTA reemplaza el proceso que ya tenemos?', answer: 'Sí. Reemplaza los procesos manuales de cola, venta de pasajes y manifiestos con un sistema digital centralizado que opera en tiempo real, pensado para la operación real de corredores por turnos.' },
+    { question: '¿Necesito comprar hardware para empezar?', answer: 'No. El Plan Operación funciona solo con la app web y la app Android del conductor. El GPS físico es un servicio aparte (GPS Vehicular o Plan PRO) y se coordina por separado, instalación incluida.' },
+    { question: '¿Qué pasa con mis datos si más adelante decido no continuar?', answer: 'Tus datos son tuyos: colas, manifiestos, viajes y reportes quedan guardados y auditados en tu propia asociación durante todo el tiempo que uses la plataforma.' },
+    { question: '¿Cuánto tiempo toma implementarlo?', answer: 'Depende del tamaño de tu asociación y del número de rutas y empresas integrantes. Lo evaluamos juntos después de recibir tu solicitud, sin costo ni compromiso.' },
+    { question: '¿El sistema funciona igual para varias empresas dentro de mi asociación?', answer: 'Sí. Cada empresa miembro se gestiona por separado dentro del mismo sistema, con sus propios vehículos, manifiestos y reportes.' },
+  ],
+  COMPANY: {
+    legalName: 'IMPORT STAR PERUVIAN EIRL',
+    ruc: '20609699605',
+    whatsapp: '',
+    address: '',
+    contactEmail: 'contacto@chaski.ai',
+    instagramUrl: '',
+    facebookUrl: '',
+    tiktokUrl: '',
+  },
+  ABOUT: {
+    title: 'Sobre nosotros',
+    body: `CHASKI AI es una plataforma digital para asociaciones de transporte y operaciones logísticas, operada por IMPORT STAR PERUVIAN EIRL (RUC 20609699605).
+
+Construimos CHASKI RUTA para reemplazar el manejo manual de colas, ventas de pasajes y manifiestos con un sistema centralizado que opera en tiempo real, pensado para la operación real de corredores por turnos en el Perú.`,
+  },
+  // Vacio hasta que Super Admin suba la primera pareja de imagenes -- nunca
+  // un vehiculo/asociacion de ejemplo inventado.
+  FLEET_SHOWCASE: { items: [], intervalSeconds: 3 },
+  // Landing.tsx no lee estas 3 directamente (la pagina publica /legal/:slug
+  // usa fetchLegalPage, que trae tambien la fecha real de actualizacion) --
+  // estan aca solo para que DEFAULT_LANDING_CONTENT cumpla el tipo
+  // LandingContentData completo. Deben coincidir con los defaults del
+  // backend (landing-content.service.ts) igual que el resto de este objeto.
+  LEGAL_TERMS: { title: '', body: '' },
+  LEGAL_PRIVACY: { title: '', body: '' },
+  LEGAL_COOKIES: { title: '', body: '' },
+};
+
+// Nombre del icono (guardado como texto en CAPABILITIES, editable desde Super
+// Admin) -> componente real de lucide-react. Si algun dia se guarda un
+// nombre que no existe en este mapa, cae a Shield en vez de romper la pagina.
+const ICONS: Record<string, LucideIcon> = { ListOrdered, FileText, Route, ArrowLeftRight, BarChart2, Shield };
+function resolveIcon(name: string): LucideIcon {
+  return ICONS[name] ?? Shield;
+}
 
 function getInitialTheme(): LandingTheme {
   if (typeof window === 'undefined') return 'light';
@@ -30,82 +147,48 @@ function WordmarkImg({ className = '', height = 28 }: { className?: string; heig
 
 const NAV_LINKS = ['Soluciones', 'Cómo funciona', 'Planes', 'Empresa', 'Contacto'];
 
-const PROBLEMS = [
-  { title: 'Colas sin control', desc: 'Posiciones disputadas, excepciones sin registro y jornadas que empiezan en conflicto.' },
-  { title: 'Manifiestos en papel', desc: 'Documentos extraviados, errores de registro y sin trazabilidad de correcciones.' },
-  { title: 'Desequilibrio de flota', desc: 'Vehículos acumulados en un terminal mientras el otro carece de unidades.' },
-  { title: 'Sin auditoría real', desc: 'Decisiones sin respaldo, responsabilidades difusas y datos inconsistentes.' },
-  { title: 'Múltiples sistemas', desc: 'Hojas de cálculo, grupos de WhatsApp y registros sueltos sin integración.' },
-  { title: 'Recaudación opaca', desc: 'Totales sin trazabilidad por método de pago ni verificación de tarifas.' },
-];
-
-const CAPABILITIES = [
-  { icon: ListOrdered, label: 'Gestión de colas', desc: 'Cola digital por dirección con posicionamiento justo, llamado confirmado y excepciones auditadas.' },
-  { icon: FileText, label: 'Ventas y manifiestos', desc: 'Registro de pasajeros por asiento, cierre de manifiesto con PDF y correcciones versionadas.' },
-  { icon: Route, label: 'Control de viajes', desc: 'Seguimiento del ciclo completo: salida, tránsito y llegada con registro de evidencia.' },
-  { icon: ArrowLeftRight, label: 'Reubicaciones', desc: 'Detección de desequilibrio, orden de traslado, compensación y auditoría sin manipular la cola.' },
-  { icon: BarChart2, label: 'Reportes operativos', desc: 'Producción por unidad, empresa y jornada. Ausencias, incidencias y recaudación.' },
-  { icon: Shield, label: 'Auditoría completa', desc: 'Cada acción registrada con actor, recurso, valores antes/después, motivo y marca de tiempo.' },
-];
-
-const PLAN_OPERACION = [
-  'Gestión de colas digitales',
-  'Ventas y manifiestos básicos',
-  'Control de viajes',
-  'Reportes de jornada',
-  'Auditoría básica',
-  'Soporte por correo',
-];
-
-const PLAN_PRO = [
-  'Todo en Operación',
-  'Reubicaciones con compensación',
-  'Kiosco QR de terminal',
-  'Correcciones de manifiesto con versión',
-  'Auditoría extendida',
-  'Reportes avanzados por empresa',
-  'Soporte prioritario',
-  'GPS PRO (módulo adicional)',
-];
-
-
-const GPS_VEHICLE_FEATURES = [
-  'Equipo Teltonika instalado y configurado',
-  'Ubicación y estado de señal en la cuenta del socio',
-  'Historial de recorridos, paradas y kilómetros',
-  'Alertas de desconexión, ignición y geocercas',
-  'SIM, conectividad y soporte técnico',
-];
-
-function GPSVehicleCard() {
+function GPSVehicleCard({ plan }: { plan: LandingPlan }) {
   const [open, setOpen] = useState(false);
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({
     owner: '', email: '', phone: '', association: 'ATIPCAR',
     unitCode: '', plate: '', units: '1',
   });
   const setField = (key: keyof typeof form, value: string) => setForm(current => ({ ...current, [key]: value }));
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
     setSending(true);
-    setTimeout(() => {
-      setSending(false);
+    setError(null);
+    try {
+      await submitCommercialRequest({
+        solution: 'GPS_VEHICULAR',
+        contactName: form.owner,
+        contactEmail: form.email,
+        contactPhone: form.phone,
+        orgName: form.association,
+        answers: { unitCode: form.unitCode, plate: form.plate, units: form.units },
+      });
       setSent(true);
-    }, 700);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo enviar la solicitud. Intenta nuevamente.');
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
     <>
-      <div className="border border-border rounded-lg p-6 flex flex-col">
+      <div className="border border-border rounded-lg p-6 flex flex-col transition-all hover:border-primary hover:shadow-md">
         <div className="flex items-start justify-between gap-3 mb-1">
-          <h3 className="text-base font-semibold text-t1">GPS Vehicular</h3>
+          <h3 className="text-base font-semibold text-t1">{plan.name}</h3>
           <span className="text-[10px] bg-ok/10 text-ok px-2 py-0.5 rounded font-medium">Por unidad</span>
         </div>
-        <p className="text-xs text-t2 mb-5">Para socios que desean controlar una o varias unidades, aunque su asociación permanezca en Operación.</p>
+        <p className="text-xs text-t2 mb-5">{plan.desc}</p>
         <ul className="space-y-2 mb-5 flex-1">
-          {GPS_VEHICLE_FEATURES.map(feature => (
+          {plan.features.map(feature => (
             <li key={feature} className="flex items-start gap-2 text-sm text-t2">
               <CheckCircle size={14} className="text-ok mt-0.5 flex-shrink-0" /> {feature}
             </li>
@@ -188,6 +271,9 @@ function GPSVehicleCard() {
                 <div className="text-xs text-t2 border-t border-border pt-4">
                   Flujo: solicitud → cotización → pago verificado → instalación → prueba de señal → activación.
                 </div>
+                {error && (
+                  <p className="text-xs text-danger" role="alert">{error}</p>
+                )}
                 <button type="submit" disabled={sending}
                   className="w-full h-10 bg-primary text-white rounded-lg text-sm font-medium disabled:opacity-60 flex items-center justify-center gap-2">
                   {sending && <Loader2 size={14} className="animate-spin" />}
@@ -202,10 +288,15 @@ function GPSVehicleCard() {
   );
 }
 
-function PlanSection({ scrollTo }: { scrollTo: (id: string) => void }) {
-  const [showProModal, setShowProModal] = useState(false);
+// Formulario institucional (Operación y PRO) -- landing-publica-y-solicitudes-comerciales.md
+// §3: mismo formulario para las dos soluciones, PRO solo agrega el campo de
+// unidades que requieren GPS. El constructor dinamico de preguntas por
+// solucion (§8) es Nivel 2/3 -- por ahora son campos fijos.
+function PlanSection({ scrollTo, plans }: { scrollTo: (id: string) => void; plans: LandingContentData['PLANS'] }) {
+  const [activeModal, setActiveModal] = useState<'OPERACION' | 'PRO' | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({
     orgName: '', ruc: '', city: '', routes: '',
     contactName: '', email: '', phone: '',
@@ -213,11 +304,36 @@ function PlanSection({ scrollTo }: { scrollTo: (id: string) => void }) {
     period: 'MENSUAL', comments: '',
   });
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
+  const closeModal = () => { setActiveModal(null); setSubmitted(false); };
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!activeModal) return;
     setLoading(true);
-    setTimeout(() => { setLoading(false); setSubmitted(true); }, 1000);
+    setError(null);
+    try {
+      await submitCommercialRequest({
+        solution: activeModal,
+        contactName: form.contactName,
+        contactEmail: form.email,
+        contactPhone: form.phone,
+        orgName: form.orgName,
+        ruc: form.ruc || undefined,
+        answers: {
+          city: form.city,
+          routes: form.routes,
+          totalUnits: form.totalUnits,
+          ...(activeModal === 'PRO' ? { gpsUnits: form.gpsUnits } : {}),
+          period: form.period,
+          comments: form.comments,
+        },
+      });
+      setSubmitted(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo enviar la solicitud. Intenta nuevamente.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -231,55 +347,55 @@ function PlanSection({ scrollTo }: { scrollTo: (id: string) => void }) {
       </div>
       <div className="grid lg:grid-cols-3 gap-6 max-w-5xl">
         {/* Operacion */}
-        <div className="border border-border rounded-lg p-6">
-          <h3 className="text-base font-semibold text-t1 mb-1">Operación</h3>
-          <p className="text-xs text-t2 mb-5">Para asociaciones que comienzan su digitalización.</p>
+        <div className="border border-border rounded-lg p-6 transition-all hover:border-primary hover:shadow-md">
+          <h3 className="text-base font-semibold text-t1 mb-1">{plans.operacion.name}</h3>
+          <p className="text-xs text-t2 mb-5">{plans.operacion.desc}</p>
           <ul className="space-y-2 mb-6">
-            {PLAN_OPERACION.map(f => (
+            {plans.operacion.features.map(f => (
               <li key={f} className="flex items-start gap-2 text-sm text-t2">
                 <CheckCircle size={14} className="text-ok mt-0.5 flex-shrink-0" /> {f}
               </li>
             ))}
           </ul>
           <button
-            onClick={() => scrollTo('contacto')}
+            onClick={() => setActiveModal('OPERACION')}
             className="w-full py-2 border border-border text-t1 rounded-lg text-sm font-medium hover:bg-hover transition-colors"
           >
             Solicitar información
           </button>
         </div>
         {/* PRO */}
-        <div className="border-2 border-primary rounded-lg p-6 relative">
+        <div className="border-2 border-primary rounded-lg p-6 relative transition-shadow hover:shadow-md">
           <span className="absolute top-4 right-4 text-[10px] bg-primary text-white px-2 py-0.5 rounded-full font-medium">Recomendado</span>
-          <h3 className="text-base font-semibold text-t1 mb-1">PRO</h3>
-          <p className="text-xs text-t2 mb-5">Para asociaciones con operación compleja y múltiples empresas.</p>
+          <h3 className="text-base font-semibold text-t1 mb-1">{plans.pro.name}</h3>
+          <p className="text-xs text-t2 mb-5">{plans.pro.desc}</p>
           <ul className="space-y-2 mb-6">
-            {PLAN_PRO.map(f => (
+            {plans.pro.features.map(f => (
               <li key={f} className="flex items-start gap-2 text-sm text-t2">
                 <CheckCircle size={14} className="text-primary mt-0.5 flex-shrink-0" /> {f}
               </li>
             ))}
           </ul>
           <button
-            onClick={() => setShowProModal(true)}
+            onClick={() => setActiveModal('PRO')}
             className="w-full py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors"
           >
             Solicitar información
           </button>
         </div>
-        <GPSVehicleCard />
+        <GPSVehicleCard plan={plans.gpsVehicular} />
       </div>
 
-      {/* PRO request modal */}
-      {showProModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto" role="dialog" aria-modal="true" aria-label="Solicitud de información Plan PRO">
+      {/* Formulario institucional -- Operacion y PRO comparten el mismo modal */}
+      {activeModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto" role="dialog" aria-modal="true" aria-label={`Solicitud de información Plan ${activeModal === 'PRO' ? 'PRO' : 'Operación'}`}>
           <div className="bg-surface rounded-lg shadow-xl w-full max-w-lg my-8">
             <div className="flex items-center justify-between px-6 py-4 border-b border-border">
               <div>
-                <h2 className="text-sm font-semibold text-t1">Solicitud de información — Plan PRO</h2>
+                <h2 className="text-sm font-semibold text-t1">Solicitud de información — Plan {activeModal === 'PRO' ? 'PRO' : 'Operación'}</h2>
                 <p className="text-xs text-t2 mt-0.5">CHASKI AI se comunicará para preparar la propuesta.</p>
               </div>
-              <button onClick={() => { setShowProModal(false); setSubmitted(false); }} className="text-muted hover:text-t1" aria-label="Cerrar">
+              <button onClick={closeModal} className="text-muted hover:text-t1" aria-label="Cerrar">
                 <X size={18} />
               </button>
             </div>
@@ -290,7 +406,7 @@ function PlanSection({ scrollTo }: { scrollTo: (id: string) => void }) {
                 <p className="text-sm font-semibold text-t1 mb-2">Solicitud recibida.</p>
                 <p className="text-sm text-t2">CHASKI AI se comunicará para preparar la propuesta.</p>
                 <button
-                  onClick={() => { setShowProModal(false); setSubmitted(false); setForm({ orgName: '', ruc: '', city: '', routes: '', contactName: '', email: '', phone: '', totalUnits: '', gpsUnits: '', period: 'MENSUAL', comments: '' }); }}
+                  onClick={() => { closeModal(); setForm({ orgName: '', ruc: '', city: '', routes: '', contactName: '', email: '', phone: '', totalUnits: '', gpsUnits: '', period: 'MENSUAL', comments: '' }); }}
                   className="mt-6 px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h"
                 >
                   Cerrar
@@ -334,16 +450,18 @@ function PlanSection({ scrollTo }: { scrollTo: (id: string) => void }) {
                     <input required value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="9XXXXXXXX"
                       className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
                   </div>
-                  <div>
+                  <div className={activeModal === 'PRO' ? '' : 'col-span-2'}>
                     <label className="block text-xs font-medium text-t1 mb-1">Total de unidades *</label>
                     <input required type="number" min="1" value={form.totalUnits} onChange={e => set('totalUnits', e.target.value)} placeholder="30"
                       className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-t1 mb-1">Unidades que requieren GPS</label>
-                    <input type="number" min="0" value={form.gpsUnits} onChange={e => set('gpsUnits', e.target.value)} placeholder="0"
-                      className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-                  </div>
+                  {activeModal === 'PRO' && (
+                    <div>
+                      <label className="block text-xs font-medium text-t1 mb-1">Unidades que requieren GPS</label>
+                      <input type="number" min="0" value={form.gpsUnits} onChange={e => set('gpsUnits', e.target.value)} placeholder="0"
+                        className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                    </div>
+                  )}
                   <div className="col-span-2">
                     <label className="block text-xs font-medium text-t1 mb-1">Preferencia de facturación</label>
                     <div className="flex gap-3">
@@ -361,8 +479,11 @@ function PlanSection({ scrollTo }: { scrollTo: (id: string) => void }) {
                       className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-none" />
                   </div>
                 </div>
+                {error && (
+                  <p className="text-xs text-danger" role="alert">{error}</p>
+                )}
                 <div className="flex gap-3 justify-end pt-2">
-                  <button type="button" onClick={() => setShowProModal(false)} className="px-4 py-2 border border-border rounded-lg text-sm text-t2 hover:bg-hover">
+                  <button type="button" onClick={() => setActiveModal(null)} className="px-4 py-2 border border-border rounded-lg text-sm text-t2 hover:bg-hover">
                     Cancelar
                   </button>
                   <button type="submit" disabled={loading}
@@ -379,15 +500,184 @@ function PlanSection({ scrollTo }: { scrollTo: (id: string) => void }) {
   );
 }
 
-interface Props {
-  onNavigateToLogin: () => void;
+// Vitrina de clientes reales: logo de la asociacion + una imagen con las
+// rutas que opera (ambas subidas por Super Admin, nunca texto que redacte el
+// sistema). Se muestran todos juntos en una fila, sin rotar -- nunca un
+// cliente de ejemplo inventado, oculta mientras no haya ninguno cargado.
+function ClientsShowcase({ items }: { items: LandingContentData['CLIENTS_SHOWCASE'] }) {
+  if (items.length === 0) return null;
+  return (
+    <section id="empresa" className="max-w-6xl mx-auto px-6 py-20" aria-labelledby="clients-heading">
+      <p id="clients-heading" className="text-xs font-semibold text-primary uppercase tracking-widest mb-8 text-center">
+        Clientes de referencia
+      </p>
+      <div className="flex flex-wrap items-center justify-center gap-10 sm:gap-14">
+        {items.map((item, i) => (
+          <div key={i} className="flex flex-col items-center gap-3">
+            <img src={item.logoUrl} alt="Logo de asociación cliente" className="h-16 w-auto object-contain" />
+            <img src={item.routesImageUrl} alt="Rutas que opera" className="h-8 w-auto object-contain" />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
-export default function Landing({ onNavigateToLogin }: Props) {
+function FaqSection({ items }: { items: LandingContentData['FAQ'] }) {
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  if (items.length === 0) return null;
+  return (
+    <section id="faq" className="max-w-6xl mx-auto px-6 py-20" aria-labelledby="faq-heading">
+      <div className="mb-12 max-w-xl">
+        <p className="text-xs font-semibold text-primary uppercase tracking-widest mb-3">Preguntas frecuentes</p>
+        <h2 id="faq-heading" className="text-2xl font-semibold text-t1 leading-snug">
+          Lo que suelen preguntarnos antes de empezar.
+        </h2>
+      </div>
+      <div className="max-w-3xl border-t border-border">
+        {items.map((item, i) => {
+          const open = openIndex === i;
+          return (
+            <div key={item.question} className="border-b border-border">
+              <button
+                type="button"
+                onClick={() => setOpenIndex(open ? null : i)}
+                className="w-full flex items-center justify-between gap-4 py-4 text-left"
+                aria-expanded={open}
+              >
+                <span className="text-sm font-medium text-t1">{item.question}</span>
+                <ChevronDown size={16} className={`text-t2 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+              </button>
+              {open && (
+                <p className="text-sm text-t2 leading-relaxed pb-4 pr-8">{item.answer}</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// Vitrina de asociaciones clientes -- cada tarjeta es un PAR de imagenes ya
+// subidas por Super Admin (foto real de la unidad + nombre estilizado de la
+// asociacion dueña, como imagen). Muestra hasta 3 unidades a la vez
+// (anterior/activa/siguiente) y avanza sola cada `intervalSeconds` (editable
+// desde Super Admin) -- si hay mas de 3 asociaciones cargadas, la ventana se
+// desliza para mostrarlas todas por turnos. El nombre de abajo siempre
+// corresponde a la unidad activa (centro).
+// Vitrina de flota: 2 unidades por pagina fija (1-2, 3-4, ...) -- si el
+// numero de asociaciones cargadas es impar, la ultima pagina muestra 1 sola
+// en vez de repetir una para rellenar. `onDark` la pone en texto claro fijo
+// (no ligado al tema claro/oscuro) cuando vive sobre la foto de fondo del
+// hero, que Super Admin sube clara/luminosa (ver mockup) -- sin eso el modo
+// oscuro del sitio volvería el texto ilegible sobre esa misma foto.
+function FleetShowcase({ items, intervalSeconds, onDark }: { items: LandingFleetItem[]; intervalSeconds: number; onDark: boolean }) {
+  const pageSize = 2;
+  const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
+  const [page, setPage] = useState(0);
+
+  useEffect(() => {
+    if (pageCount < 2) return;
+    const id = setInterval(() => setPage(p => (p + 1) % pageCount), Math.max(1, intervalSeconds) * 1000);
+    return () => clearInterval(id);
+  }, [pageCount, intervalSeconds]);
+
+  const pageItems = items.slice(page * pageSize, page * pageSize + pageSize);
+  const labelClass = onDark ? 'text-[#0f172a]/60' : 'text-t2';
+  const nameClass = onDark ? 'text-[#0f172a]' : 'text-t1';
+  const iconBtnClass = onDark
+    ? 'text-[#0f172a]/60 hover:text-[#0f172a]'
+    : 'text-t2 hover:text-t1';
+
+  return (
+    <div aria-label="Asociaciones que confían en CHASKI AI">
+      {/* Grid (no flex) a proposito: con flex + ancho libre, dos fotos anchas
+          terminaban superpuestas -- el item se encoge bajo presion de espacio
+          pero la imagen seguia pintando a su ancho completo. Un grid de
+          columnas fijas le reserva a cada vehiculo su propia columna real,
+          asi la imagen (limitada tambien en ancho, no solo en alto) nunca
+          puede invadir la columna vecina. */}
+      <div className={`grid ${pageItems.length > 1 ? 'grid-cols-2' : 'grid-cols-1'} gap-6 sm:gap-10 items-end mb-6`}>
+        {pageItems.map((item, i) => (
+          <div key={page * pageSize + i} className="flex flex-col items-center min-w-0">
+            <div className="h-56 sm:h-72 md:h-96 w-full flex items-end justify-center overflow-hidden">
+              <img
+                src={item.vehicleImageUrl}
+                alt={item.name ? `Unidad de ${item.name}` : 'Unidad de una asociación cliente'}
+                className="max-h-full max-w-full object-contain object-bottom transition-transform duration-300 hover:scale-105"
+              />
+            </div>
+            {item.name && (
+              <p className={`mt-2 text-xs sm:text-sm tracking-[0.15em] uppercase font-medium ${nameClass}`}>{item.name}</p>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Linea de punta a punta de la ventana, igual que el border-b del
+          <header> (que tampoco vive dentro del contenedor con margen) -- el
+          truco es sacar este div del ancho del padre (w-screen + recentrado)
+          y volver a meter el max-w-6xl solo para el contenido de adentro. */}
+      <div className={`relative w-screen left-1/2 -translate-x-1/2 border-t ${onDark ? 'border-[#0f172a]/15' : 'border-border'}`}>
+        <div className="max-w-6xl mx-auto px-6 flex items-center justify-between pt-3">
+          <p className={`text-xs tracking-[0.2em] uppercase ${labelClass}`}>Empresas de transporte</p>
+          {pageCount > 1 && (
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={() => setPage(p => (p - 1 + pageCount) % pageCount)} aria-label="Anterior" className={iconBtnClass}>
+                <ChevronLeft size={16} />
+              </button>
+              <span className={`text-xs font-mono ${labelClass}`}>{String(page + 1).padStart(2, '0')} / {String(pageCount).padStart(2, '0')}</span>
+              <button type="button" onClick={() => setPage(p => (p + 1) % pageCount)} aria-label="Siguiente" className={iconBtnClass}>
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface Props {
+  onNavigateToLogin: () => void;
+  navigate: (to: string) => void;
+}
+
+export default function Landing({ onNavigateToLogin, navigate }: Props) {
+  const { user } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  // Panel de cuenta (login/registro de visitante, o vista de "mis
+  // cotizaciones") -- solo se abre cuando la persona hace clic, nunca solo.
+  // Si el correo resulta ser un socio/conductor/admin real (`user` activo),
+  // el boton "Ingresar a la plataforma" vive directo en el encabezado, sin
+  // pasar por el modal para nada.
+  const [showAccount, setShowAccount] = useState(false);
+  const [visitorName, setVisitorName] = useState<string | null>(null);
+  useEffect(() => {
+    if (user || !getVisitorToken()) return;
+    fetchVisitorMe()
+      .then(v => setVisitorName(v ? (v.name || v.email) : null))
+      .catch(() => clearVisitorToken());
+  }, [user]);
   const [theme, setTheme] = useState<LandingTheme>(getInitialTheme);
   const [contactForm, setContactForm] = useState({ org: '', email: '', message: '' });
   const [contactSent, setContactSent] = useState(false);
+  const [contactSending, setContactSending] = useState(false);
+  const [contactError, setContactError] = useState<string | null>(null);
+  // Contenido editable desde Super Admin -- arranca con el texto de siempre
+  // (DEFAULT_LANDING_CONTENT) y se sobreescribe si GET /landing-content
+  // responde con algo distinto. Si la llamada falla, se queda con el default
+  // -- nunca se muestra una landing en blanco por un backend caido.
+  const [content, setContent] = useState<LandingContentData>(DEFAULT_LANDING_CONTENT);
+
+  useEffect(() => {
+    let active = true;
+    fetchLandingContent().then(data => {
+      if (active && data) setContent(data);
+    });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem(LANDING_THEME_KEY, theme);
@@ -398,9 +688,31 @@ export default function Landing({ onNavigateToLogin }: Props) {
     setMenuOpen(false);
   };
 
-  const handleContact = (e: React.FormEvent) => {
+  // El hero (y la vitrina de flota, que comparte la misma seccion) fuerza
+  // texto oscuro fijo cuando hay foto de fondo -- Super Admin sube fotos
+  // claras/luminosas para este bloque (ver mockup), asi que el texto oscuro
+  // siempre queda legible ahi, sin depender de si el tema del sitio esta en
+  // claro u oscuro.
+  const hasHeroBackground = Boolean(content.HERO_BACKGROUND.imageUrl);
+
+  const handleContact = async (e: FormEvent) => {
     e.preventDefault();
-    setContactSent(true);
+    setContactSending(true);
+    setContactError(null);
+    try {
+      await submitCommercialRequest({
+        solution: 'OPERACION',
+        contactName: contactForm.org,
+        contactEmail: contactForm.email,
+        orgName: contactForm.org,
+        answers: { message: contactForm.message },
+      });
+      setContactSent(true);
+    } catch (err) {
+      setContactError(err instanceof Error ? err.message : 'No se pudo enviar el mensaje. Intenta nuevamente.');
+    } finally {
+      setContactSending(false);
+    }
   };
 
   return (
@@ -452,9 +764,14 @@ export default function Landing({ onNavigateToLogin }: Props) {
       {/* Header */}
       <header className="sticky top-0 z-50 bg-surface border-b border-border">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-8">
-            <WordmarkImg height={24} />
-            <nav className="hidden xl:flex items-center gap-6" aria-label="Navegación principal">
+          <WordmarkImg height={24} />
+          {/* Menu + "Iniciar sesion" agrupados juntos a la derecha (igual que
+              el mockup) -- antes el menu vivia pegado al logo y "Iniciar
+              sesion" quedaba solo, lejos a la derecha, con un hueco enorme
+              en medio. Ahora el unico justify-between real es logo vs. todo
+              lo demas junto. */}
+          <div className="flex items-center gap-8 min-w-0">
+            <nav className="hidden xl:flex items-center gap-5 flex-shrink-0" aria-label="Navegación principal">
               {NAV_LINKS.map(link => (
                 <button
                   key={link}
@@ -465,30 +782,34 @@ export default function Landing({ onNavigateToLogin }: Props) {
                 </button>
               ))}
             </nav>
-          </div>
           <div className="flex items-center gap-2 sm:gap-3">
-            <button
-              type="button"
-              onClick={() => setTheme(current => current === 'light' ? 'dark' : 'light')}
-              className="w-9 h-9 grid place-items-center border border-border text-t2 rounded-lg hover:bg-hover hover:text-t1 transition-colors flex-shrink-0"
-              aria-label={theme === 'light' ? 'Activar modo oscuro' : 'Activar modo claro'}
-              title={theme === 'light' ? 'Modo oscuro' : 'Modo claro'}
-              aria-pressed={theme === 'dark'}
-            >
-              {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
-            </button>
-            <button
-              onClick={onNavigateToLogin}
-              className="hidden sm:flex items-center gap-2 text-sm text-t2 hover:text-t1 transition-colors"
-            >
-              Ingresar a la plataforma
-            </button>
-            <button
-              onClick={() => scrollTo('contacto')}
-              className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors"
-            >
-              Solicitar demostración
-            </button>
+            {user && (
+              <button
+                onClick={() => navigate(user.role === 'superadmin' ? '/app' : '/portal')}
+                className="px-3 py-1.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors whitespace-nowrap flex-shrink-0"
+              >
+                Ingresar a la plataforma
+              </button>
+            )}
+            {(user || visitorName) && (
+              <button
+                type="button"
+                onClick={() => setShowAccount(v => !v)}
+                className="hidden sm:flex items-center gap-1.5 text-sm font-medium text-t1 hover:text-primary transition-colors border border-border rounded-lg px-3 py-1.5 flex-shrink-0"
+              >
+                <User size={16} />
+                Mi cuenta
+              </button>
+            )}
+            {!user && !visitorName && (
+              <button
+                type="button"
+                onClick={() => setShowAccount(true)}
+                className="hidden sm:block text-sm text-t2 hover:text-t1 transition-colors"
+              >
+                Iniciar sesión
+              </button>
+            )}
             <button
               className="xl:hidden text-t2 hover:text-t1 p-1"
               onClick={() => setMenuOpen(v => !v)}
@@ -496,6 +817,7 @@ export default function Landing({ onNavigateToLogin }: Props) {
             >
               {menuOpen ? <X size={20} /> : <Menu size={20} />}
             </button>
+          </div>
           </div>
         </div>
 
@@ -511,39 +833,84 @@ export default function Landing({ onNavigateToLogin }: Props) {
                 {link}
               </button>
             ))}
-            <button onClick={onNavigateToLogin} className="block text-sm text-primary py-1 font-medium w-full text-left">
-              Ingresar a la plataforma →
-            </button>
+            {user ? (
+              <button
+                type="button"
+                onClick={() => { navigate(user.role === 'superadmin' ? '/app' : '/portal'); setMenuOpen(false); }}
+                className="block text-sm text-primary py-1 font-medium w-full text-left"
+              >
+                Ingresar a la plataforma →
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => { setShowAccount(true); setMenuOpen(false); }}
+                className="block text-sm text-primary py-1 font-medium w-full text-left"
+              >
+                {visitorName ? `Hola, ${visitorName} →` : 'Iniciar sesión →'}
+              </button>
+            )}
           </div>
         )}
       </header>
 
       <main>
-        {/* Hero */}
-        <section className="max-w-6xl mx-auto px-6 pt-20 pb-24 text-center" aria-labelledby="hero-heading">
-          <div className="flex justify-center mb-8">
-            <WordmarkImg height={40} />
-          </div>
-          <p className="text-base text-t2 mb-6 font-medium">{TAGLINE}</p>
-          <h1 id="hero-heading" className="text-3xl lg:text-4xl font-semibold text-t1 max-w-3xl mx-auto leading-tight mb-6">
-            Creamos plataformas digitales para asociaciones de transporte y operaciones logísticas.
-          </h1>
-          <p className="text-base text-t2 max-w-2xl mx-auto mb-10 leading-relaxed">
-            Centralizamos colas, ventas, manifiestos, viajes y control operativo en un solo sistema.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <button
-              onClick={() => scrollTo('contacto')}
-              className="px-6 py-3 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors"
-            >
-              Solicitar demostración
-            </button>
-            <button
-              onClick={onNavigateToLogin}
-              className="px-6 py-3 border border-border text-t1 rounded-lg text-sm font-medium hover:bg-hover transition-colors flex items-center justify-center gap-2"
-            >
-              Ingresar a la plataforma <ArrowRight size={15} />
-            </button>
+        {/* Hero + vitrina de flota -- comparten un mismo fondo (foto subida por
+            Super Admin en "Landing fondo"). Sin fondo subido todavia, se ve
+            igual que siempre (fondo plano del tema).
+            Nota (Jayde, 11 sept 2026): se probo forzar todo el bloque a
+            caber en una sola pantalla (min-height + justify-between), pero
+            eso obligaba a achicar los vehiculos cada vez que algo mas crecia.
+            Se prioriza el tamaño grande del mockup: el bloque fluye con su
+            alto natural, y si el pie ("Empresas de transporte" + flechas)
+            queda un poco mas abajo, se llega con un scroll corto -- igual
+            que cualquier pagina normal. */}
+        <section
+          className="relative overflow-hidden"
+          aria-labelledby="hero-heading"
+          style={hasHeroBackground ? { backgroundImage: `url(${content.HERO_BACKGROUND.imageUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+        >
+          <div className="relative max-w-6xl mx-auto w-full px-6 pt-16 pb-10">
+            <div className="grid md:grid-cols-2 gap-6 md:gap-12 items-start mb-8 md:mb-10">
+              <div>
+                <p className={`text-xs tracking-[0.25em] uppercase mb-3 ${hasHeroBackground ? 'text-[#0f172a]/60' : 'text-t2'}`}>
+                  {content.HERO.tagline}
+                </p>
+                <h1 id="hero-heading" className={`text-4xl lg:text-6xl font-medium leading-[1.1] ${hasHeroBackground ? 'text-[#0f172a]' : 'text-t1'}`}>
+                  {content.HERO.title}
+                </h1>
+              </div>
+              <div className="max-w-sm">
+                {content.HERO.subtitle && (
+                  <p className={`text-base sm:text-lg font-medium ${hasHeroBackground ? 'text-[#0f172a]' : 'text-t1'}`}>
+                    {content.HERO.subtitle}
+                  </p>
+                )}
+                {content.HERO.subtitleCaption && (
+                  <p className={`text-sm mt-2 ${hasHeroBackground ? 'text-[#0f172a]/60' : 'text-t2'}`}>
+                    {content.HERO.subtitleCaption}
+                  </p>
+                )}
+                {/* Boton oscuro fijo (no bg-primary) solo en este hero -- decision
+                    puntual de Jayde para calzar con el mockup, no un cambio de
+                    color de marca en el resto del sitio. */}
+                <button
+                  onClick={() => scrollTo('contacto')}
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-[#0f172a] text-white rounded-lg text-sm font-medium hover:bg-[#1e293b] transition-colors mt-5"
+                >
+                  {content.HERO.ctaPrimary}
+                  <ArrowRight size={16} />
+                </button>
+              </div>
+            </div>
+
+            {content.FLEET_SHOWCASE.items.length > 0 && (
+              <FleetShowcase
+                items={content.FLEET_SHOWCASE.items}
+                intervalSeconds={content.FLEET_SHOWCASE.intervalSeconds}
+                onDark={hasHeroBackground}
+              />
+            )}
           </div>
         </section>
 
@@ -559,7 +926,7 @@ export default function Landing({ onNavigateToLogin }: Props) {
             </h2>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {PROBLEMS.map(p => (
+            {content.PROBLEMS.map(p => (
               <div key={p.title} className="border border-border rounded-lg p-5">
                 <h3 className="text-sm font-semibold text-t1 mb-2">{p.title}</h3>
                 <p className="text-sm text-t2 leading-relaxed">{p.desc}</p>
@@ -583,7 +950,7 @@ export default function Landing({ onNavigateToLogin }: Props) {
                 Diseñado para la operación real de corredores por turnos: la cola de la asociación determina el orden de salida, no una app de demanda individual.
               </p>
               <ul className="space-y-2">
-                {['Web para administradores, socios y conductores', 'App Android para conductores en campo', 'Kiosco QR para terminales', 'Panel super-admin para implementadores'].map(item => (
+                {['Web para administradores, socios y conductores', 'App Android para conductores en campo', 'Panel super-admin para implementadores'].map(item => (
                   <li key={item} className="flex items-start gap-2 text-sm text-t2">
                     <CheckCircle size={15} className="text-ok mt-0.5 flex-shrink-0" />
                     {item}
@@ -620,20 +987,33 @@ export default function Landing({ onNavigateToLogin }: Props) {
             </h2>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {CAPABILITIES.map(cap => (
-              <div key={cap.label} className="border border-border rounded-lg p-5">
-                <cap.icon size={20} className="text-primary mb-3" />
-                <h3 className="text-sm font-semibold text-t1 mb-2">{cap.label}</h3>
-                <p className="text-sm text-t2 leading-relaxed">{cap.desc}</p>
-              </div>
-            ))}
+            {content.CAPABILITIES.map(cap => {
+              const Icon = resolveIcon(cap.icon);
+              return (
+                <div key={cap.label} className="border border-border rounded-lg p-5">
+                  <Icon size={20} className="text-primary mb-3" />
+                  <h3 className="text-sm font-semibold text-t1 mb-2">{cap.label}</h3>
+                  <p className="text-sm text-t2 leading-relaxed">{cap.desc}</p>
+                </div>
+              );
+            })}
           </div>
         </section>
 
         <div className="border-t border-border" />
 
+        {/* Cliente de referencia */}
+        <ClientsShowcase items={content.CLIENTS_SHOWCASE} />
+
+        <div className="border-t border-border" />
+
         {/* Plans */}
-        <PlanSection scrollTo={scrollTo} />
+        <PlanSection scrollTo={scrollTo} plans={content.PLANS} />
+
+        <div className="border-t border-border" />
+
+        {/* FAQ */}
+        <FaqSection items={content.FAQ} />
 
         <div className="border-t border-border" />
 
@@ -649,9 +1029,33 @@ export default function Landing({ onNavigateToLogin }: Props) {
                 Te mostramos CHASKI RUTA funcionando con datos de un corredor similar al tuyo. Sin compromiso y sin costo.
               </p>
               <div className="space-y-3 text-sm text-t2">
-                <p><strong className="text-t1">IMPORT STAR PERUVIAN EIRL</strong></p>
-                <p>RUC 20609699605</p>
-                <p>contacto@chaski.ai</p>
+                <p><strong className="text-t1">{content.COMPANY.legalName}</strong></p>
+                <p>RUC {content.COMPANY.ruc}</p>
+                <p>{content.COMPANY.contactEmail}</p>
+                {content.COMPANY.whatsapp && <p>WhatsApp {content.COMPANY.whatsapp}</p>}
+                {content.COMPANY.address && <p>{content.COMPANY.address}</p>}
+                {(content.COMPANY.instagramUrl || content.COMPANY.facebookUrl || content.COMPANY.tiktokUrl) && (
+                  <div className="flex items-center gap-2 pt-1">
+                    {content.COMPANY.instagramUrl && (
+                      <a href={content.COMPANY.instagramUrl} target="_blank" rel="noopener noreferrer"
+                        className="text-xs font-semibold text-t2 hover:text-t1 border border-border rounded px-1.5 py-1">
+                        Instagram
+                      </a>
+                    )}
+                    {content.COMPANY.facebookUrl && (
+                      <a href={content.COMPANY.facebookUrl} target="_blank" rel="noopener noreferrer"
+                        className="text-xs font-semibold text-t2 hover:text-t1 border border-border rounded px-1.5 py-1">
+                        Facebook
+                      </a>
+                    )}
+                    {content.COMPANY.tiktokUrl && (
+                      <a href={content.COMPANY.tiktokUrl} target="_blank" rel="noopener noreferrer"
+                        className="text-xs font-semibold text-t2 hover:text-t1 border border-border rounded px-1.5 py-1">
+                        TikTok
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
             <div className="bg-bg border border-border rounded-lg p-6">
@@ -698,8 +1102,13 @@ export default function Landing({ onNavigateToLogin }: Props) {
                       className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary resize-none"
                     />
                   </div>
-                  <button type="submit" className="w-full h-10 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors">
-                    Solicitar demostración
+                  {contactError && (
+                    <p className="text-xs text-danger" role="alert">{contactError}</p>
+                  )}
+                  <button type="submit" disabled={contactSending}
+                    className="w-full h-10 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
+                    {contactSending && <Loader2 size={14} className="animate-spin" />}
+                    {contactSending ? 'Enviando…' : 'Solicitar demostración'}
                   </button>
                 </form>
               )}
@@ -714,7 +1123,7 @@ export default function Landing({ onNavigateToLogin }: Props) {
           <div className="flex flex-col md:flex-row md:items-start justify-between gap-8 mb-8">
             <div>
               <WordmarkImg height={20} className="mb-2" />
-              <p className="text-xs text-t2 mt-2">{TAGLINE}</p>
+              <p className="text-xs text-t2 mt-2">{content.HERO.tagline}</p>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-6 text-xs text-t2">
               <div className="space-y-2">
@@ -723,22 +1132,74 @@ export default function Landing({ onNavigateToLogin }: Props) {
               </div>
               <div className="space-y-2">
                 <p className="font-semibold text-t1 mb-1">Empresa</p>
-                {['Sobre nosotros', 'Contacto'].map(l => <p key={l} className="hover:text-t1 cursor-pointer">{l}</p>)}
+                <button type="button" onClick={() => navigate('/empresa')} className="block text-left hover:text-t1">Sobre nosotros</button>
+                <button type="button" onClick={() => scrollTo('contacto')} className="block text-left hover:text-t1">Contacto</button>
               </div>
               <div className="space-y-2">
                 <p className="font-semibold text-t1 mb-1">Legal</p>
-                {['Términos de servicio', 'Política de privacidad', 'Política de cookies', 'Libro de Reclamaciones'].map(l => (
-                  <p key={l} className="hover:text-t1 cursor-pointer">{l}</p>
-                ))}
+                <a href="/legal/terminos-condiciones" className="block hover:text-t1">Términos y condiciones</a>
+                <a href="/legal/politica-privacidad" className="block hover:text-t1">Política de privacidad</a>
+                <a href="/legal/politica-cookies" className="block hover:text-t1">Política de cookies</a>
+                <a href="/libro-de-reclamaciones" className="block hover:text-t1">Libro de Reclamaciones</a>
               </div>
             </div>
           </div>
           <div className="border-t border-border pt-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted">
-            <p>© {new Date().getFullYear()} IMPORT STAR PERUVIAN EIRL · RUC 20609699605</p>
-            <p>CHASKI AI — {TAGLINE}</p>
+            <p>© {new Date().getFullYear()} {content.COMPANY.legalName} · RUC {content.COMPANY.ruc}</p>
+            <p>CHASKI AI — {content.HERO.tagline}</p>
           </div>
         </div>
       </footer>
+
+      {showAccount && (user || visitorName) && (
+        <>
+          {/* Dropdown de cuenta ya identificada (socio/conductor/admin o visitante) --
+              pegado cerca del boton "Mi cuenta", sin oscurecer la pagina. */}
+          <div className="fixed inset-0 z-40" onClick={() => setShowAccount(false)} />
+          <div
+            className="fixed top-[68px] right-4 sm:right-6 z-50 w-[calc(100%-2rem)] max-w-sm sm:w-80 bg-surface border border-border rounded-lg shadow-xl p-5"
+            role="dialog"
+            aria-modal="true"
+          >
+            <button
+              onClick={() => setShowAccount(false)}
+              className="absolute top-3 right-3 text-muted hover:text-t1"
+              aria-label="Cerrar"
+            >
+              <X size={16} />
+            </button>
+            <AccountPanelContent navigate={navigate} />
+          </div>
+        </>
+      )}
+
+      {showAccount && !user && !visitorName && (
+        // Login/registro (todavia sin identificar a nadie) -- modal centrado,
+        // como cualquier formulario de inicio de sesion, no un dropdown chico.
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true">
+          <div className="bg-surface rounded-lg shadow-xl w-full max-w-sm p-6 relative">
+            <button
+              onClick={() => setShowAccount(false)}
+              className="absolute top-4 right-4 text-muted hover:text-t1"
+              aria-label="Cerrar"
+            >
+              <X size={18} />
+            </button>
+            <AccountPanelContent navigate={navigate} />
+          </div>
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setTheme(current => current === 'light' ? 'dark' : 'light')}
+        className="fixed bottom-5 right-5 z-40 w-11 h-11 grid place-items-center border border-border bg-surface text-t2 rounded-full shadow-lg hover:bg-hover hover:text-t1 transition-colors"
+        aria-label={theme === 'light' ? 'Activar modo oscuro' : 'Activar modo claro'}
+        title={theme === 'light' ? 'Modo oscuro' : 'Modo claro'}
+        aria-pressed={theme === 'dark'}
+      >
+        {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
+      </button>
     </div>
   );
 }

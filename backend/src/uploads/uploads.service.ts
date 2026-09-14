@@ -19,6 +19,25 @@ export class UploadsService {
     }
   }
 
+  /**
+   * Chequeo real de salud de Cloudinary (12 sept 2026, Salud tecnica de
+   * Super Admin): usa el endpoint /ping de la API de administracion --
+   * disenado justo para esto (liviano, sin costo), confirma conectividad Y
+   * que las credenciales configuradas siguen siendo validas.
+   */
+  async checkHealth(): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
+    const start = Date.now();
+    if (!this.configured) {
+      return { ok: false, latencyMs: 0, error: 'Cloudinary no configurado (CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET en backend/.env)' };
+    }
+    try {
+      await cloudinary.api.ping();
+      return { ok: true, latencyMs: Date.now() - start };
+    } catch (err: any) {
+      return { ok: false, latencyMs: Date.now() - start, error: err?.message || 'error desconocido' };
+    }
+  }
+
   async uploadDataUrl(dataUrl: string, folder = 'general'): Promise<{ url: string; publicId: string }> {
     if (!dataUrl || !dataUrl.startsWith('data:image')) {
       throw new BadRequestException('Imagen invalida.');

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { OrganizationsModule } from './organizations/organizations.module';
@@ -16,10 +17,25 @@ import { UploadsModule } from './uploads/uploads.module';
 import { AssistantModule } from './assistant/assistant.module';
 import { GpsModule } from './gps/gps.module';
 import { RoutesModule } from './routes/routes.module';
+import { CommercialRequestsModule } from './commercial-requests/commercial-requests.module';
+import { LandingContentModule } from './landing-content/landing-content.module';
+import { ComplaintBookModule } from './complaint-book/complaint-book.module';
+import { DigestModule } from './digest/digest.module';
+import { SafetyModule } from './safety/safety.module';
+import { RouteRiskModule } from './route-risk/route-risk.module';
+import { GpsAlertsModule } from './gps-alerts/gps-alerts.module';
+import { NoticesModule } from './notices/notices.module';
+import { FleetReportsModule } from './fleet-reports/fleet-reports.module';
+import { EngineLockModule } from './engine-lock/engine-lock.module';
+import { RouteGeofenceModule } from './route-geofence/route-geofence.module';
+import { PassengerProfilesModule } from './passenger-profiles/passenger-profiles.module';
+import { HealthMonitorModule } from './health-monitor/health-monitor.module';
+import { SupportTicketsModule } from './support-tickets/support-tickets.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ScheduleModule.forRoot(),
     PrismaModule,
     AuthModule,
     OrganizationsModule,
@@ -36,6 +52,20 @@ import { RoutesModule } from './routes/routes.module';
     AssistantModule,
     GpsModule,
     RoutesModule,
+    CommercialRequestsModule,
+    LandingContentModule,
+    ComplaintBookModule,
+    DigestModule,
+    SafetyModule,
+    RouteRiskModule,
+    GpsAlertsModule,
+    NoticesModule,
+    FleetReportsModule,
+    EngineLockModule,
+    RouteGeofenceModule,
+    PassengerProfilesModule,
+    HealthMonitorModule,
+    SupportTicketsModule,
   ],
 })
 export class AppModule {}

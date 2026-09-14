@@ -3,24 +3,27 @@ import {
   Home, ListOrdered, FileText, Route, User,
   AlertCircle, CheckCircle, X, Plus, Clock, QrCode,
   ChevronDown, Download, Filter, ArrowRight, RefreshCw, Smartphone,
-  MapPin, Car, FileCheck, Eye, RotateCcw, Upload, Trash2, Loader2,
+  MapPin, Car, FileCheck, Eye, RotateCcw, Upload, Trash2, Loader2, Megaphone, WifiOff,
 } from 'lucide-react';
 import Shell, { type NavItem } from '../../components/layout/Shell';
 import { useAuth } from '../../contexts/AuthContext';
-import { QUEUE_JULI_PUNO, QUEUE_PUNO_JULI } from '../../data/demo';
 import SeatMap from '../../components/SeatMap';
-import type { Passenger, PaymentMethod, Person, Unit, QueueEntry, Manifest, Trip, VehicleType, RouteDir } from '../../types';
+import GpsAlertBanner from '../../components/GpsAlertBanner';
+import ProductionReportView from '../../components/ProductionReportView';
+import type { Passenger, PaymentMethod, Person, Unit, QueueEntry, Manifest, Trip, TripStatus, VehicleType, RouteDir } from '../../types';
 import {
   fetchQueue, fetchVehicles, joinQueue, confirmArrival, declareLater, getOrCreateDeviceId,
-  fetchTrips, fetchManifests, openManifest, addManifestPassenger, closeManifest, digitizeManifest,
-  fetchPeople, fetchMyOrganization, routeLabel, routeLabelShort, terminalName, uploadImage,
-  prepareTripForEntry, departQueueEntry, completeTrip, createDelayedRegistrationRequest,
-  type Organization,
+  fetchTrips, fetchManifests, openManifest, addManifestPassenger, closeManifest, digitizeManifest, digitizeSuggest,
+  prepareTripForEntry, departQueueEntry, createDelayedRegistrationRequest,
+  fetchMyPersonProfile, fetchMyOrganization, type Organization,
+  fetchNotices, type Notice,
+  fetchGpsLive, fetchGpsDevices, fetchGpsHistory, routeLabelShort, reportGpsAlert,
+  type LiveVehiclePosition, type VehicleGpsStatus, type GpsHistoryPoint,
 } from '../../lib/operacion-api';
 import { getOperationalPosition, getOperationalState, getVehiclesAhead, getQueueDisplayOrder } from '../../lib/queue-ui';
-import { loadGoogleMaps, getGoogleMaps } from '../../lib/google-maps';
+import { localDateStr } from '../../lib/dates';
 
-type Section = 'inicio' | 'cola' | 'manifiesto' | 'viajes' | 'gps' | 'perfil';
+type Section = 'inicio' | 'cola' | 'manifiesto' | 'viajes' | 'gps' | 'avisos' | 'perfil';
 
 
 type DriverPerson = Person & {
@@ -43,71 +46,68 @@ type DriverUnit = Unit & {
   };
 };
 
-const DATA_EVENT = 'atipcar-data-change';
-
-// Datos reales del conductor logueado: su propia Person (perfil) y su unidad
-// asignada, mas el plan de la organizacion (driverLiveMapEnabled). Antes esto
-// se resolvia contra data/demo.ts — ahora contra el backend real, con los
-// mismos fallbacks sincronos (user.email/user.code, ya reales desde el JWT)
-// mientras el fetch esta en vuelo, para que las pestanas ya conectadas
-// (Cola/Manifiesto/Inicio) no se queden sin `code`/`company` en el primer render.
+// Identidad real del conductor (docs/planes/ia-aplicada.md): quien es, su
+// unidad asignada, su empresa y su ruta -- todo vía fetch real, nunca demo.ts.
+// Cada pantalla que llama a este hook hace su propio fetch (mismo patrón que
+// usePartnerData() en PartnerApp.tsx), asi que se degrada a listas vacias sin
+// romper la app si el backend tarda o falla.
+//
+// Corregido (12 sept 2026): antes llamaba a fetchPeople() (el directorio
+// completo), que es solo ADMINISTRADOR/SUPERADMIN (people.controller.ts) --
+// un Conductor real recibia 403 ahi, y como estaba dentro de este mismo
+// Promise.all(), TODO el bloque se perdia silenciosamente (incluida la cola
+// y las unidades, que si tenian permiso). Ahora usa fetchMyPersonProfile()
+// (GET /people/me), el autoservicio que cualquier rol puede leer.
 function useDriverContext() {
   const { user } = useAuth();
-  const [version, setVersion] = useState(0);
-  const [remote, setRemote] = useState<{ people: DriverPerson[]; units: DriverUnit[]; org: Organization | null }>({
-    people: [], units: [], org: null,
-  });
-
-  useEffect(() => {
-    const refresh = () => setVersion(value => value + 1);
-    window.addEventListener(DATA_EVENT, refresh);
-    window.addEventListener('storage', refresh);
-    return () => {
-      window.removeEventListener(DATA_EVENT, refresh);
-      window.removeEventListener('storage', refresh);
-    };
-  }, []);
+  const [profile, setProfile] = useState<DriverPerson | null>(null);
+  const [units, setUnits] = useState<DriverUnit[]>([]);
+  const [org, setOrg] = useState<Organization | null>(null);
+  const [queueJP, setQueueJP] = useState<QueueEntry[]>([]);
+  const [queuePJ, setQueuePJ] = useState<QueueEntry[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchPeople(), fetchVehicles(), fetchMyOrganization()])
-      .then(([people, units, org]) => {
+    Promise.all([fetchMyPersonProfile(), fetchVehicles(), fetchMyOrganization(), fetchQueue('JULI_PUNO'), fetchQueue('PUNO_JULI')])
+      .then(([myProfile, unitsList, orgResult, jp, pj]) => {
         if (cancelled) return;
-        setRemote({ people: people as DriverPerson[], units: units as DriverUnit[], org });
+        setProfile(myProfile);
+        setUnits(unitsList);
+        setOrg(orgResult);
+        setQueueJP(jp);
+        setQueuePJ(pj);
       })
-      .catch(() => { /* se degrada a los fallbacks sincronos de abajo mientras tanto */ });
+      .catch(() => { /* se degrada a listas vacias mientras tanto */ });
     return () => { cancelled = true; };
-  }, [version]);
+  }, [user?.id, user?.email]);
 
-  const data = remote;
-  const org = data.org;
   const driverLiveMapEnabled = Boolean(org?.driverLiveMapEnabled);
-
-  const isDriver = (person: DriverPerson) =>
-    person.role === 'CONDUCTOR' || person.roles?.includes('CONDUCTOR');
-  const profileByEmail = data.people.find(person =>
-    isDriver(person) && Boolean(user?.email) && person.email.toLowerCase() === user!.email.toLowerCase()
-  );
-  const profileByUnit = data.people.find(person =>
-    isDriver(person) && Boolean(user?.code) &&
-    (person.code === user!.code || person.linkedUnit?.split(',')[0].trim() === user!.code)
-  );
-  const profile = profileByEmail || profileByUnit;
-  const code = profile?.linkedUnit?.split(',')[0].trim() || user?.code || '015';
-  // Preferir el vinculo real vehiculo->conductor (Vehicle.currentDriverId) sobre
-  // el match por codigo, que solo queda como respaldo.
-  const unitByDriverId = user?.id ? data.units.find(item => item.currentDriverId === user.id) : undefined;
-  const unit = unitByDriverId || data.units.find(item => item.code === code);
-  const company = unit?.company || profile?.company || user?.org || 'ATIPCAR';
-  const inJuliPuno = QUEUE_JULI_PUNO.some(entry => entry.code === code);
-  const inPunoJuli = QUEUE_PUNO_JULI.some(entry => entry.code === code);
+  // La unidad asignada es una relacion real del vehiculo (Vehicle.currentDriverId),
+  // no un campo de texto en la persona -- linkedUnit es solo un residuo de demo.ts.
+  const unit = units.find(item => item.currentDriverId === profile?.id) || units.find(item => item.code === user?.code);
+  const code = unit?.code || profile?.code || user?.code || '';
+  const company = unit?.company || profile?.company || '';
+  const inJuliPuno = queueJP.some(entry => entry.code === code);
+  const inPunoJuli = queuePJ.some(entry => entry.code === code);
   const route = inPunoJuli && !inJuliPuno
     ? 'PUNO_JULI' as const
     : unit?.route === 'PUNO_JULI'
       ? 'PUNO_JULI' as const
       : 'JULI_PUNO' as const;
 
-  return { user, profile, unit, code, company, route, version, driverLiveMapEnabled, org };
+  // GPS Vehicular real (plan-pro.md / plan-gps-vehicular.md): la unidad tiene
+  // GPS si tiene un dispositivo Traccar realmente vinculado -- nunca por un
+  // codigo de unidad "hardcodeado" (corregido 11 sept 2026). Aplica igual en
+  // Plan PRO (dispositivo vino con el plan) o Operacion (GPS Vehicular
+  // contratado aparte para esta unidad puntual).
+  //
+  // Corregido (13 sept 2026): en Operacion, ademas se necesita el Plan GPS
+  // Vehicular individual ACTIVO (gpsVehicularActivo) -- si Super Admin lo
+  // desactivo por falta de pago del socio, el conductor tambien deja de ver
+  // GPS aunque el equipo siga instalado.
+  const hasVehicleGPS = Boolean(unit?.traccarDeviceId) && (org?.plan === 'PRO' || unit?.gpsVehicularActivo !== false);
+
+  return { user, profile, unit, code, company, route, driverLiveMapEnabled, org, hasVehicleGPS };
 }
 
 const DRIVER_WALLETS_KEY = 'atipcar-driver-wallets-v1';
@@ -206,7 +206,7 @@ function WalletQrContent({ type, wallet, compact = false }: { type: WalletType; 
       <div className="min-h-44 flex flex-col items-center justify-center text-center border border-dashed border-border bg-bg p-5">
         <WalletLogo type={type} className="h-6 w-auto opacity-70" />
         <p className="text-sm font-medium text-t1 mt-3">QR todavía no configurado</p>
-        <p className="text-sm text-t2 mt-1">Adjunta el QR real en Mi perfil, sección Cobros.</p>
+        <p className="text-xs text-t2 mt-1">Adjunta el QR real en Mi perfil, sección Cobros.</p>
       </div>
     );
   }
@@ -216,7 +216,7 @@ function WalletQrContent({ type, wallet, compact = false }: { type: WalletType; 
       <img src={wallet.qrImage} alt={'Código QR de ' + type} className={(compact ? 'w-44 h-44' : 'w-64 h-64') + ' max-w-full mx-auto mt-4 object-contain bg-white border border-border p-2'} />
       <p className="text-sm font-semibold text-t1 mt-4 uppercase">{wallet.holder}</p>
       <p className="text-base font-mono font-semibold text-primary mt-1">{wallet.phone}</p>
-      <p className="text-sm text-t2 mt-2">Confirma el nombre del titular antes de pagar.</p>
+      <p className="text-xs text-t2 mt-2">Confirma el nombre del titular antes de pagar.</p>
     </div>
   );
 }
@@ -228,8 +228,8 @@ function WalletQrDialog({ wallets, initialType = 'YAPE', onClose }: { wallets: D
       <div className="bg-surface w-full sm:max-w-md border border-border shadow-xl sm:rounded-lg max-h-[94vh] overflow-y-auto">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between sticky top-0 bg-surface z-10">
           <div>
-            <h2 className="text-base font-semibold text-t1">Mostrar QR de cobro</h2>
-            <p className="text-sm text-t2 mt-0.5">El pasajero puede escanear desde esta pantalla.</p>
+            <h2 className="text-sm font-semibold text-t1">Mostrar QR de cobro</h2>
+            <p className="text-xs text-t2 mt-0.5">El pasajero puede escanear desde esta pantalla.</p>
           </div>
           <button onClick={onClose} aria-label="Cerrar" className="w-8 h-8 inline-flex items-center justify-center text-t2 hover:text-t1 hover:bg-hover rounded"><X size={17} /></button>
         </div>
@@ -253,26 +253,9 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'cola', label: 'Cola', icon: ListOrdered },
   { id: 'manifiesto', label: 'Manifiesto', icon: FileText },
   { id: 'viajes', label: 'Mis viajes', icon: Route },
+  { id: 'avisos', label: 'Avisos', icon: Megaphone },
   { id: 'perfil', label: 'Mi perfil', icon: User },
 ];
-
-function statusBadge(s: string) {
-  const map: Record<string, string> = {
-    EN_RUTA: 'bg-ok/10 text-ok',
-    COMPLETADO: 'bg-primary/10 text-primary',
-    CON_INCIDENCIA: 'bg-danger/10 text-danger',
-    CANCELADO: 'bg-t2/10 text-t2',
-  };
-  const labels: Record<string, string> = {
-    EN_RUTA: 'En ruta', COMPLETADO: 'Completado',
-    CON_INCIDENCIA: 'Con incidencia', CANCELADO: 'Cancelado',
-  };
-  return (
-    <span className={`text-xs px-2 py-0.5 rounded font-medium ${map[s] ?? 'bg-t2/10 text-t2'}`}>
-      {labels[s] ?? s}
-    </span>
-  );
-}
 
 function pdfSafeText(value: string) {
   return value
@@ -460,7 +443,7 @@ async function createManifestPdfBlob(data: ManifestPdfData) {
 
   textLine('LISTA DE PASAJEROS', 38, 343, 10, true, blue);
   fillRect(38, 354, 519, 22, blue);
-  const headers = [
+  const headers: [string, number][] = [
     ['N°', 45], ['Asiento', 73], ['Nombre completo', 119], ['DNI', 300],
     ['Origen', 365], ['Destino', 420], ['S/', 520],
   ];
@@ -548,7 +531,7 @@ function blobToDataUrl(blob: Blob) {
 // ─── Inicio ───────────────────────────────────────────────────────────────────
 function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
   const { user } = useAuth();
-  const { profile, company, org } = useDriverContext();
+  const { profile, company, org, hasVehicleGPS } = useDriverContext();
   const { wallets } = useDriverWallets(user?.email ?? user?.code ?? '', profile?.name ?? user?.name ?? '', profile?.phone ?? '');
   const [showWalletQr, setShowWalletQr] = useState(false);
 
@@ -557,8 +540,14 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
   const [queuePJ, setQueuePJ] = useState<QueueEntry[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [myVehicle, setMyVehicle] = useState<{ plate: string; company: string; vehicleType: VehicleType } | null>(null);
-  const [decliningTurn, setDecliningTurn] = useState(false);
-  const [declineError, setDeclineError] = useState('');
+  const [myVehicleId, setMyVehicleId] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [prepareError, setPrepareError] = useState('');
+  // Acciones de la cola de regreso, disparadas desde Inicio (§2 pasos 7-10):
+  // "Inscribirme" contextual, "No saldré ahora" e "Inscripción retrasada".
+  const [returnActionBusy, setReturnActionBusy] = useState<'join' | 'later' | 'delayed' | null>(null);
+  const [returnActionError, setReturnActionError] = useState('');
+  const [returnActionNotice, setReturnActionNotice] = useState('');
 
   const myCode = user?.code ?? '';
 
@@ -573,6 +562,7 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
       setTrips(tripList);
       const mine = vehicles.find(v => v.code === myCode);
       setMyVehicle(mine ? { plate: mine.plate, company: mine.company, vehicleType: mine.vehicleType } : null);
+      setMyVehicleId(mine?.id ?? null);
     } finally {
       setLoading(false);
     }
@@ -586,46 +576,60 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
 
   const myEntryJP = queueJP.find(e => e.code === myCode) ?? null;
   const myEntryPJ = queuePJ.find(e => e.code === myCode) ?? null;
-  const myTrip = trips.find(t => t.code === myCode && t.status === 'ACTIVO') ?? null;
+  // Incluye 'PROGRAMADO': el viaje ya existe (preparado con "Preparar
+  // manifiesto") pero todavia no se marco salida -- el conductor debe poder
+  // ir a su manifiesto durante toda esa ventana, no solo cuando ya esta ACTIVO.
+  const myTrip = trips.find(t => t.code === myCode && (t.status === 'ACTIVO' || t.status === 'PROGRAMADO')) ?? null;
+  // El backend guarda en scheduledArrival la hora de salida + el tiempo
+  // minimo de viaje (queues.service.ts#depart) -- es el mismo dato que usa
+  // para el candado de re-inscripcion en la cola contraria, NO una hora de
+  // llegada real (FLUJO_NEGOCIO_ACTUAL.md #6: "no debe mostrarse como
+  // llegada estimada"). Por eso el minutero se calcula aqui, no se etiqueta
+  // como ETA, y solo se muestra mientras siga en cuenta (> 0).
+  const returnEligibleAt = myTrip?.status === 'ACTIVO' && myTrip.scheduledArrivalISO
+    ? new Date(myTrip.scheduledArrivalISO).getTime()
+    : null;
+  const minutesUntilReturnEligible = returnEligibleAt
+    ? Math.max(0, Math.ceil((returnEligibleAt - Date.now()) / 60000))
+    : null;
+  // Direccion contraria al viaje activo -- la cola en la que el conductor
+  // podria querer inscribirse desde Inicio (§2 pasos 7-10), sin tener que
+  // ir a Cola y elegir el sentido a mano.
+  const returnRoute: RouteDir | null = myTrip?.status === 'ACTIVO'
+    ? (myTrip.route === 'JULI_PUNO' ? 'PUNO_JULI' : 'JULI_PUNO')
+    : null;
+  const returnRouteLabel = returnRoute === 'JULI_PUNO' ? 'Juli → Puno' : returnRoute === 'PUNO_JULI' ? 'Puno → Juli' : '';
+  const myEntryOpposite = returnRoute === 'JULI_PUNO' ? myEntryJP : returnRoute === 'PUNO_JULI' ? myEntryPJ : null;
   const myTrips = trips.filter(t => t.code === myCode);
   const lastCompletedTrip = myTrips.find(t => t.status === 'COMPLETADO') ?? null; // ya viene ordenado desc
-  const vueltasHoy = myTrips.filter(t => t.status === 'COMPLETADO').length;
+  // Vueltas de HOY (corregido 12 sept 2026 -- antes esto ni filtraba por
+  // fecha ni pareaba ida+vuelta, contaba cada tramo suelto como "vuelta").
+  // Misma definicion que ProductionReportView.tsx: 2 tramos completados =
+  // 1 vuelta, un tramo suelto = "y media".
+  const todayStr = localDateStr();
+  const tramosHoy = myTrips.filter(t => {
+    if (t.status !== 'COMPLETADO') return false;
+    const dateISO = t.actualDepartureISO ?? t.scheduledDepartureISO;
+    return dateISO ? localDateStr(new Date(dateISO)) === todayStr : false;
+  }).length;
+  const vueltasHoyLabel = `${Math.floor(tramosHoy / 2)}${tramosHoy % 2 === 1 ? ' y media' : ''}`;
 
   const activeEntry = myEntryJP ?? myEntryPJ;
   const activeEntryRoute: RouteDir | null = myEntryJP ? 'JULI_PUNO' : myEntryPJ ? 'PUNO_JULI' : null;
 
-  // Via 2 del escape de 3 vias (plan-operacion.md §3.6): el conductor declara
-  // explicitamente que no va a salir todavia -- se manda solo al final de la
-  // cola. Ya existia en la pantalla de Cola; Jayde senalo que en el dia a dia
-  // el conductor vive en Inicio, asi que el atajo tiene que estar aqui tambien.
-  const handleDeclineTurn = async () => {
-    if (!activeEntry) return;
-    setDecliningTurn(true);
-    setDeclineError('');
-    try {
-      await declareLater(activeEntry.id);
-      await reload();
-    } catch (err) {
-      setDeclineError(err instanceof Error ? err.message : 'No se pudo registrar "me inscribo más tarde"');
-    } finally {
-      setDecliningTurn(false);
-    }
-  };
-
   // §3.11: en que terminal esta parado el conductor — inferido con la misma logica
   // que ya usa Plan Operacion (cola activa, o direccion del ultimo viaje completado),
   // nunca GPS fisico ni algo que el conductor tenga que elegir a mano.
-  const inferredTerminalCode: 'JULI' | 'PUNO' = myTrip
-    ? (myTrip.route === 'JULI_PUNO' ? 'PUNO' : 'JULI')
+  const inferredTerminal: 'Juli' | 'Puno' = myTrip
+    ? (myTrip.route === 'JULI_PUNO' ? 'Puno' : 'Juli')
     : activeEntryRoute
-      ? (activeEntryRoute === 'JULI_PUNO' ? 'JULI' : 'PUNO')
+      ? (activeEntryRoute === 'JULI_PUNO' ? 'Juli' : 'Puno')
       : lastCompletedTrip
-        ? (lastCompletedTrip.route === 'JULI_PUNO' ? 'PUNO' : 'JULI')
-        : 'JULI';
-  const inferredTerminal = terminalName(inferredTerminalCode, org);
-  const nextRoute: RouteDir = inferredTerminalCode === 'JULI' ? 'JULI_PUNO' : 'PUNO_JULI';
-  const nextRouteLabel = routeLabel(nextRoute, org);
-  const destinationFor = terminalName(nextRoute === 'JULI_PUNO' ? 'PUNO' : 'JULI', org);
+        ? (lastCompletedTrip.route === 'JULI_PUNO' ? 'Puno' : 'Juli')
+        : 'Juli';
+  const nextRoute: RouteDir = inferredTerminal === 'Juli' ? 'JULI_PUNO' : 'PUNO_JULI';
+  const nextRouteLabel = nextRoute === 'JULI_PUNO' ? 'Juli → Puno' : 'Puno → Juli';
+  const destinationFor = nextRoute === 'JULI_PUNO' ? 'Puno' : 'Juli';
 
   // Datos derivados de la cola activa del conductor — se calculan una sola vez
   // aqui para no repetir la busqueda en cada rama del render de abajo.
@@ -636,26 +640,115 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
     ? getQueueDisplayOrder(activeRouteEntries).find(row => row.entry.id === activeEntry.id)?.displayPos ?? activeEntry.position
     : null;
 
+  // "Inscribirme" contextual desde Inicio (§2 paso 7): mismo endpoint que usa
+  // Cola, pero ya sabe la direccion -- no hace falta ir a elegir el sentido.
+  // El GPS se pide aqui mismo porque el backend lo exige en el mismo paso
+  // (join() completa la llegada -- §2 paso 8, no hay "Marcar llegada" aparte).
+  const handleJoinReturn = () => {
+    if (!myVehicleId || !returnRoute) return;
+    setReturnActionError('');
+    setReturnActionNotice('');
+    setReturnActionBusy('join');
+    if (!navigator.geolocation) {
+      setReturnActionError('No se pudo obtener tu ubicación — revisa los permisos del navegador');
+      setReturnActionBusy(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      async pos => {
+        try {
+          await joinQueue(returnRoute, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
+          await reload();
+        } catch (err) {
+          setReturnActionError(err instanceof Error ? err.message : 'No se pudo inscribir la unidad');
+        } finally {
+          setReturnActionBusy(null);
+        }
+      },
+      () => {
+        setReturnActionError('No se pudo obtener tu ubicación — revisa los permisos del navegador');
+        setReturnActionBusy(null);
+      },
+    );
+  };
+
+  // "No saldré ahora" (§2 paso 9): no existe un estado "pendiente de decidir"
+  // aparte -- se inscribe (confirmando la misma evidencia GPS que pediria
+  // "Inscribirme") y de inmediato se retira con declareLater(), dejando el
+  // registro de que esta unidad SI se resolvio para el candado de la
+  // siguiente unidad de la cadena (backend/queues.service.ts#declareLater).
+  const handleDeclareLaterFromHome = () => {
+    if (!myVehicleId || !returnRoute) return;
+    setReturnActionError('');
+    setReturnActionNotice('');
+    setReturnActionBusy('later');
+    if (!navigator.geolocation) {
+      setReturnActionError('No se pudo obtener tu ubicación — revisa los permisos del navegador');
+      setReturnActionBusy(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      async pos => {
+        try {
+          await joinQueue(returnRoute, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
+          const freshQueue = await fetchQueue(returnRoute);
+          const created = freshQueue.find(e => e.code === myCode);
+          if (created) await declareLater(created.id);
+          setReturnActionNotice('Quedó registrado que no saldrás todavía — el siguiente vehículo de la cadena ya puede inscribirse.');
+          await reload();
+        } catch (err) {
+          setReturnActionError(err instanceof Error ? err.message : 'No se pudo registrar "No saldré ahora"');
+        } finally {
+          setReturnActionBusy(null);
+        }
+      },
+      () => {
+        setReturnActionError('No se pudo obtener tu ubicación — revisa los permisos del navegador');
+        setReturnActionBusy(null);
+      },
+    );
+  };
+
+  // "Inscripción retrasada" (§2 paso 10): para cuando la unidad que salio
+  // antes en la ida todavia no resolvio su situacion y bloquea a esta -- solo
+  // avisa al administrador, nunca se resuelve sola (ver DelayedRegistrationsPage.tsx).
+  const handleDelayedRegistrationFromHome = async () => {
+    if (!returnRoute) return;
+    setReturnActionError('');
+    setReturnActionNotice('');
+    setReturnActionBusy('delayed');
+    try {
+      await createDelayedRegistrationRequest(returnRoute);
+      setReturnActionNotice('Se avisó al administrador de tu asociación — te desbloqueará o autorizará la inscripción.');
+    } catch (err) {
+      setReturnActionError(err instanceof Error ? err.message : 'No se pudo avisar al administrador');
+    } finally {
+      setReturnActionBusy(null);
+    }
+  };
+
   return (
-    <div className="p-6 lg:p-8 space-y-5">
+    <div className="p-6 lg:p-8 max-w-3xl space-y-5">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-t1">Hola, {(profile?.name || user?.name || 'Conductor').split(' ')[0]}</h1>
+          <h1 className="text-lg font-semibold text-t1">Hola, {(profile?.name || user?.name || 'Conductor').split(' ')[0]}</h1>
           <p className="text-sm font-medium text-t1 mt-1">{myVehicle?.company || company}</p>
-          <p className="text-sm text-t2 mt-0.5">Empresa integrante de ATIPCAR · {new Date().toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
+          <p className="text-xs text-t2 mt-0.5">Empresa integrante de {org?.name ?? 'tu asociación'} · {new Date().toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
         </div>
-        <button onClick={() => setShowWalletQr(true)} className="inline-flex items-center gap-1.5 px-3 py-2 border border-border text-t1 rounded-lg text-sm font-medium hover:bg-hover h-fit">
-          <QrCode size={14} /> <span className="hidden sm:inline">Mostrar QR</span><span className="sm:hidden">QR</span>
+        <button onClick={() => setShowWalletQr(true)} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 border border-border text-t1 rounded text-xs font-medium hover:bg-hover h-fit">
+          <QrCode size={13} /> <span className="hidden sm:inline">Mostrar QR</span><span className="sm:hidden">QR</span>
         </button>
       </div>
+
+      <GpsAlertBanner enabled={hasVehicleGPS} />
 
       {/* Unit */}
       <div className="bg-surface border border-border rounded-lg p-4 flex flex-wrap gap-4 items-center">
         <Car size={18} className="text-t2 flex-shrink-0" />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-t1">{myVehicle?.vehicleType || 'Vehículo asignado'} · <span className="font-mono">{myVehicle?.plate || 'Sin placa'}</span></p>
-          <p className="text-sm text-t2">Código {myCode || '—'} · Empresa: {myVehicle?.company || company}</p>
+          <p className="text-xs text-t2">Código {myCode || '—'} · Empresa: {myVehicle?.company || company}</p>
         </div>
         {loading && <RefreshCw size={14} className="animate-spin text-muted flex-shrink-0" />}
       </div>
@@ -664,11 +757,11 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
       <div className="bg-surface border border-border rounded-lg p-5 space-y-4">
         <div className="flex items-center gap-2">
           <MapPin size={15} className="text-t2" />
-          <span className="text-sm text-t2">{myTrip ? 'En ruta' : `Estás en ${inferredTerminal}`}</span>
+          <span className="text-xs text-t2">{myTrip ? 'En ruta' : `Estás en ${inferredTerminal}`}</span>
           {!myTrip && (
             <>
               <ArrowRight size={13} className="text-muted" />
-              <span className="text-sm text-t2">Destino: {destinationFor}</span>
+              <span className="text-xs text-t2">Destino: {destinationFor}</span>
             </>
           )}
         </div>
@@ -678,19 +771,18 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
             <div className="bg-ok/5 border border-ok/20 rounded-lg p-3 flex items-start gap-2">
               <CheckCircle size={15} className="text-ok mt-0.5" />
               <div>
-                <p className="text-sm font-semibold text-ok">Viaje en curso — código {myTrip.code}</p>
-                <p className="text-sm text-t2 mt-1">
-                  {routeLabel(myTrip.route, org)}
+                <p className="text-sm font-semibold text-ok">
+                  {myTrip.status === 'ACTIVO' ? 'Viaje en curso' : 'Manifiesto preparado'} — código {myTrip.code}
+                </p>
+                <p className="text-xs text-t2 mt-1">
+                  {myTrip.route === 'JULI_PUNO' ? 'Juli → Puno' : 'Puno → Juli'}
                   {myTrip.manifestId ? ' · manifiesto abierto' : ' · sin manifiesto abierto todavía'}
                 </p>
-                {myTrip.scheduledArrivalISO && (() => {
-                  const eta = Math.round((new Date(myTrip.scheduledArrivalISO).getTime() - Date.now()) / 60000);
-                  return (
-                    <p className="text-sm text-t2 mt-0.5">
-                      {eta > 0 ? `Llegada estimada en ${eta} min` : 'Llegada estimada ya superada'}
-                    </p>
-                  );
-                })()}
+                {minutesUntilReturnEligible !== null && minutesUntilReturnEligible > 0 && (
+                  <p className="text-xs text-t2 mt-1">
+                    Faltan {minutesUntilReturnEligible} min para poder inscribirte en la cola de regreso
+                  </p>
+                )}
               </div>
             </div>
             <button
@@ -699,6 +791,55 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
             >
               <FileText size={14} /> {myTrip.manifestId ? 'Ir al manifiesto' : 'Abrir manifiesto'}
             </button>
+
+            {/* Cola de regreso (§2 pasos 7-10): aparece sola en cuanto se cumple
+                el tiempo minimo -- el conductor no tiene que ir a Cola a elegir
+                el sentido, el sistema ya sabe que le toca {returnRouteLabel}. */}
+            {returnRoute && minutesUntilReturnEligible === 0 && (
+              myEntryOpposite ? (
+                <p className="text-xs text-t2">
+                  Ya estás inscrito en la cola de regreso ({returnRouteLabel}) — posición {myEntryOpposite.position}.{' '}
+                  <button onClick={() => onNavigate('cola')} className="underline text-primary">Ver en Cola</button>
+                </p>
+              ) : (
+                <div className="border-t border-border pt-3 space-y-2">
+                  <p className="text-xs font-semibold text-t2 uppercase tracking-wide">Cola de regreso — {returnRouteLabel}</p>
+                  <button
+                    onClick={handleJoinReturn}
+                    disabled={returnActionBusy !== null}
+                    className="w-full px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <Plus size={14} /> {returnActionBusy === 'join' ? 'Inscribiendo…' : `Inscribirme en ${returnRouteLabel}`}
+                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleDeclareLaterFromHome}
+                      disabled={returnActionBusy !== null}
+                      className="flex-1 px-3 py-2 border border-border rounded-lg text-xs font-medium text-t1 hover:bg-hover disabled:opacity-50"
+                    >
+                      {returnActionBusy === 'later' ? 'Guardando…' : 'No saldré ahora'}
+                    </button>
+                    <button
+                      onClick={handleDelayedRegistrationFromHome}
+                      disabled={returnActionBusy !== null}
+                      className="flex-1 px-3 py-2 border border-border rounded-lg text-xs font-medium text-t2 hover:bg-hover disabled:opacity-50"
+                    >
+                      {returnActionBusy === 'delayed' ? 'Avisando…' : 'Inscripción retrasada'}
+                    </button>
+                  </div>
+                  {returnActionError && (
+                    <div className="bg-danger/10 text-danger text-xs px-3 py-2 rounded-lg flex items-center gap-2">
+                      <AlertCircle size={13} /> {returnActionError}
+                    </div>
+                  )}
+                  {returnActionNotice && (
+                    <div className="bg-ok/10 text-ok text-xs px-3 py-2 rounded-lg flex items-center gap-2">
+                      <CheckCircle size={13} /> {returnActionNotice}
+                    </div>
+                  )}
+                </div>
+              )
+            )}
           </div>
         ) : activeEntry ? (
           <div className="space-y-3">
@@ -710,7 +851,7 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
                     ? `Te ${vehiclesAhead === 1 ? 'falta 1 vehículo' : `faltan ${vehiclesAhead} vehículos`}`
                     : 'Eres el siguiente'}
               </p>
-              <p className="text-sm text-t2 mt-1">
+              <p className="text-xs text-t2 mt-1">
                 {activeEntry.status === 'LLAMADO'
                   ? 'Es tu turno — dirígete a registrar pasajeros'
                   : vehiclesAhead > 0 ? 'para salir' : 'en salir — prepárate'}
@@ -719,7 +860,7 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
 
             {callingEntry && callingEntry.id !== activeEntry.id && (
               <div className="flex items-center gap-2 bg-cyan-50 border border-cyan-200 rounded-lg px-3 py-2">
-                <span className="text-xs font-semibold uppercase text-cyan-700 flex-shrink-0">Llamando ahora</span>
+                <span className="text-[10px] font-semibold uppercase text-cyan-700 flex-shrink-0">Llamando ahora</span>
                 <span className="text-sm font-mono text-t1">{callingEntry.code}</span>
                 <span className="text-sm text-t2 truncate">{callingEntry.driverName}</span>
               </div>
@@ -736,32 +877,37 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
               <>
                 <p className="text-sm text-t2">
                   Tu posición en la lista es el {activeDisplayPos}.
-                  {activeEntry.status === 'LLAMADO' && ' Es tu turno — ya puedes preparar tu manifiesto.'}
-                  {activeEntry.status === 'EN TERMINAL' && ' Ya estás en terminal — prepara tu manifiesto cuando quieras.'}
-                  {activeEntry.status === 'EMBARCANDO' && ' Embarcando — completa tu manifiesto antes de salir.'}
-                  {activeEntry.status === 'LISTO' && ' Te toca salir — prepara tu manifiesto.'}
+                  {activeEntry.status === 'LLAMADO' && ' Dirígete a registrar pasajeros y abre tu manifiesto ahora.'}
+                  {(activeEntry.status === 'LISTO' || activeEntry.status === 'EMBARCANDO') && ' Te toca salir pronto — prepara tu manifiesto.'}
                 </p>
-                {declineError && <p className="text-sm text-danger">{declineError}</p>}
-                <div className="flex flex-wrap items-center gap-2">
-                  {(['LLAMADO', 'EN TERMINAL', 'EMBARCANDO', 'LISTO'] as string[]).includes(activeEntry.status) ? (
-                    <button onClick={() => onNavigate('manifiesto')} className="px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors flex items-center gap-2">
-                      <FileText size={14} /> Preparar manifiesto
-                    </button>
-                  ) : (
-                    <button onClick={() => onNavigate('cola')} className="px-4 py-2.5 border border-border text-t2 rounded-lg text-sm font-medium hover:bg-hover transition-colors flex items-center gap-2">
-                      <MapPin size={14} /> Ver mi posición en cola
-                    </button>
-                  )}
-                  {(['INSCRITO', 'LLAMADO'] as string[]).includes(activeEntry.status) && (
-                    <button
-                      onClick={handleDeclineTurn}
-                      disabled={decliningTurn}
-                      className="px-4 py-2.5 border border-border text-t2 rounded-lg text-sm font-medium hover:bg-hover transition-colors flex items-center gap-2 disabled:opacity-50"
-                    >
-                      <Clock size={14} /> {decliningTurn ? 'Anotando…' : 'No voy a salir todavía'}
-                    </button>
-                  )}
-                </div>
+                <button
+                  onClick={async () => {
+                    setPreparing(true);
+                    setPrepareError('');
+                    try {
+                      // Crea (o reutiliza) el Trip en PROGRAMADO antes de
+                      // entrar a la pantalla de Manifiesto -- si no se hace
+                      // esto primero, el manifiesto llega sin viaje al que
+                      // asociarse (ver backend/queues.service.ts#prepareTrip).
+                      await prepareTripForEntry(activeEntry.id);
+                      await reload();
+                      onNavigate('manifiesto');
+                    } catch (err) {
+                      setPrepareError(err instanceof Error ? err.message : 'No se pudo preparar el manifiesto');
+                    } finally {
+                      setPreparing(false);
+                    }
+                  }}
+                  disabled={preparing}
+                  className="px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors flex items-center gap-2 disabled:opacity-50"
+                >
+                  <FileText size={14} /> {preparing ? 'Preparando…' : 'Preparar manifiesto'}
+                </button>
+                {prepareError && (
+                  <div className="bg-danger/10 text-danger text-xs px-3 py-2 rounded-lg flex items-center gap-2">
+                    <AlertCircle size={13} /> {prepareError}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -780,22 +926,22 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
 
       {/* Today summary */}
       <div className="bg-surface border border-border rounded-lg p-4">
-        <h2 className="text-sm font-semibold text-t2 uppercase tracking-wide mb-3">Resumen de hoy</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-center">
+        <h2 className="text-xs font-semibold text-t2 uppercase tracking-wide mb-3">Resumen de hoy</h2>
+        <div className="grid grid-cols-3 gap-3 text-center">
           <div>
-            <p className="text-xl font-bold text-t1">{vueltasHoy}</p>
-            <p className="text-sm text-t2">Vueltas completadas</p>
+            <p className="text-lg font-bold text-t1">{vueltasHoyLabel}</p>
+            <p className="text-xs text-t2">Vueltas completadas hoy</p>
           </div>
           <div>
-            <p className="text-xl font-bold text-t2">—</p>
-            <p className="text-sm text-t2">Pasajeros</p>
+            <p className="text-lg font-bold text-t2">—</p>
+            <p className="text-xs text-t2">Pasajeros</p>
           </div>
           <div>
-            <p className="text-xl font-bold text-t2">—</p>
-            <p className="text-sm text-t2">Recaudación bruta</p>
+            <p className="text-lg font-bold text-t2">—</p>
+            <p className="text-xs text-t2">Recaudación bruta</p>
           </div>
         </div>
-        <p className="text-sm text-muted mt-2">Solo ves el detalle de tus manifiestos abiertos o pendientes de completar — no tu historial ya cerrado, por diseño.</p>
+        <p className="text-[11px] text-muted mt-2">Solo ves el detalle de tus manifiestos abiertos o pendientes de completar — no tu historial ya cerrado, por diseño.</p>
       </div>
       {showWalletQr && <WalletQrDialog wallets={wallets} onClose={() => setShowWalletQr(false)} />}
     </div>
@@ -805,7 +951,6 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
 // ─── Cola ─────────────────────────────────────────────────────────────────────
 function DriverQueue() {
   const { user } = useAuth();
-  const { org } = useDriverContext();
   const code = user?.code ?? '';
   const [errorMsg, setErrorMsg] = useState('');
   const [queueJP, setQueueJP] = useState<QueueEntry[]>([]);
@@ -815,23 +960,6 @@ function DriverQueue() {
   const [loading, setLoading] = useState(true);
   const [busyEntryId, setBusyEntryId] = useState<string | null>(null);
   const [joiningRoute, setJoiningRoute] = useState<'JULI_PUNO' | 'PUNO_JULI' | null>(null);
-  // Reubicacion (Jayde, 3 sept 2026): el conductor marca esto SOLO si el
-  // administrador ya lo selecciono en una orden de reubicacion real -- el
-  // backend verifica contra esa orden y solo autoriza el salto de turno si
-  // de verdad existe (nunca se confia lo que el conductor marca por su cuenta).
-  const [relocationJoin, setRelocationJoin] = useState<{ JULI_PUNO: boolean; PUNO_JULI: boolean }>({
-    JULI_PUNO: false,
-    PUNO_JULI: false,
-  });
-  // Excepcion 3 -- Inscripcion retrasada (Jayde, 4 sept 2026): cuando el
-  // candado de orden real de salida bloquea la inscripcion, se ofrece este
-  // boton en vez de dejar al conductor atascado con solo un mensaje de error.
-  const [blockedRoute, setBlockedRoute] = useState<'JULI_PUNO' | 'PUNO_JULI' | null>(null);
-  const [delayedRequestSent, setDelayedRequestSent] = useState<{ JULI_PUNO: boolean; PUNO_JULI: boolean }>({
-    JULI_PUNO: false,
-    PUNO_JULI: false,
-  });
-  const [sendingDelayedRequest, setSendingDelayedRequest] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -864,37 +992,14 @@ function DriverQueue() {
   const handleJoin = async (route: 'JULI_PUNO' | 'PUNO_JULI') => {
     if (!myVehicleId) return;
     setErrorMsg('');
-    setBlockedRoute(null);
     setJoiningRoute(route);
     try {
-      await joinQueue(route, myVehicleId, getOrCreateDeviceId(), relocationJoin[route]);
-      setRelocationJoin(prev => ({ ...prev, [route]: false }));
-      setDelayedRequestSent(prev => ({ ...prev, [route]: false }));
+      await joinQueue(route, myVehicleId, getOrCreateDeviceId());
       await reload();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'No se pudo inscribir la unidad';
-      setErrorMsg(message);
-      // Mismo mensaje que el candado de orden real de salida en el backend
-      // (queues.service.ts join()) -- si es este caso, se ofrece "Inscripcion
-      // retrasada" en vez de dejar al conductor solo con el error.
-      if (message.includes('no se ha inscrito todavia')) {
-        setBlockedRoute(route);
-      }
+      setErrorMsg(err instanceof Error ? err.message : 'No se pudo inscribir la unidad');
     } finally {
       setJoiningRoute(null);
-    }
-  };
-
-  const handleDelayedRegistration = async (route: 'JULI_PUNO' | 'PUNO_JULI') => {
-    setSendingDelayedRequest(true);
-    setErrorMsg('');
-    try {
-      await createDelayedRegistrationRequest(route);
-      setDelayedRequestSent(prev => ({ ...prev, [route]: true }));
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'No se pudo avisar al administrador');
-    } finally {
-      setSendingDelayedRequest(false);
     }
   };
 
@@ -938,27 +1043,27 @@ function DriverQueue() {
   };
 
   const queueCards: Array<{ key: 'JULI_PUNO' | 'PUNO_JULI'; label: string; entries: QueueEntry[]; myEntry: QueueEntry | null; blockedByOther: boolean }> = [
-    { key: 'JULI_PUNO', label: routeLabel('JULI_PUNO', org), entries: queueJP, myEntry: myEntryJP, blockedByOther: isActiveEntry(myEntryPJ) },
-    { key: 'PUNO_JULI', label: routeLabel('PUNO_JULI', org), entries: queuePJ, myEntry: myEntryPJ, blockedByOther: isActiveEntry(myEntryJP) },
+    { key: 'JULI_PUNO', label: 'Juli → Puno', entries: queueJP, myEntry: myEntryJP, blockedByOther: isActiveEntry(myEntryPJ) },
+    { key: 'PUNO_JULI', label: 'Puno → Juli', entries: queuePJ, myEntry: myEntryPJ, blockedByOther: isActiveEntry(myEntryJP) },
   ];
 
   return (
     <div className="p-6 lg:p-8 space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-t1">Cola de turnos</h1>
-          <p className="text-sm text-t2 mt-0.5">
+          <h1 className="text-base font-semibold text-t1">Cola de turnos</h1>
+          <p className="text-xs text-t2 mt-0.5">
             Unidad {code || '—'}{myVehicle ? ` · ${myVehicle.plate} · ${myVehicle.company}` : ''}
           </p>
         </div>
       </div>
 
       {errorMsg && (
-        <div className="px-4 py-2.5 bg-danger/5 border border-danger/20 rounded-lg text-sm text-danger">{errorMsg}</div>
+        <div className="px-4 py-2 bg-danger/5 border border-danger/20 rounded-lg text-xs text-danger">{errorMsg}</div>
       )}
 
       {!myVehicleId && !loading && (
-        <div className="px-4 py-3 bg-warn/5 border border-warn/30 rounded-lg text-sm text-warn">
+        <div className="px-4 py-3 bg-warn/5 border border-warn/30 rounded-lg text-xs text-warn">
           No encontramos una unidad vinculada a tu cuenta ({code || 'sin código'}). Contacta a tu administrador.
         </div>
       )}
@@ -972,68 +1077,42 @@ function DriverQueue() {
           {queueCards.map(card => (
             <div key={card.key} className="bg-surface border border-border rounded-lg overflow-hidden">
               <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-                <h3 className="text-base font-medium text-t1">{card.label}</h3>
-                <span className="text-sm text-t2">{card.entries.length} vehículos</span>
+                <h3 className="text-sm font-medium text-t1">{card.label}</h3>
+                <span className="text-xs text-t2">{card.entries.length} vehículos</span>
               </div>
 
               <div className="px-4 py-3 border-b border-border bg-bg/50">
                 {!card.myEntry ? (
                   <div className="space-y-1.5">
-                    <label className="flex items-start gap-2 text-sm text-t2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={relocationJoin[card.key]}
-                        onChange={e => setRelocationJoin(prev => ({ ...prev, [card.key]: e.target.checked }))}
-                        className="mt-0.5"
-                      />
-                      <span>Vengo por una reubicación que autorizó el administrador</span>
-                    </label>
                     <button
                       onClick={() => handleJoin(card.key)}
                       disabled={!myVehicleId || joiningRoute === card.key || card.blockedByOther}
-                      className="w-full flex items-center justify-center gap-2 h-10 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors disabled:opacity-50"
+                      className="w-full flex items-center justify-center gap-2 h-9 bg-primary text-white rounded-lg text-xs font-medium hover:bg-primary-h transition-colors disabled:opacity-50"
                     >
                       {joiningRoute === card.key ? <RefreshCw size={13} className="animate-spin" /> : <Plus size={13} />}
                       Inscribirme en {card.label}
                     </button>
                     {card.blockedByOther && (
-                      <p className="text-sm text-t2">Ya estás activo en la cola contraria — no puedes inscribirte en las dos a la vez.</p>
-                    )}
-                    {blockedRoute === card.key && (
-                      delayedRequestSent[card.key] ? (
-                        <p className="text-sm text-ok flex items-center gap-1.5"><Clock size={13} />Le avisamos al administrador — espera a que te contacte o vuelve a presionar "Inscribirme" más tarde.</p>
-                      ) : (
-                        <div className="space-y-1">
-                          <p className="text-sm text-t2">La unidad que salió antes que tú todavía no se inscribió. Si crees que se le pasó, avísale al administrador:</p>
-                          <button
-                            onClick={() => handleDelayedRegistration(card.key)}
-                            disabled={sendingDelayedRequest}
-                            className="w-full flex items-center justify-center gap-2 h-9 border border-warn text-warn rounded-lg text-sm font-medium hover:bg-warn/5 transition-colors disabled:opacity-50"
-                          >
-                            <Clock size={13} />
-                            {sendingDelayedRequest ? 'Avisando…' : 'Inscripción retrasada — avisar al administrador'}
-                          </button>
-                        </div>
-                      )
+                      <p className="text-[11px] text-t2">Ya estás activo en la cola contraria — no puedes inscribirte en las dos a la vez.</p>
                     )}
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    <p className="text-sm text-t2 flex items-center gap-1.5 flex-wrap">
+                    <p className="text-xs text-t2 flex items-center gap-1.5 flex-wrap">
                       Tu unidad — posición en la lista <strong className="text-t1">#{(() => {
                         const myRow = getQueueDisplayOrder(card.entries).find(row => row.entry.id === card.myEntry!.id);
                         return myRow?.displayPos ?? '—';
                       })()}</strong> ·
                       {(() => {
                         const opPos = getOperationalPosition(card.myEntry!, card.entries);
-                        return <span className={'text-xs px-2 py-0.5 rounded font-semibold ' + opPos.className}>{opPos.label}</span>;
+                        return <span className={'text-[11px] px-2 py-0.5 rounded font-semibold ' + opPos.className}>{opPos.label}</span>;
                       })()}
                     </p>
                     {card.myEntry.status === 'PREINSCRITO' && (
                       <button
                         onClick={() => handleConfirmArrival(card.myEntry!)}
                         disabled={busyEntryId === card.myEntry.id}
-                        className="w-full flex items-center justify-center gap-2 h-10 border border-primary text-primary rounded-lg text-sm font-medium hover:bg-primary/5 transition-colors disabled:opacity-50"
+                        className="w-full flex items-center justify-center gap-2 h-9 border border-primary text-primary rounded-lg text-xs font-medium hover:bg-primary/5 transition-colors disabled:opacity-50"
                       >
                         <MapPin size={13} />
                         Confirmar llegada (GPS)
@@ -1043,7 +1122,7 @@ function DriverQueue() {
                       <button
                         onClick={() => handleDeclareLater(card.myEntry!)}
                         disabled={busyEntryId === card.myEntry.id}
-                        className="w-full flex items-center justify-center gap-2 h-10 border border-border text-t2 rounded-lg text-sm font-medium hover:bg-hover transition-colors disabled:opacity-50"
+                        className="w-full flex items-center justify-center gap-2 h-9 border border-border text-t2 rounded-lg text-xs font-medium hover:bg-hover transition-colors disabled:opacity-50"
                       >
                         <Clock size={13} />
                         Me inscribo más tarde
@@ -1054,7 +1133,7 @@ function DriverQueue() {
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-sm" aria-label={'Cola ' + card.label}>
+                <table className="w-full text-xs" aria-label={'Cola ' + card.label}>
                   <thead>
                     <tr className="border-b border-border bg-bg">
                       <th className="text-left px-3 py-2.5 text-t2 font-medium">Pos.</th>
@@ -1072,10 +1151,10 @@ function DriverQueue() {
                           <td className="px-3 py-2 font-mono text-t2">{displayPos ?? '—'}</td>
                           <td className="px-3 py-2 font-semibold text-t1">
                             {entry.code}
-                            {isMe && <span className="ml-1.5 text-[11px] bg-primary/10 text-primary px-1 py-0.5 rounded">Tu unidad</span>}
+                            {isMe && <span className="ml-1.5 text-[10px] bg-primary/10 text-primary px-1 py-0.5 rounded">Tu unidad</span>}
                           </td>
                           <td className="px-3 py-2">
-                            <span className={'text-xs px-2 py-0.5 rounded font-medium whitespace-nowrap ' + opPos.className}>{opPos.label}</span>
+                            <span className={'text-[11px] px-2 py-0.5 rounded font-medium whitespace-nowrap ' + opPos.className}>{opPos.label}</span>
                           </td>
                           <td className="px-3 py-2 text-t2 font-mono">{entry.registeredAt || '—'}</td>
                         </tr>
@@ -1103,7 +1182,7 @@ function PassengerSeatForm({
   occupiedSeats: number[];
   defaultOrigin: string;
   defaultDestination: string;
-  onSubmit: (p: { name: string; dni: string; seat: number; fare: number; paymentMethod: PaymentMethod; origin: string; destination: string }) => Promise<void> | void;
+  onSubmit: (p: { name: string; dni: string; seat: number; fare: number; paymentMethod: PaymentMethod; origin: string; destination: string; email?: string }) => Promise<void> | void;
   submitting: boolean;
   submitLabel: string;
 }) {
@@ -1113,11 +1192,13 @@ function PassengerSeatForm({
   const [selectedSeat, setSelectedSeat] = useState<number | null>(null);
   const [fare, setFare] = useState('10');
   const [method, setMethod] = useState<PaymentMethod>('EFECTIVO');
+  const [email, setEmail] = useState('');
   const dniValid = /^\d{8}$/.test(dni);
+  const emailValid = email === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
   const handleSubmit = async () => {
     const fareNum = Number(fare);
-    if (!nombres || !apellidos || !dniValid || selectedSeat === null || !Number.isFinite(fareNum) || fareNum < 0) return;
+    if (!nombres || !apellidos || !dniValid || selectedSeat === null || !Number.isFinite(fareNum) || fareNum < 0 || !emailValid) return;
     await onSubmit({
       name: `${nombres.trim()} ${apellidos.trim()}`,
       dni,
@@ -1126,13 +1207,14 @@ function PassengerSeatForm({
       paymentMethod: method,
       origin: defaultOrigin,
       destination: defaultDestination,
+      email: email.trim() || undefined,
     });
-    setNombres(''); setApellidos(''); setDni(''); setSelectedSeat(null); setFare('10'); setMethod('EFECTIVO');
+    setNombres(''); setApellidos(''); setDni(''); setSelectedSeat(null); setFare('10'); setMethod('EFECTIVO'); setEmail('');
   };
 
   return (
     <div className="bg-surface border border-border rounded-lg p-4">
-      <h3 className="text-base font-medium text-t1 mb-3">Mapa de asientos</h3>
+      <h3 className="text-sm font-medium text-t1 mb-3">Mapa de asientos</h3>
       <SeatMap
         vehicleType={vehicleType}
         occupiedSeats={occupiedSeats}
@@ -1141,7 +1223,7 @@ function PassengerSeatForm({
       />
       {selectedSeat !== null && (
         <div className="mt-4 border-t border-border pt-4 space-y-3">
-          <p className="text-sm font-medium text-t1">Asiento {String(selectedSeat).padStart(2, '0')} seleccionado</p>
+          <p className="text-xs font-medium text-t1">Asiento {String(selectedSeat).padStart(2, '0')} seleccionado</p>
           <div className="grid grid-cols-2 gap-2">
             <input placeholder="Nombres" value={nombres} onChange={e => setNombres(e.target.value)} className="h-9 px-3 border border-border rounded-lg text-sm" />
             <input placeholder="Apellidos" value={apellidos} onChange={e => setApellidos(e.target.value)} className="h-9 px-3 border border-border rounded-lg text-sm" />
@@ -1154,16 +1236,26 @@ function PassengerSeatForm({
                 maxLength={8}
                 className={`h-9 px-3 border rounded-lg text-sm w-full ${dni && !dniValid ? 'border-danger' : 'border-border'}`}
               />
-              {dni.length > 0 && !dniValid && <p className="text-sm text-danger mt-1">El DNI debe tener 8 dígitos numéricos</p>}
+              {dni.length > 0 && !dniValid && <p className="text-[11px] text-danger mt-1">El DNI debe tener 8 dígitos numéricos</p>}
             </div>
             <input placeholder="Tarifa (S/)" type="number" min={0} value={fare} onChange={e => setFare(e.target.value)} className="h-9 px-3 border border-border rounded-lg text-sm" />
             <select value={method} onChange={e => setMethod(e.target.value as PaymentMethod)} className="h-9 px-3 border border-border rounded-lg text-sm">
               {(['EFECTIVO', 'YAPE', 'PLIN', 'TRANSFERENCIA', 'QR'] as const).map(pm => <option key={pm} value={pm}>{pm}</option>)}
             </select>
+            <div className="col-span-2">
+              <input
+                placeholder="Correo del pasajero (opcional)"
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                className={`h-9 px-3 border rounded-lg text-sm w-full ${email && !emailValid ? 'border-danger' : 'border-border'}`}
+              />
+              <p className="text-[11px] text-t2 mt-1">Si lo llenas, le llega un boleto de este viaje a su correo.</p>
+            </div>
           </div>
           <button
             onClick={handleSubmit}
-            disabled={submitting || !nombres || !apellidos || !dniValid}
+            disabled={submitting || !nombres || !apellidos || !dniValid || !emailValid}
             className="w-full h-9 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h disabled:opacity-50 flex items-center justify-center gap-2"
           >
             <Plus size={14} /> {submitting ? 'Guardando…' : submitLabel}
@@ -1186,31 +1278,25 @@ function DriverManifest() {
   const [actionError, setActionError] = useState('');
   const [trips, setTrips] = useState<Trip[]>([]);
   const [manifests, setManifests] = useState<Manifest[]>([]);
-  const [queueJP, setQueueJP] = useState<QueueEntry[]>([]);
-  const [queuePJ, setQueuePJ] = useState<QueueEntry[]>([]);
 
   const [addingPassenger, setAddingPassenger] = useState(false);
   const [openingManifest, setOpeningManifest] = useState(false);
   const [closingManifest, setClosingManifest] = useState(false);
-  const [preparingTrip, setPreparingTrip] = useState(false);
-  const [departing, setDeparting] = useState(false);
-  const [arriving, setArriving] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [showPaperBackup, setShowPaperBackup] = useState(false);
-  // Cierre parcial con respaldo en papel (Jayde, 3 sept 2026): el conductor
-  // puede haber cargado solo algunos pasajeros y anotado el resto en papel --
-  // este checkbox es lo que marca el manifiesto como "pendiente de completar"
-  // aun cuando ya tiene 1 o mas pasajeros digitalizados (antes solo aplicaba
-  // al caso 100% vacio).
-  const [partialPaperBackup, setPartialPaperBackup] = useState(false);
   const [justClosed, setJustClosed] = useState<Manifest | null>(null);
   const [closedAt, setClosedAt] = useState<Date | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [lastDownloadAt, setLastDownloadAt] = useState<Date | null>(null);
+  const [myEntryId, setMyEntryId] = useState<string | null>(null);
+  const [departing, setDeparting] = useState(false);
 
   const [digitizing, setDigitizing] = useState<Manifest | null>(null);
   const [digitizePassengers, setDigitizePassengers] = useState<Passenger[]>([]);
   const [digitizeSaving, setDigitizeSaving] = useState(false);
+  const [aiSuggesting, setAiSuggesting] = useState(false);
+  const [aiSummary, setAiSummary] = useState('');
+  const aiFileInputRef = useRef<HTMLInputElement>(null);
 
   const myCode = user?.code ?? '';
 
@@ -1218,19 +1304,21 @@ function DriverManifest() {
     setLoading(true);
     setLoadError('');
     try {
-      const [tripList, manifestList, jp, pj] = await Promise.all([
+      const [tripList, manifestList, queueJP, queuePJ] = await Promise.all([
         fetchTrips(), fetchManifests(), fetchQueue('JULI_PUNO'), fetchQueue('PUNO_JULI'),
       ]);
       setTrips(tripList);
       setManifests(manifestList);
-      setQueueJP(jp);
-      setQueuePJ(pj);
+      // Necesario para "Marcar salida" -- depart() del backend recibe el id
+      // de la entrada en cola (QueueEntry), no el del Trip.
+      const myEntry = [...queueJP, ...queuePJ].find(e => e.code === myCode) ?? null;
+      setMyEntryId(myEntry?.id ?? null);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'No se pudo cargar el manifiesto');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [myCode]);
 
   useEffect(() => {
     reload();
@@ -1238,52 +1326,20 @@ function DriverManifest() {
     return () => clearInterval(id);
   }, [reload]);
 
-  // Unidad ya LLAMADA (o mas adelante: EN TERMINAL/EMBARCANDO/LISTO) -- desde
-  // ahi el conductor es autonomo: puede preparar su viaje, abrir y cerrar su
-  // manifiesto y marcar su propia salida, sin que el administrador tenga que
-  // seguir avanzandolo manualmente (DOCUMENTO_MAESTRO §6.4). El registro de
-  // cola sigue vivo durante todo ese tramo hasta que se marca salida (recien
-  // ahi se borra), asi que esto se calcula independiente de si ya existe el
-  // viaje PROGRAMADO. Se calcula ANTES que myTrip porque myTrip lo usa (ver
-  // comentario de rawMyTrip mas abajo).
-  const READY_STATUSES = ['LLAMADO', 'EN TERMINAL', 'EMBARCANDO', 'LISTO'];
-  const myReadyEntry = [...queueJP, ...queuePJ].find(e => e.code === myCode && READY_STATUSES.includes(e.status)) ?? null;
-
-  // El viaje puede estar PROGRAMADO (todavia no salio -- se llena el
-  // manifiesto sobre este) o ACTIVO (ya salio, esperando "marcar llegada")
-  // (plan-flujo-colas-hardware.md §4).
-  const rawMyTrip = trips.find(t => t.code === myCode && (t.status === 'PROGRAMADO' || t.status === 'ACTIVO')) ?? null;
-  // Un viaje PROGRAMADO "huerfano" -- sin ninguna entrada de cola LLAMADA (o
-  // mas adelante) detras -- es de un ciclo anterior que el conductor nunca
-  // cerro (no marco salida). No debe secuestrar un ciclo NUEVO de la misma
-  // unidad que ya se reinscribio en la cola desde cero: si no hay
-  // myReadyEntry, se ignora aca (sigue existiendo en la base para no perder
-  // datos -- solo deja de ser "mi viaje activo" en esta pantalla). Un viaje
-  // ACTIVO nunca queda huerfano por este chequeo porque depart() borra la
-  // entrada de cola en la misma transaccion que lo activa -- para ese punto
-  // ya no deberia haber entrada de cola de todos modos.
-  const myTrip = rawMyTrip?.status === 'PROGRAMADO' && !myReadyEntry ? null : rawMyTrip;
-  const activeManifest = myTrip?.manifestId ? manifests.find(m => m.id === myTrip.manifestId) ?? null : null;
-  const pendingManifests = manifests.filter(m => m.pendingDigitize && m.id !== activeManifest?.id);
-  // Cualquier estado (no solo los de arriba) -- para poder explicarle al
-  // conductor en que paso de la cola esta cuando TODAVIA no lo llamaron
-  // (PREINSCRITO/INSCRITO), en vez del mensaje generico de "no tienes viaje
-  // activo" (que sonaba a que ni siquiera estaba anotado en la cola).
-  const myQueueEntry = [...queueJP, ...queuePJ].find(e => e.code === myCode) ?? null;
-  const QUEUE_STATUS_LABEL: Record<string, string> = {
-    PREINSCRITO: 'anotado, esperando confirmar llegada',
-    INSCRITO: 'en cola, esperando a que te llamen',
-  };
-  const etaMinutes = myTrip?.status === 'ACTIVO' && myTrip.scheduledArrivalISO
-    ? Math.round((new Date(myTrip.scheduledArrivalISO).getTime() - Date.now()) / 60000)
+  // Incluye 'PROGRAMADO' -- ver la misma nota en DriverHome mas arriba.
+  const myTrip = trips.find(t => t.code === myCode && (t.status === 'ACTIVO' || t.status === 'PROGRAMADO')) ?? null;
+  // Solo cuenta como "activo/editable" mientras siga en BORRADOR -- una vez
+  // cerrado (o el Trip ya paso a ACTIVO tras "Marcar salida"), no debe
+  // volver a ofrecer agregar pasajeros ni "Cerrar manifiesto" sobre el
+  // mismo manifiesto.
+  const activeManifest = myTrip?.manifestId
+    ? manifests.find(m => m.id === myTrip.manifestId && m.status === 'BORRADOR') ?? null
     : null;
+  const pendingManifests = manifests.filter(m => m.pendingDigitize && m.id !== activeManifest?.id);
 
-  // Envoltorios locales (mismos nombres que ya usan todas las llamadas de abajo)
-  // sobre terminalName() de operacion-api -- toman el nombre real del corredor de
-  // ESTA asociacion en vez de "Juli"/"Puno" fijos.
-  const originFor = (route?: string) => terminalName(route === 'PUNO_JULI' ? 'PUNO' : 'JULI', org);
-  const destinationFor = (route?: string) => terminalName(route === 'PUNO_JULI' ? 'JULI' : 'PUNO', org);
-  const routeLabel = (route?: string) => `${originFor(route)} → ${destinationFor(route)}`;
+  const routeLabel = (route?: string) => (route === 'PUNO_JULI' ? 'Puno → Juli' : 'Juli → Puno');
+  const originFor = (route?: string) => (route === 'PUNO_JULI' ? 'Puno' : 'Juli');
+  const destinationFor = (route?: string) => (route === 'PUNO_JULI' ? 'Juli' : 'Puno');
 
   const handleOpenManifest = async () => {
     if (!myTrip) return;
@@ -1299,69 +1355,7 @@ function DriverManifest() {
     }
   };
 
-  // Con la unidad en LISTO, prepara el viaje PROGRAMADO para poder abrir el
-  // manifiesto antes de salir (plan-flujo-colas-hardware.md §4).
-  const handlePrepareTrip = async () => {
-    if (!myReadyEntry) return;
-    setPreparingTrip(true);
-    setActionError('');
-    try {
-      await prepareTripForEntry(myReadyEntry.id);
-      await reload();
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'No se pudo preparar el manifiesto');
-    } finally {
-      setPreparingTrip(false);
-    }
-  };
-
-  // "Marcar salida" -- transiciona el viaje PROGRAMADO a ACTIVO, registra la
-  // hora real de salida y empieza el conteo de llegada estimada.
-  const handleDepart = async () => {
-    if (!myReadyEntry) return;
-    setDeparting(true);
-    setActionError('');
-    try {
-      await departQueueEntry(myReadyEntry.id);
-      await reload();
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'No se pudo marcar la salida');
-    } finally {
-      setDeparting(false);
-    }
-  };
-
-  // "Marcar llegada" -- mismo boton en Operacion y PRO; en PRO con hardware
-  // vinculado el backend usa la posicion real del vehiculo y estas
-  // coordenadas se ignoran (plan-flujo-colas-hardware.md §2.6).
-  const handleArrive = () => {
-    if (!myTrip) return;
-    setActionError('');
-    setArriving(true);
-    if (!navigator.geolocation) {
-      setActionError('Este navegador no puede obtener tu ubicación');
-      setArriving(false);
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      async pos => {
-        try {
-          await completeTrip(myTrip.id, { lat: pos.coords.latitude, lng: pos.coords.longitude });
-          await reload();
-        } catch (err) {
-          setActionError(err instanceof Error ? err.message : 'No se pudo marcar la llegada');
-        } finally {
-          setArriving(false);
-        }
-      },
-      () => {
-        setActionError('No se pudo obtener tu ubicación — revisa los permisos del navegador');
-        setArriving(false);
-      },
-    );
-  };
-
-  const handleAddPassenger = async (p: { name: string; dni: string; seat: number; fare: number; paymentMethod: PaymentMethod; origin: string; destination: string }) => {
+  const handleAddPassenger = async (p: { name: string; dni: string; seat: number; fare: number; paymentMethod: PaymentMethod; origin: string; destination: string; email?: string }) => {
     if (!activeManifest) return;
     setAddingPassenger(true);
     setActionError('');
@@ -1385,7 +1379,6 @@ function DriverManifest() {
       setClosedAt(new Date());
       setShowCloseConfirm(false);
       setShowPaperBackup(false);
-      setPartialPaperBackup(false);
       await reload();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'No se pudo cerrar el manifiesto');
@@ -1394,13 +1387,39 @@ function DriverManifest() {
     }
   };
 
+  // Correccion (9 sept 2026): antes solo se ofrecia el camino de "respaldo en
+  // papel" cuando el manifiesto quedaba en CERO pasajeros -- un cierre
+  // PARCIAL (1, 2, o cualquier numero menor a la capacidad) se iba por el
+  // cierre normal, sin marcar pendingDigitize, y la seccion "Digitalizar con
+  // foto (IA)" nunca llegaba a aparecer para esos casos, aunque el backend
+  // ya lo soporta (manifests.service.ts#close, Jayde 3 sept 2026). Ahora
+  // cualquier manifiesto que no llegue a la capacidad completa pasa por el
+  // mismo camino de respaldo en papel.
   const handleCloseManifest = () => {
     if (!activeManifest) return;
-    setPartialPaperBackup(false);
-    if (activeManifest.passengers.length === 0) {
+    if (activeManifest.passengers.length < activeManifest.capacity) {
       setShowPaperBackup(true);
     } else {
       setShowCloseConfirm(true);
+    }
+  };
+
+  const handleDepart = async () => {
+    if (!myEntryId) return;
+    setDeparting(true);
+    setActionError('');
+    try {
+      await departQueueEntry(myEntryId);
+      // No se limpia justClosed: el mismo Trip sigue siendo el "activo" para
+      // este conductor (paso de PROGRAMADO a ACTIVO, no uno nuevo), y su
+      // manifiesto ya quedo cerrado -- mantener esta vista evita que
+      // reaparezcan "Agregar pasajero"/"Cerrar manifiesto" sobre un
+      // manifiesto que ya esta CERRADO.
+      await reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo marcar la salida');
+    } finally {
+      setDeparting(false);
     }
   };
 
@@ -1419,6 +1438,63 @@ function DriverManifest() {
       setActionError(err instanceof Error ? err.message : 'No se pudo completar el manifiesto');
     } finally {
       setDigitizeSaving(false);
+    }
+  };
+
+  // Achica la foto en el navegador antes de mandarla (fotos de celular sin
+  // comprimir son varios MB) -- suficiente resolucion para que la IA lea el
+  // papel, sin acercarse al limite de 8mb del body del backend.
+  const MAX_AI_IMAGE_DIM = 1600;
+  const fileToResizedBase64 = (file: File): Promise<{ base64: string; mediaType: string }> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('No se pudo leer la imagen'));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('No se pudo procesar la imagen'));
+        img.onload = () => {
+          const scale = Math.min(1, MAX_AI_IMAGE_DIM / Math.max(img.width, img.height));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) { reject(new Error('No se pudo procesar la imagen')); return; }
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const resized = canvas.toDataURL('image/jpeg', 0.85);
+          resolve({ base64: resized.split(',')[1] ?? '', mediaType: 'image/jpeg' });
+        };
+        img.src = reader.result as string;
+      };
+      reader.readAsDataURL(file);
+    });
+
+  // Sugerencia de IA (ia-aplicada.md §2.2): solo pre-llena digitizePassengers
+  // para revisar -- nunca guarda nada por su cuenta. Nunca pisa un asiento
+  // ya agregado a mano o por una foto anterior en esta misma sesion.
+  const handleAiPhoto = async (file: File) => {
+    if (!digitizing) return;
+    setAiSuggesting(true);
+    setAiSummary('');
+    setActionError('');
+    try {
+      const { base64, mediaType } = await fileToResizedBase64(file);
+      const result = await digitizeSuggest(digitizing.id, base64, mediaType);
+      const stagedSeats = new Set(digitizePassengers.map(p => p.seat));
+      const toAdd = result.suggested.filter(p => !stagedSeats.has(p.seat));
+      setDigitizePassengers(prev => [
+        ...prev,
+        ...toAdd.map((p, i) => ({ ...p, id: `local-ai-${prev.length + i}-${Date.now()}` })),
+      ]);
+      const skippedTotal = result.skipped + (result.suggested.length - toAdd.length);
+      setAiSummary(
+        `La IA leyó ${result.total} fila(s) de la foto: ${toAdd.length} agregada(s) para revisar` +
+        (skippedTotal > 0 ? `, ${skippedTotal} omitida(s) por no ser legibles o ya estar ocupadas — agrégalas a mano si hace falta` : '') +
+        '. Revisa la lista antes de guardar.',
+      );
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo leer la foto con IA');
+    } finally {
+      setAiSuggesting(false);
     }
   };
 
@@ -1446,7 +1522,7 @@ function DriverManifest() {
         plate: source.plate,
         model: source.vehicleType,
         capacity: source.capacity,
-        association: user?.org || 'ATIPCAR',
+        association: org?.name ?? 'Sin dato',
         company: source.company || company,
         driver: profile?.name ?? user?.name ?? 'Sin dato',
         dni: profile?.dni ?? 'No registrado',
@@ -1469,24 +1545,52 @@ function DriverManifest() {
   if (digitizing) {
     const totalStaged = digitizePassengers.reduce((s, p) => s + p.fare, 0);
     return (
-      <div className="p-4 sm:p-6 lg:p-8 space-y-6">
+      <div className="p-4 sm:p-6 lg:p-8 max-w-4xl space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-t1">Completar manifiesto — {digitizing.number}</h1>
-            <p className="text-sm text-t2 mt-0.5">
-              {routeLabel(digitizing.route)} · Respaldo en papel pendiente de digitalizar
-              {digitizing.passengers.length > 0 && ` · ya tiene ${digitizing.passengers.length} pasajero(s) cargado(s), agrega los que faltan del papel`}
-            </p>
+            <h1 className="text-base font-semibold text-t1">Completar manifiesto — {digitizing.number}</h1>
+            <p className="text-xs text-t2 mt-0.5">{routeLabel(digitizing.route)} · Respaldo en papel pendiente de digitalizar</p>
           </div>
-          <button onClick={() => { setDigitizing(null); setDigitizePassengers([]); }} className="text-muted hover:text-t1" aria-label="Cancelar"><X size={18} /></button>
+          <button onClick={() => { setDigitizing(null); setDigitizePassengers([]); setAiSummary(''); }} className="text-muted hover:text-t1" aria-label="Cancelar"><X size={18} /></button>
         </div>
 
-        {actionError && <div className="bg-danger/10 text-danger text-sm px-3 py-2.5 rounded-lg flex items-center gap-2"><AlertCircle size={13} /> {actionError}</div>}
+        <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <p className="text-sm font-medium text-t1">Digitalizar con foto (IA)</p>
+            <p className="text-xs text-t2 mt-0.5">Sube una foto del papel y la IA pre-llena nombres, asientos y tarifas — siempre revisas y confirmas antes de guardar.</p>
+            {aiSummary && <p className="text-xs text-t1 mt-1.5">{aiSummary}</p>}
+          </div>
+          <button
+            onClick={() => aiFileInputRef.current?.click()}
+            disabled={aiSuggesting}
+            className="h-9 px-4 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h disabled:opacity-50 flex items-center gap-2 shrink-0"
+          >
+            {aiSuggesting ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+            {aiSuggesting ? 'Leyendo…' : 'Subir foto'}
+          </button>
+          <input
+            ref={aiFileInputRef}
+            type="file"
+            accept="image/*"
+            // Sin "capture": asi el celular muestra el selector nativo
+            // completo (Camara / Galeria / Archivos) en vez de saltar
+            // directo a la camara -- a veces la foto del papel ya la
+            // tomaron antes, o la luz del momento no ayuda.
+            hidden
+            onChange={e => {
+              const f = e.target.files?.[0];
+              e.target.value = '';
+              if (f) handleAiPhoto(f);
+            }}
+          />
+        </div>
+
+        {actionError && <div className="bg-danger/10 text-danger text-xs px-3 py-2 rounded-lg flex items-center gap-2"><AlertCircle size={13} /> {actionError}</div>}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 lg:gap-6">
           <PassengerSeatForm
             vehicleType={digitizing.vehicleType}
-            occupiedSeats={[...digitizing.passengers.map(p => p.seat), ...digitizePassengers.map(p => p.seat)]}
+            occupiedSeats={digitizePassengers.map(p => p.seat)}
             defaultOrigin={originFor(digitizing.route)}
             defaultDestination={destinationFor(digitizing.route)}
             onSubmit={p => { setDigitizePassengers(prev => [...prev, { ...p, id: `local-${prev.length}-${Date.now()}` }]); }}
@@ -1497,12 +1601,12 @@ function DriverManifest() {
             {digitizePassengers.length > 0 && (
               <div className="bg-surface border border-border rounded-lg overflow-hidden">
                 <div className="px-3 py-2 bg-bg border-b border-border flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-t2">Pasajeros del respaldo en papel ({digitizePassengers.length})</h3>
-                  <span className="text-sm font-medium text-ok">S/ {totalStaged}</span>
+                  <h3 className="text-xs font-semibold text-t2">Pasajeros del respaldo en papel ({digitizePassengers.length})</h3>
+                  <span className="text-xs font-medium text-ok">S/ {totalStaged}</span>
                 </div>
                 <div className="overflow-auto max-h-64">
                   {digitizePassengers.map((p, i) => (
-                    <div key={p.id} className="flex items-center gap-2 px-3 py-2 border-b border-border last:border-0 text-sm">
+                    <div key={p.id} className="flex items-center gap-2 px-3 py-2 border-b border-border last:border-0 text-xs">
                       <span className="w-8 font-mono font-medium text-t1">{String(p.seat).padStart(2, '0')}</span>
                       <span className="flex-1 text-t1">{p.name}</span>
                       <span className="text-t2 font-mono">{p.dni}</span>
@@ -1520,7 +1624,7 @@ function DriverManifest() {
             >
               <CheckCircle size={14} /> {digitizeSaving ? 'Guardando…' : 'Guardar y completar manifiesto'}
             </button>
-            <p className="text-sm text-t2">Se guarda todo junto al confirmar — puedes agregar o quitar pasajeros de la lista antes de guardar.</p>
+            <p className="text-[11px] text-t2">Se guarda todo junto al confirmar — puedes agregar o quitar pasajeros de la lista antes de guardar.</p>
           </div>
         </div>
       </div>
@@ -1538,17 +1642,17 @@ function DriverManifest() {
   };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 space-y-6">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-4xl space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-t1">Manifiesto activo</h1>
-          <p className="text-sm text-t2 mt-0.5">
+          <h1 className="text-base font-semibold text-t1">Manifiesto activo</h1>
+          <p className="text-xs text-t2 mt-0.5">
             {justClosed
               ? `${justClosed.number} · ${routeLabel(justClosed.route)} · cerrado`
               : activeManifest
                 ? `${activeManifest.number} · ${routeLabel(activeManifest.route)} · ${activeManifest.departureTime}`
                 : myTrip
-                  ? `${myTrip.status === 'ACTIVO' ? 'Viaje activo' : 'Viaje preparado (aún no sale)'} código ${myTrip.code} · ${routeLabel(myTrip.route)} · sin manifiesto abierto`
+                  ? `Viaje activo código ${myTrip.code} · ${routeLabel(myTrip.route)} · sin manifiesto abierto`
                   : 'Sin viaje activo'}
           </p>
         </div>
@@ -1571,21 +1675,34 @@ function DriverManifest() {
                 <span className="flex items-center gap-2 text-sm text-ok bg-ok/10 px-3 py-2 rounded-lg">
                   <CheckCircle size={14} /> Manifiesto cerrado
                 </span>
-                {lastDownloadAt && <p className="text-sm text-t2 mt-1">Última descarga: {formatManifestDateTime(lastDownloadAt)}</p>}
+                {lastDownloadAt && <p className="text-[11px] text-t2 mt-1">Última descarga: {formatManifestDateTime(lastDownloadAt)}</p>}
               </div>
               <button disabled={downloading} onClick={() => downloadManifest(justClosed)} className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg text-sm font-medium text-t1 hover:bg-hover disabled:opacity-50">
                 {downloading ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
                 {downloading ? 'Generando PDF…' : 'Descargar PDF verificable'}
               </button>
-              <button onClick={() => setJustClosed(null)} className="px-3 py-2 text-sm font-medium text-t2 border border-border rounded-lg hover:bg-hover transition-colors">Volver</button>
+              {myTrip?.status === 'ACTIVO' ? (
+                <span className="flex items-center gap-2 text-sm text-ok bg-ok/10 px-3 py-2 rounded-lg">
+                  <ArrowRight size={14} /> Salida marcada — viaje en curso
+                </span>
+              ) : (
+                <button
+                  disabled={departing || !myEntryId}
+                  onClick={handleDepart}
+                  className="flex items-center gap-2 px-3 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h disabled:opacity-50"
+                >
+                  <ArrowRight size={14} /> {departing ? 'Marcando salida…' : 'Marcar salida'}
+                </button>
+              )}
+              <button onClick={() => setJustClosed(null)} className="text-xs text-t2 hover:text-t1 underline">Volver</button>
             </div>
           )}
         </div>
       </div>
 
-      {loadError && <div className="bg-danger/10 text-danger text-sm px-3 py-2.5 rounded-lg flex items-center gap-2"><AlertCircle size={13} /> {loadError}</div>}
-      {actionError && <div className="bg-danger/10 text-danger text-sm px-3 py-2.5 rounded-lg flex items-center gap-2"><AlertCircle size={13} /> {actionError}</div>}
-      {loading && <div className="text-sm text-t2 flex items-center gap-2"><Loader2 size={13} className="animate-spin" /> Cargando…</div>}
+      {loadError && <div className="bg-danger/10 text-danger text-xs px-3 py-2 rounded-lg flex items-center gap-2"><AlertCircle size={13} /> {loadError}</div>}
+      {actionError && <div className="bg-danger/10 text-danger text-xs px-3 py-2 rounded-lg flex items-center gap-2"><AlertCircle size={13} /> {actionError}</div>}
+      {loading && <div className="text-xs text-t2 flex items-center gap-2"><Loader2 size={13} className="animate-spin" /> Cargando…</div>}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         {[
@@ -1594,9 +1711,9 @@ function DriverManifest() {
           { label: 'Total', value: `S/ ${totalRevenue}` },
           { label: 'Libres', value: Math.max(capacity - passengers.length, 0) },
         ].map(item => (
-          <div key={item.label} className="bg-surface border border-border rounded-lg px-4 py-3.5 text-center">
-            <div className="text-2xl font-bold text-t1">{item.value}</div>
-            <div className="text-sm text-t2">{item.label}</div>
+          <div key={item.label} className="bg-surface border border-border rounded-lg px-4 py-3 text-center">
+            <div className="text-xl font-bold text-t1">{item.value}</div>
+            <div className="text-xs text-t2">{item.label}</div>
           </div>
         ))}
       </div>
@@ -1614,7 +1731,7 @@ function DriverManifest() {
           />
           <div className="space-y-4">
             <div className="bg-surface border border-border rounded-lg p-4">
-              <h3 className="text-base font-medium text-t1 mb-3">Recaudación por método</h3>
+              <h3 className="text-sm font-medium text-t1 mb-3">Recaudación por método</h3>
               <div className="space-y-2">
                 {Object.entries(byMethod).map(([method, amount]) => (
                   <div key={method} className="flex items-center justify-between text-sm">
@@ -1631,11 +1748,11 @@ function DriverManifest() {
             {passengers.length > 0 && (
               <div className="bg-surface border border-border rounded-lg overflow-hidden">
                 <div className="px-3 py-2 bg-bg border-b border-border">
-                  <h3 className="text-sm font-semibold text-t2">Pasajeros registrados</h3>
+                  <h3 className="text-xs font-semibold text-t2">Pasajeros registrados</h3>
                 </div>
                 <div className="overflow-auto max-h-48">
                   {passengers.map(p => (
-                    <div key={p.id} className="flex items-center gap-2 px-3 py-2 border-b border-border last:border-0 text-sm">
+                    <div key={p.id} className="flex items-center gap-2 px-3 py-2 border-b border-border last:border-0 text-xs">
                       <span className="w-8 font-mono font-medium text-t1">{String(p.seat).padStart(2, '0')}</span>
                       <span className="flex-1 text-t1">{p.name}</span>
                       <span className="text-t2 font-mono">{p.dni}</span>
@@ -1649,48 +1766,11 @@ function DriverManifest() {
         </div>
       )}
 
-      {!justClosed && myTrip?.status === 'ACTIVO' && (
-        <div className="bg-ok/5 border border-ok/20 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-ok">Viaje en curso — código {myTrip.code}</p>
-            <p className="text-sm text-t2 mt-0.5">
-              {routeLabel(myTrip.route)}
-              {etaMinutes !== null && (etaMinutes > 0 ? ` · llegada estimada en ${etaMinutes} min` : ' · llegada estimada ya superada')}
-            </p>
-          </div>
-          <button
-            onClick={handleArrive}
-            disabled={arriving}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-ok text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 flex-shrink-0"
-          >
-            <MapPin size={14} /> {arriving ? 'Marcando llegada…' : 'Marcar llegada'}
-          </button>
-        </div>
-      )}
-
-      {myTrip?.status === 'PROGRAMADO' && activeManifest?.status === 'CERRADO' && (
-        <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-t1">Manifiesto cerrado — listo para salir</p>
-            <p className="text-sm text-t2 mt-0.5">Al marcar salida se registra la hora real y empieza el conteo de llegada estimada.</p>
-          </div>
-          <button
-            onClick={handleDepart}
-            disabled={departing}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h disabled:opacity-50 flex-shrink-0"
-          >
-            <ArrowRight size={14} /> {departing ? 'Marcando salida…' : 'Marcar salida'}
-          </button>
-        </div>
-      )}
-
-      {!justClosed && !activeManifest && myTrip && (
+      {!justClosed && !activeManifest && myTrip && !myTrip.manifestId && (
         <div className="bg-surface border border-border rounded-lg p-6 text-center space-y-3">
           <FileCheck size={28} className="mx-auto text-primary" />
-          <p className="text-sm text-t1 font-medium">
-            {myTrip.status === 'ACTIVO' ? 'Viaje en curso' : 'Viaje preparado'} — código {myTrip.code} · {routeLabel(myTrip.route)}
-          </p>
-          <p className="text-sm text-t2">Abre el manifiesto para empezar a registrar pasajeros.</p>
+          <p className="text-sm text-t1 font-medium">Viaje en curso — código {myTrip.code} · {routeLabel(myTrip.route)}</p>
+          <p className="text-xs text-t2">Abre el manifiesto para empezar a registrar pasajeros.</p>
           <button
             onClick={handleOpenManifest}
             disabled={openingManifest}
@@ -1701,45 +1781,49 @@ function DriverManifest() {
         </div>
       )}
 
-      {!justClosed && !myTrip && myReadyEntry && (
+      {!justClosed && !activeManifest && myTrip && myTrip.manifestId && (
         <div className="bg-surface border border-border rounded-lg p-6 text-center space-y-3">
-          <FileCheck size={28} className="mx-auto text-primary" />
-          <p className="text-sm text-t1 font-medium">Unidad {myReadyEntry.code} — prepara tu manifiesto</p>
-          <p className="text-sm text-t2">Prepara tu manifiesto antes de marcar salida.</p>
-          <button
-            onClick={handlePrepareTrip}
-            disabled={preparingTrip}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h disabled:opacity-50"
-          >
-            <Plus size={14} /> {preparingTrip ? 'Preparando…' : 'Preparar manifiesto'}
-          </button>
+          <CheckCircle size={28} className="mx-auto text-ok" />
+          <div>
+            <p className="text-sm text-t1 font-medium">
+              {myTrip.status === 'ACTIVO' ? 'Viaje en curso' : 'Manifiesto preparado'} — código {myTrip.code} · {routeLabel(myTrip.route)}
+            </p>
+            <p className="text-xs text-t2 mt-1">
+              El manifiesto de este viaje ya está cerrado{myTrip.status === 'ACTIVO' ? '.' : ' — marca salida cuando estés listo para partir.'}
+            </p>
+          </div>
+          {myTrip.status === 'PROGRAMADO' && (
+            <button
+              disabled={departing || !myEntryId}
+              onClick={handleDepart}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h disabled:opacity-50"
+            >
+              <ArrowRight size={14} /> {departing ? 'Marcando salida…' : 'Marcar salida'}
+            </button>
+          )}
         </div>
       )}
 
-      {!justClosed && !myTrip && !myReadyEntry && (
+      {!justClosed && !myTrip && (
         <div className="bg-surface border border-border rounded-lg p-6 text-center">
-          <p className="text-sm text-t2">
-            {myQueueEntry
-              ? `Tu unidad ${myQueueEntry.code} está ${QUEUE_STATUS_LABEL[myQueueEntry.status] ?? myQueueEntry.status.toLowerCase()}. El manifiesto se habilita en cuanto te llamen.`
-              : 'No tienes un viaje activo en este momento. Sal de la cola para comenzar un viaje y poder abrir tu manifiesto.'}
-          </p>
+          <p className="text-sm text-t2">No tienes un viaje activo en este momento. Sal de la cola para comenzar un viaje y poder abrir tu manifiesto.</p>
         </div>
       )}
 
       {pendingManifests.length > 0 && (
         <div className="bg-warn/5 border border-warn/30 rounded-lg p-4 space-y-3">
-          <h3 className="text-base font-medium text-t1 flex items-center gap-2"><AlertCircle size={14} className="text-warn" /> Manifiestos pendientes de completar</h3>
-          <p className="text-sm text-t2">Se cerraron con respaldo en papel (vacíos o con pasajeros que faltaron por digitalizar) — complétalos con los datos del papel cuanto antes.</p>
+          <h3 className="text-sm font-medium text-t1 flex items-center gap-2"><AlertCircle size={14} className="text-warn" /> Manifiestos pendientes de completar</h3>
+          <p className="text-xs text-t2">Se cerraron vacíos con respaldo en papel — complétalos con los datos del papel cuanto antes.</p>
           <div className="space-y-2">
             {pendingManifests.map(m => (
-              <div key={m.id} className="flex items-center justify-between bg-surface border border-border rounded-lg px-3 py-2.5">
+              <div key={m.id} className="flex items-center justify-between bg-surface border border-border rounded-lg px-3 py-2">
                 <div>
                   <p className="text-sm text-t1 font-medium">{m.number}</p>
-                  <p className="text-sm text-t2">{routeLabel(m.route)} · {m.date} · {m.departureTime}</p>
+                  <p className="text-xs text-t2">{routeLabel(m.route)} · {m.date} · {m.departureTime}</p>
                 </div>
                 <button
                   onClick={() => { setDigitizing(m); setDigitizePassengers([]); }}
-                  className="px-3 py-1.5 text-sm bg-warn text-white rounded-lg hover:bg-warn/90"
+                  className="px-3 py-1.5 text-xs bg-warn text-white rounded hover:bg-warn/90"
                 >
                   Completar
                 </button>
@@ -1752,20 +1836,11 @@ function DriverManifest() {
       {showCloseConfirm && activeManifest && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true">
           <div className="bg-surface rounded-lg shadow-xl w-full max-w-sm p-6">
-            <h3 className="text-base font-semibold text-t1 mb-2">Cerrar manifiesto</h3>
+            <h3 className="text-sm font-semibold text-t1 mb-2">Cerrar manifiesto</h3>
             <p className="text-sm text-t2 mb-4">{passengers.length} pasajeros · S/ {totalRevenue} recaudados. El manifiesto cerrado no se modifica.</p>
-            <label className="flex items-start gap-2 text-sm text-t1 mb-4 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={partialPaperBackup}
-                onChange={e => setPartialPaperBackup(e.target.checked)}
-                className="mt-0.5"
-              />
-              <span>Me quedaron pasajeros anotados solo en papel (por cúmulo de gente u otro motivo) — marcar como pendiente de completar cuando llegue a destino</span>
-            </label>
             <div className="flex gap-3 justify-end">
               <button onClick={() => setShowCloseConfirm(false)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-hover">Cancelar</button>
-              <button onClick={() => doClose(partialPaperBackup)} disabled={closingManifest} className="px-4 py-2 text-sm bg-ok text-white rounded-lg hover:opacity-90 disabled:opacity-50">
+              <button onClick={() => doClose(false)} disabled={closingManifest} className="px-4 py-2 text-sm bg-ok text-white rounded-lg hover:opacity-90 disabled:opacity-50">
                 {closingManifest ? 'Cerrando…' : 'Confirmar cierre'}
               </button>
             </div>
@@ -1776,8 +1851,15 @@ function DriverManifest() {
       {showPaperBackup && activeManifest && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true">
           <div className="bg-surface rounded-lg shadow-xl w-full max-w-sm p-6">
-            <h3 className="text-base font-semibold text-t1 mb-2">Manifiesto sin pasajeros</h3>
-            <p className="text-sm text-t2 mb-4">No has registrado pasajeros. Solo puedes cerrarlo vacío si existe el respaldo físico en papel que los pasajeros llenaron. Más tarde tendrás que completarlo desde "Manifiestos pendientes".</p>
+            <h3 className="text-sm font-semibold text-t1 mb-2">
+              {activeManifest.passengers.length === 0 ? 'Manifiesto sin pasajeros' : 'Manifiesto incompleto'}
+            </h3>
+            <p className="text-sm text-t2 mb-4">
+              {activeManifest.passengers.length === 0
+                ? 'No has registrado pasajeros.'
+                : `Solo registraste ${activeManifest.passengers.length} de ${activeManifest.capacity} pasajeros.`}
+              {' '}Solo puedes cerrarlo así si existe el respaldo físico en papel que los pasajeros llenaron. Más tarde tendrás que completarlo desde "Manifiestos pendientes".
+            </p>
             <div className="flex gap-3 justify-end">
               <button onClick={() => setShowPaperBackup(false)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-hover">Cancelar</button>
               <button onClick={() => doClose(true)} disabled={closingManifest} className="px-4 py-2 text-sm bg-warn text-white rounded-lg hover:opacity-90 disabled:opacity-50">
@@ -1793,287 +1875,16 @@ function DriverManifest() {
   );
 }
 
-// ─── Mis viajes ───────────────────────────────────────────────────────────────
-type TripPeriod = 'hoy' | '7dias' | 'mes' | 'personalizado';
-type TripRoute = 'todas' | 'JULI_PUNO' | 'PUNO_JULI';
-type TripStatusFilter = 'todos' | 'EN_RUTA' | 'COMPLETADO' | 'CANCELADO' | 'CON_INCIDENCIA';
-
-interface TripRow {
-  id: string;
-  date: string;
-  route: RouteDir;
-  departure: string;
-  arrival: string;
-  passengers: number;
-  efectivo: number;
-  yape: number;
-  plin: number;
-  status: 'EN_RUTA' | 'COMPLETADO' | 'CON_INCIDENCIA' | 'CANCELADO';
-  manifest: string;
-}
-
-const TRIP_STATUS_MAP: Record<string, TripRow['status']> = {
-  PROGRAMADO: 'EN_RUTA',
-  ACTIVO: 'EN_RUTA',
-  COMPLETADO: 'COMPLETADO',
-  CON_INCIDENCIA: 'CON_INCIDENCIA',
-};
-
-function sumFares(passengers: Passenger[] | undefined, method: PaymentMethod) {
-  return (passengers ?? []).filter(p => p.paymentMethod === method).reduce((s, p) => s + p.fare, 0);
-}
-
+// ─── Mis viajes / produccion ────────────────────────────────────────────────
+// Reporte compartido con el Socio (12 sept 2026, decidido con Jayde) -- ver
+// ProductionReportView.tsx para el porque: el conductor rinde cuentas con
+// esto, el socio controla con el MISMO calculo.
 function DriverTrips() {
-  const { route, code, profile, org } = useDriverContext();
-  const [period, setPeriod] = useState<TripPeriod>('7dias');
-  const [routeFilter, setRouteFilter] = useState<TripRoute>(route as TripRoute);
-  const [statusFilter, setStatusFilter] = useState<TripStatusFilter>('todos');
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const sevenDaysAgoStr = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const [dateFrom, setDateFrom] = useState(sevenDaysAgoStr);
-  const [dateTo, setDateTo] = useState(todayStr);
-  const [downloadMsg, setDownloadMsg] = useState('');
-  const [downloadsOpen, setDownloadsOpen] = useState(false);
-  const [trips, setTrips] = useState<TripRow[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([fetchTrips(), fetchManifests()])
-      .then(([allTrips, allManifests]) => {
-        if (cancelled) return;
-        const manifestById = new Map(allManifests.map(m => [m.id, m]));
-        const rows: TripRow[] = allTrips
-          .filter(t => t.code === code)
-          .map(t => {
-            const manifest = t.manifestId ? manifestById.get(t.manifestId) : undefined;
-            return {
-              id: t.id,
-              date: (t.scheduledDepartureISO ?? '').slice(0, 10),
-              route: t.route,
-              departure: t.scheduledDeparture,
-              arrival: t.actualArrival ?? t.scheduledArrival ?? '—',
-              passengers: manifest?.passengers.length ?? 0,
-              efectivo: sumFares(manifest?.passengers, 'EFECTIVO'),
-              yape: sumFares(manifest?.passengers, 'YAPE'),
-              plin: sumFares(manifest?.passengers, 'PLIN'),
-              status: TRIP_STATUS_MAP[t.status] ?? 'EN_RUTA',
-              manifest: manifest?.number ?? '—',
-            };
-          });
-        setTrips(rows);
-      })
-      .catch(() => { /* se degrada a lista vacia mientras tanto */ });
-    return () => { cancelled = true; };
-  }, [code]);
-
-  const filtered = trips.filter(t => {
-    if (routeFilter !== 'todas' && t.route !== routeFilter) return false;
-    if (statusFilter !== 'todos' && t.status !== statusFilter) return false;
-    if (period === 'hoy') return t.date === todayStr;
-    if (period === '7dias') return t.date >= sevenDaysAgoStr;
-    if (period === 'mes') return t.date >= todayStr.slice(0, 7) + '-01';
-    if (period === 'personalizado') return t.date >= dateFrom && t.date <= dateTo;
-    return true;
-  });
-
-  const report = {
-    vueltas: filtered.filter(t => t.status === 'COMPLETADO' || t.status === 'EN_RUTA').length,
-    pasajeros: filtered.reduce((s, t) => s + t.passengers, 0),
-    efectivo: filtered.reduce((s, t) => s + t.efectivo, 0),
-    yape: filtered.reduce((s, t) => s + t.yape, 0),
-    plin: filtered.reduce((s, t) => s + t.plin, 0),
-    total: filtered.reduce((s, t) => s + t.efectivo + t.yape + t.plin, 0),
-  };
-
-  const handleDownload = (fmt: 'PDF' | 'CSV') => {
-    const routeName = routeFilter === 'todas' ? 'Todas' : routeLabel(routeFilter, org).replace(' → ', ' - ');
-    const fileBase = 'reporte-viajes-' + code.toLowerCase();
-    if (fmt === 'CSV') {
-      const header = 'Fecha,Ruta,Salida,Llegada,Pasajeros,Efectivo,Yape,Plin,Total,Estado,Manifiesto';
-      const rows = filtered.map(t => [
-        t.date,
-        t.route,
-        t.departure,
-        t.arrival,
-        t.passengers,
-        t.efectivo,
-        t.yape,
-        t.plin,
-        t.efectivo + t.yape + t.plin,
-        t.status,
-        t.manifest,
-      ].join(','));
-      downloadBrowserFile(new Blob([[header, ...rows].join('\n')], { type: 'text/csv;charset=utf-8' }), fileBase + '.csv');
-    } else {
-      const lines = [
-        `${(org?.name || 'ASOCIACION').toUpperCase()} - REPORTE DE VIAJES`,
-        'Conductor: ' + (profile?.name ?? 'Sin dato'),
-        'Unidad: ' + code,
-        'Ruta filtrada: ' + routeName,
-        'Periodo: ' + period,
-        '',
-        ...filtered.map(t => t.date + ' | ' + routeLabel(t.route, org).replace(' → ', '-') + ' | ' + t.departure + '-' + t.arrival + ' | ' + t.passengers + ' pasajeros | S/ ' + (t.efectivo + t.yape + t.plin) + ' | ' + t.status),
-        '',
-        'Vueltas: ' + report.vueltas,
-        'Pasajeros: ' + report.pasajeros,
-        'Recaudacion total: S/ ' + report.total,
-      ];
-      downloadBrowserFile(createPdfBlob(lines), fileBase + '.pdf');
-    }
-    setDownloadsOpen(false);
-    setDownloadMsg('Descarga ' + fmt + ' iniciada');
-    setTimeout(() => setDownloadMsg(''), 3000);
-  };
-
+  const { code, profile, org } = useDriverContext();
   return (
-    <div className="p-6 lg:p-8 space-y-5">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-2xl font-bold text-t1">Mis viajes</h1>
-        <div className="flex items-center gap-2">
-          {downloadMsg && <span className="text-sm text-ok">{downloadMsg}</span>}
-          <div className="relative group">
-            <button onClick={() => setDownloadsOpen(open => !open)} aria-expanded={downloadsOpen} className="flex items-center gap-1.5 px-3 py-2 border border-border rounded-lg text-sm text-t1 hover:bg-hover">
-              <Download size={14} /> Descargar reporte
-            </button>
-            <div className={`absolute right-0 mt-1 w-36 bg-surface border border-border rounded-lg shadow-lg z-10 py-1 ${downloadsOpen ? 'block' : 'hidden'}`}>
-              <button onClick={() => handleDownload('PDF')} className="w-full text-left px-3 py-2 text-sm hover:bg-hover">Descargar PDF</button>
-              <button onClick={() => handleDownload('CSV')} className="w-full text-left px-3 py-2 text-sm hover:bg-hover">Descargar CSV</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="bg-surface border border-border rounded-lg p-4 space-y-3">
-        <div className="flex items-center gap-2 text-sm font-medium text-t2">
-          <Filter size={13} /> Filtros
-        </div>
-        <div className="flex flex-wrap gap-3 items-end">
-          {/* Period */}
-          <div>
-            <label className="block text-xs text-muted mb-1">Periodo</label>
-            <div className="flex gap-1">
-              {([['hoy', 'Hoy'], ['7dias', 'Últ. 7 días'], ['mes', 'Este mes'], ['personalizado', 'Personalizado']] as [TripPeriod, string][]).map(([v, l]) => (
-                <button
-                  key={v}
-                  onClick={() => setPeriod(v)}
-                  className={`px-2.5 py-1.5 text-sm rounded-lg border transition-colors ${period === v ? 'bg-primary text-white border-primary' : 'border-border text-t2 hover:bg-hover'}`}
-                >
-                  {l}
-                </button>
-              ))}
-            </div>
-          </div>
-          {/* Route */}
-          <div>
-            <label className="block text-xs text-muted mb-1">Ruta</label>
-            <select
-              value={routeFilter}
-              onChange={e => setRouteFilter(e.target.value as TripRoute)}
-              className="h-9 px-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-            >
-              <option value="todas">Todas</option>
-              <option value="JULI_PUNO">{routeLabel('JULI_PUNO', org)}</option>
-              <option value="PUNO_JULI">{routeLabel('PUNO_JULI', org)}</option>
-            </select>
-          </div>
-          {/* Status */}
-          <div>
-            <label className="block text-xs text-muted mb-1">Estado</label>
-            <select
-              value={statusFilter}
-              onChange={e => setStatusFilter(e.target.value as TripStatusFilter)}
-              className="h-9 px-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-            >
-              <option value="todos">Todos</option>
-              <option value="EN_RUTA">En ruta</option>
-              <option value="COMPLETADO">Completado</option>
-              <option value="CANCELADO">Cancelado</option>
-              <option value="CON_INCIDENCIA">Con incidencia</option>
-            </select>
-          </div>
-          {/* Date range for personalizado */}
-          {period === 'personalizado' && (
-            <>
-              <div>
-                <label className="block text-xs text-muted mb-1">Desde</label>
-                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-                  className="h-9 px-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary" />
-              </div>
-              <div>
-                <label className="block text-xs text-muted mb-1">Hasta</label>
-                <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-                  className="h-9 px-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary" />
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Mini-report */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        {[
-          { label: 'Vueltas', value: report.vueltas, cls: 'text-t1' },
-          { label: 'Pasajeros', value: report.pasajeros, cls: 'text-t1' },
-          { label: 'Efectivo', value: `S/ ${report.efectivo}`, cls: 'text-t1' },
-          { label: 'Yape', value: `S/ ${report.yape}`, cls: 'text-t1' },
-          { label: 'Plin', value: `S/ ${report.plin}`, cls: 'text-t1' },
-          { label: 'Recaudación bruta', value: `S/ ${report.total}`, cls: 'text-ok font-semibold' },
-        ].map(stat => (
-          <div key={stat.label} className="bg-surface border border-border rounded-lg px-3 py-3.5 text-center">
-            <p className={`text-xl font-bold ${stat.cls}`}>{stat.value}</p>
-            <p className="text-sm text-t2 mt-0.5 leading-tight">{stat.label}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Table */}
-      <div className="bg-surface border border-border rounded-lg overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm" aria-label="Tabla de viajes">
-            <thead>
-              <tr className="border-b border-border bg-bg">
-                <th className="text-left px-3 py-2.5 text-t2 font-medium whitespace-nowrap">Fecha</th>
-                <th className="text-left px-3 py-2.5 text-t2 font-medium whitespace-nowrap">Ruta</th>
-                <th className="text-left px-3 py-2.5 text-t2 font-medium whitespace-nowrap">Salida</th>
-                <th className="text-left px-3 py-2.5 text-t2 font-medium whitespace-nowrap">Llegada</th>
-                <th className="text-right px-3 py-2.5 text-t2 font-medium whitespace-nowrap">Pas.</th>
-                <th className="text-right px-3 py-2.5 text-t2 font-medium whitespace-nowrap">Efectivo</th>
-                <th className="text-right px-3 py-2.5 text-t2 font-medium whitespace-nowrap">Yape</th>
-                <th className="text-right px-3 py-2.5 text-t2 font-medium whitespace-nowrap">Plin</th>
-                <th className="text-right px-3 py-2.5 text-t2 font-medium whitespace-nowrap">Total</th>
-                <th className="text-left px-3 py-2.5 text-t2 font-medium whitespace-nowrap">Estado</th>
-                <th className="text-left px-3 py-2.5 text-t2 font-medium whitespace-nowrap">Manifiesto</th>
-                <th className="px-3 py-2.5 text-t2 font-medium whitespace-nowrap">Acción</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={12} className="px-4 py-8 text-center text-t2">Sin viajes con los filtros seleccionados</td>
-                </tr>
-              ) : filtered.map(t => (
-                <tr key={t.id} className="border-b border-border last:border-0 hover:bg-hover/50">
-                  <td className="px-3 py-2.5 font-mono text-t2 whitespace-nowrap">{t.date.slice(5)}</td>
-                  <td className="px-3 py-2.5 text-t1 whitespace-nowrap">{routeLabel(t.route, org)}</td>
-                  <td className="px-3 py-2.5 font-mono text-t2">{t.departure}</td>
-                  <td className="px-3 py-2.5 font-mono text-t2">{t.status === 'EN_RUTA' ? '—' : t.arrival}</td>
-                  <td className="px-3 py-2.5 text-right text-t1">{t.passengers}</td>
-                  <td className="px-3 py-2.5 text-right text-t1">S/{t.efectivo}</td>
-                  <td className="px-3 py-2.5 text-right text-t1">S/{t.yape}</td>
-                  <td className="px-3 py-2.5 text-right text-t1">S/{t.plin}</td>
-                  <td className="px-3 py-2.5 text-right font-semibold text-ok">S/{t.efectivo + t.yape + t.plin}</td>
-                  <td className="px-3 py-2.5">{statusBadge(t.status)}</td>
-                  <td className="px-3 py-2.5 font-mono text-muted text-sm">{t.manifest}</td>
-                  <td className="px-3 py-2.5">
-                    <button className="px-2.5 py-1 text-xs font-medium text-primary border border-primary/30 rounded-lg hover:bg-primary/5 transition-colors">Ver</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+    <div className="p-6 lg:p-8">
+      <h1 className="text-base font-semibold text-t1 mb-5">Mis viajes / Producción</h1>
+      <ProductionReportView code={code} orgName={org?.name} personName={profile?.name} personLabel="Conductor" />
     </div>
   );
 }
@@ -2105,88 +1916,118 @@ function docStatusStyle(s: DocStatus) {
 }
 
 function DriverGPS() {
-  const { code, unit, company, profile } = useDriverContext();
+  const { code, unit, company, profile, org } = useDriverContext();
   const [view, setView] = useState<'actual' | 'actividad'>('actual');
   const [notice, setNotice] = useState('');
+  const [position, setPosition] = useState<LiveVehiclePosition | null>(null);
+  const [device, setDevice] = useState<VehicleGpsStatus | null>(null);
+  const [history, setHistory] = useState<GpsHistoryPoint[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const activity = [
-    { date: '29/08/2026', route: 'Juli → Puno', start: '06:42', end: '08:18', km: '84 km', stops: '2', status: 'Completado' },
-    { date: '28/08/2026', route: 'Puno → Juli', start: '14:08', end: '15:46', km: '86 km', stops: '3', status: 'Completado' },
-    { date: '27/08/2026', route: 'Juli → Puno', start: '07:01', end: '08:39', km: '85 km', stops: '2', status: 'Completado' },
-  ];
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([fetchGpsLive(), fetchGpsDevices()])
+      .then(([positions, devices]) => {
+        if (cancelled) return;
+        setPosition(positions[0] ?? null);
+        setDevice(devices[0] ?? null);
+      })
+      .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'No se pudo cargar el GPS.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
-  const report = (message: string) => {
-    setNotice(message);
-    setTimeout(() => setNotice(''), 3500);
+  useEffect(() => {
+    if (view !== 'actividad' || !unit?.id) return;
+    let cancelled = false;
+    const to = new Date();
+    const from = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    fetchGpsHistory(unit.id, from.toISOString(), to.toISOString())
+      .then(points => { if (!cancelled) setHistory(points); })
+      .catch(() => { /* se degrada a lista vacia */ });
+    return () => { cancelled = true; };
+  }, [view, unit?.id]);
+
+  const [reportBusy, setReportBusy] = useState<'BOTON_PANICO' | 'FALLA_REPORTADA' | null>(null);
+
+  // Antes esto solo mostraba un mensaje local ("registrado") sin avisar a
+  // nadie (12 sept 2026, corregido) -- ahora crea una GpsAlert real, visible
+  // al toque en el banner de Admin/Socio y en "Alertas GPS".
+  const report = async (type: 'BOTON_PANICO' | 'FALLA_REPORTADA', successMessage: string) => {
+    setReportBusy(type);
+    try {
+      await reportGpsAlert(type);
+      setNotice(successMessage);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'No se pudo enviar el reporte.');
+    } finally {
+      setReportBusy(null);
+      setTimeout(() => setNotice(''), 3500);
+    }
   };
 
+  const online = device?.online === 'online';
+
   return (
-    <div className="p-4 sm:p-6 lg:p-8 space-y-5">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-5 max-w-5xl">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-t1">GPS de mi unidad</h1>
-          <p className="text-sm text-t2 mt-0.5">Beneficio habilitado por el GPS del vehículo que tienes asignado</p>
+          <h1 className="text-base font-semibold text-t1">GPS de mi unidad</h1>
+          <p className="text-xs text-t2 mt-0.5">Beneficio habilitado por el GPS del vehículo que tienes asignado</p>
         </div>
-        <span className="inline-flex items-center gap-1.5 bg-ok/10 text-ok text-xs font-medium px-2.5 py-1 rounded">
-          <span className="w-1.5 h-1.5 bg-ok rounded-full" /> GPS activo
+        <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded ${online ? 'bg-ok/10 text-ok' : 'bg-warn/10 text-warn'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${online ? 'bg-ok' : 'bg-warn'}`} /> {online ? 'En línea' : device?.online === 'offline' ? 'Sin señal' : 'Estado desconocido'}
         </span>
       </div>
 
-      <div className="border border-warn/30 bg-warn/5 px-4 py-3 text-sm text-t2 flex items-start gap-2">
-        <AlertCircle size={15} className="text-warn mt-0.5 flex-shrink-0" />
-        <span>Vista de prueba: la posición presentada no proviene de un dispositivo conectado.</span>
-      </div>
-
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {[
-          ['Unidad asignada', code],
-          ['Última señal', 'Ahora'],
-          ['Ignición', 'Encendida'],
-          ['Jornada', 'Juli → Puno'],
-        ].map(([label, value]) => (
-          <div key={label} className="bg-surface border border-border p-4">
-            <p className="text-xs text-t2 uppercase">{label}</p>
-            <p className="text-sm font-semibold text-t1 mt-1">{value}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="bg-surface border border-border">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-semibold text-t1">{unit?.model || unit?.vehicleType || 'Vehículo asignado'}</p>
-            <p className="text-sm text-t2 mt-0.5">{company} · Unidad {code} · {unit?.plate || 'Sin placa'}</p>
-          </div>
-          <span className="text-xs text-ok font-medium">Señal estable</span>
-        </div>
-        <div className="grid lg:grid-cols-[1fr_280px]">
-          <div className="h-72 bg-bg relative overflow-hidden border-b lg:border-b-0 lg:border-r border-border" aria-label="Minimapa de la unidad asignada">
-            <div className="absolute inset-x-5 top-4 flex items-center justify-between text-[11px] text-muted">
-              <span>RECORRIDO ACTUAL</span><span>Última lectura: ahora</span>
-            </div>
-            <div className="absolute left-16 right-16 top-1/2 h-1 bg-primary/20" />
-            <div className="absolute left-12 top-[calc(50%-16px)] w-8 h-8 rounded-full border-2 border-primary bg-surface flex items-center justify-center text-[10px] font-bold text-primary">JULI</div>
-            <div className="absolute right-12 top-[calc(50%-16px)] w-8 h-8 rounded-full border-2 border-primary bg-surface flex items-center justify-center text-[10px] font-bold text-primary">PUNO</div>
-            <div className="absolute left-[54%] top-[calc(50%-19px)] w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center shadow">
-              <Car size={17} />
-            </div>
-          </div>
-          <div className="divide-y divide-border text-sm">
+      {loading ? (
+        <p className="text-sm text-t2">Cargando GPS…</p>
+      ) : error ? (
+        <p className="text-sm text-danger">{error}</p>
+      ) : (
+        <>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {[
-              ['Conductor', profile?.name || 'Conductor'],
-              ['Inicio de jornada', '06:42'],
-              ['Tiempo en movimiento', '1 h 08 min'],
-              ['Distancia recorrida', '61 km'],
-              ['Paradas detectadas', '2'],
-              ['Estado', 'En recorrido'],
+              ['Unidad asignada', code],
+              ['Última señal', position ? new Date(position.lastUpdate).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }) : 'Sin dato'],
+              ['Velocidad', position ? `${position.speedKmh} km/h` : '—'],
+              ['Ruta', position?.route ? routeLabelShort(position.route, org) : 'Sin viaje activo'],
+              ['Ignición', position?.ignition == null ? 'Sin dato' : position.ignition ? 'Encendido' : 'Apagado'],
+              ['Energía', position?.powerVoltage == null ? 'Sin dato' : `${position.powerVoltage.toFixed(1)} V`],
             ].map(([label, value]) => (
-              <div key={label} className="px-4 py-3 flex justify-between gap-3">
-                <span className="text-t2">{label}</span><strong className="text-t1 text-right">{value}</strong>
+              <div key={label} className="bg-surface border border-border p-4">
+                <p className="text-[11px] text-t2 uppercase">{label}</p>
+                <p className="text-sm font-semibold text-t1 mt-1">{value}</p>
               </div>
             ))}
           </div>
-        </div>
-      </div>
+
+          <div className="bg-surface border border-border">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold text-t1">{unit?.model || unit?.vehicleType || 'Vehículo asignado'}</p>
+                <p className="text-xs text-t2 mt-0.5">{company} · Unidad {code} · {unit?.plate || 'Sin placa'}</p>
+              </div>
+            </div>
+            <div className="h-72 bg-bg relative overflow-hidden" aria-label="Última posición conocida">
+              {position ? (
+                <iframe
+                  title="Última posición"
+                  className="w-full h-full border-0"
+                  src={`https://www.google.com/maps?q=${position.lat},${position.lng}&z=15&output=embed`}
+                />
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="bg-surface border border-warn/40 px-4 py-2 text-xs text-warn flex items-center gap-2">
+                    <WifiOff size={14} /> Sin señal reciente. No se muestra ni se inventa una posición.
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="flex border-b border-border">
         <button onClick={() => setView('actual')} className={'px-4 py-2.5 text-sm border-b-2 -mb-px ' + (view === 'actual' ? 'border-primary text-primary font-medium' : 'border-transparent text-t2')}>Viaje actual</button>
@@ -2194,44 +2035,41 @@ function DriverGPS() {
       </div>
 
       {view === 'actual' ? (
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="bg-surface border border-border p-4">
-            <h2 className="text-base font-semibold text-t1">Eventos de esta jornada</h2>
-            <div className="mt-4 space-y-3 text-sm">
-              <div className="flex justify-between"><span className="text-t1">Salida de Terminal Juli</span><span className="text-t2">06:42</span></div>
-              <div className="flex justify-between"><span className="text-t1">Señal GPS estable</span><span className="text-t2">Ahora</span></div>
-              <div className="flex justify-between"><span className="text-t1">Sin alertas críticas</span><span className="text-ok">Correcto</span></div>
-            </div>
-          </div>
-          <div className="bg-surface border border-border p-4">
-            <h2 className="text-base font-semibold text-t1">Acceso asignado</h2>
-            <p className="text-sm text-t2 mt-2 leading-relaxed">Puedes consultar el viaje actual y las jornadas realizadas por ti mientras conduzcas esta unidad. El socio conserva la configuración y el historial completo del vehículo.</p>
-            <div className="grid grid-cols-2 gap-2 mt-4">
-              <button onClick={() => report('Reporte GPS enviado al soporte.')} className="h-10 border border-border text-sm font-medium text-t1 hover:bg-hover rounded-lg">Reportar falla GPS</button>
-              <button onClick={() => report('Alerta de emergencia registrada.')} className="h-10 border border-danger/40 text-sm font-medium text-danger hover:bg-danger/5 rounded-lg">Reportar emergencia</button>
-            </div>
+        <div className="bg-surface border border-border p-4">
+          <h2 className="text-sm font-semibold text-t1">Acceso asignado</h2>
+          <p className="text-xs text-t2 mt-2 leading-relaxed">Puedes consultar el viaje actual y las jornadas realizadas por ti mientras conduzcas esta unidad. El socio conserva la configuración y el historial completo del vehículo.</p>
+          <div className="grid grid-cols-2 gap-2 mt-4">
+            <button onClick={() => report('FALLA_REPORTADA', 'Falla de GPS reportada — ya es visible para tu asociación.')} disabled={reportBusy !== null} className="h-9 border border-border text-xs font-medium text-t1 hover:bg-hover disabled:opacity-50">
+              {reportBusy === 'FALLA_REPORTADA' ? 'Enviando…' : 'Reportar falla GPS'}
+            </button>
+            <button onClick={() => report('BOTON_PANICO', 'Emergencia reportada — ya es visible para tu asociación.')} disabled={reportBusy !== null} className="h-9 border border-danger/40 text-xs font-medium text-danger hover:bg-danger/5 disabled:opacity-50">
+              {reportBusy === 'BOTON_PANICO' ? 'Enviando…' : 'Reportar emergencia'}
+            </button>
           </div>
         </div>
       ) : (
         <div className="bg-surface border border-border overflow-x-auto">
-          <table className="w-full text-sm min-w-[680px]">
+          <table className="w-full text-xs min-w-[500px]">
             <thead><tr className="bg-bg border-b border-border">
-              {['Fecha','Ruta','Inicio','Fin','Distancia','Paradas','Estado'].map(label => <th key={label} className="px-4 py-2.5 text-left text-t2 font-medium">{label}</th>)}
+              {['Hora', 'Latitud', 'Longitud', 'Velocidad'].map(label => <th key={label} className="px-4 py-2.5 text-left text-t2 font-medium">{label}</th>)}
             </tr></thead>
-            <tbody>{activity.map(row => (
-              <tr key={row.date} className="border-b border-border last:border-0">
-                <td className="px-4 py-3 text-t1">{row.date}</td><td className="px-4 py-3 text-t1">{row.route}</td>
-                <td className="px-4 py-3 font-mono text-t2">{row.start}</td><td className="px-4 py-3 font-mono text-t2">{row.end}</td>
-                <td className="px-4 py-3 text-t2">{row.km}</td><td className="px-4 py-3 text-t2">{row.stops}</td>
-                <td className="px-4 py-3"><span className="bg-ok/10 text-ok px-2 py-0.5 rounded">{row.status}</span></td>
-              </tr>
-            ))}</tbody>
+            <tbody>
+              {history.slice(-100).reverse().map((p, i) => (
+                <tr key={i} className="border-b border-border last:border-0">
+                  <td className="px-4 py-3 font-mono text-t2">{new Date(p.fixTime).toLocaleString('es-PE')}</td>
+                  <td className="px-4 py-3 font-mono text-t2">{p.lat.toFixed(5)}</td>
+                  <td className="px-4 py-3 font-mono text-t2">{p.lng.toFixed(5)}</td>
+                  <td className="px-4 py-3 text-t1">{p.speedKmh} km/h</td>
+                </tr>
+              ))}
+              {history.length === 0 && <tr><td colSpan={4} className="px-4 py-8 text-center text-t2">Sin registros en los últimos 7 días</td></tr>}
+            </tbody>
           </table>
         </div>
       )}
 
       {notice && <div className="fixed bottom-5 right-5 bg-t1 text-surface px-4 py-3 text-sm shadow-lg">{notice}</div>}
-      <p className="text-sm text-muted">El GPS informa eventos operativos y no genera sanciones automáticas.</p>
+      <p className="text-xs text-muted">El GPS informa eventos operativos y no genera sanciones automáticas.</p>
     </div>
   );
 }
@@ -2256,17 +2094,38 @@ function DriverLiveMapView() {
 
     let cancelled = false;
 
+    function loadGoogleMaps(): Promise<void> {
+      const w = window as unknown as { google?: { maps: unknown } };
+      if (w.google?.maps) return Promise.resolve();
+      return new Promise((resolve, reject) => {
+        const existing = document.getElementById('chaski-google-maps-script');
+        if (existing) {
+          existing.addEventListener('load', () => resolve());
+          existing.addEventListener('error', () => reject(new Error('load-error')));
+          return;
+        }
+        const script = document.createElement('script');
+        script.id = 'chaski-google-maps-script';
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}`;
+        script.async = true;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error('load-error'));
+        document.head.appendChild(script);
+      });
+    }
+
     loadGoogleMaps()
       .then(() => {
         if (cancelled || !containerRef.current) return;
-        const g = getGoogleMaps();
-        const map = new g.Map(containerRef.current, {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const g = (window as any).google;
+        const map = new g.maps.Map(containerRef.current, {
           zoom: 16,
           center: { lat: -15.8402, lng: -70.0219 },
           disableDefaultUI: true,
           zoomControl: true,
         });
-        const marker = new g.Marker({ map, title: 'Mi ubicación' });
+        const marker = new g.maps.Marker({ map, title: 'Mi ubicación' });
 
         watchIdRef.current = navigator.geolocation.watchPosition(
           pos => {
@@ -2301,7 +2160,7 @@ function DriverLiveMapView() {
       <div className="border border-border rounded-lg p-6 text-center space-y-2 bg-surface">
         <MapPin size={22} className="mx-auto text-muted" />
         <p className="text-sm text-t1 font-medium">Mapa en vivo en configuración</p>
-        <p className="text-sm text-t2">Esta función está siendo activada por el equipo de CHASKI. Vuelve a intentarlo más tarde.</p>
+        <p className="text-xs text-t2">Esta función está siendo activada por el equipo de CHASKI. Vuelve a intentarlo más tarde.</p>
       </div>
     );
   }
@@ -2309,24 +2168,23 @@ function DriverLiveMapView() {
   return (
     <div className="space-y-3">
       <div ref={containerRef} className="w-full h-72 rounded-lg border border-border bg-bg" />
-      <p className="text-sm text-t2">
+      <p className="text-xs text-t2">
         {status === 'cargando' && 'Obteniendo tu ubicación…'}
         {status === 'listo' && `Actualizado ${lastUpdate}${speedKmh !== null ? ` · ${speedKmh} km/h` : ''}`}
         {status === 'sin_permiso' && 'Activa el permiso de ubicación de tu navegador para ver el mapa.'}
         {status === 'sin_senal' && 'Buscando señal GPS…'}
         {status === 'error' && 'No se pudo cargar el mapa en este dispositivo.'}
       </p>
-      <p className="text-sm text-muted">Esta ubicación es solo para ti: no se comparte con el administrador ni queda registrada en el sistema.</p>
+      <p className="text-[11px] text-muted">Esta ubicación es solo para ti: no se comparte con el administrador ni queda registrada en el sistema.</p>
     </div>
   );
 }
 
 function DriverProfile() {
-  const { user, profile, unit, code, company, driverLiveMapEnabled } = useDriverContext();
+  const { user, profile, unit, code, company, driverLiveMapEnabled, org } = useDriverContext();
   const { wallets, walletError, saveWallet, reportWalletError } = useDriverWallets(user?.email ?? code, profile?.name ?? user?.name ?? '', profile?.phone ?? '');
   const [walletDrafts, setWalletDrafts] = useState<DriverWallets>(wallets);
   const [savedWallet, setSavedWallet] = useState<WalletType | null>(null);
-  const [qrUploading, setQrUploading] = useState<WalletType | null>(null);
   const [tab, setTab] = useState<ProfileTab>('personal');
   const [requestSent, setRequestSent] = useState<string | null>(null);
 
@@ -2361,7 +2219,7 @@ function DriverProfile() {
     }));
   };
 
-  const attachWalletQr = async (type: WalletType, file?: File) => {
+  const attachWalletQr = (type: WalletType, file?: File) => {
     if (!file) return;
     reportWalletError('');
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
@@ -2372,23 +2230,10 @@ function DriverProfile() {
       reportWalletError('La imagen debe pesar como máximo 3 MB.');
       return;
     }
-    setQrUploading(type);
-    try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error('No se pudo leer la imagen seleccionada.'));
-        reader.readAsDataURL(file);
-      });
-      // "Adjuntar imagen QR" sube a Cloudinary por detras: nunca se guarda el
-      // archivo como base64.
-      const { url } = await uploadImage(dataUrl, 'wallets');
-      updateWalletDraft(type, { qrImage: url });
-    } catch (err) {
-      reportWalletError(err instanceof Error ? err.message : 'No se pudo subir la imagen del QR.');
-    } finally {
-      setQrUploading(null);
-    }
+    const reader = new FileReader();
+    reader.onload = () => updateWalletDraft(type, { qrImage: String(reader.result) });
+    reader.onerror = () => reportWalletError('No se pudo leer la imagen seleccionada.');
+    reader.readAsDataURL(file);
   };
 
   const handleSaveWallet = (type: WalletType) => {
@@ -2398,10 +2243,10 @@ function DriverProfile() {
   };
 
   return (
-    <div className="p-6 lg:p-8 space-y-5">
+    <div className="p-6 lg:p-8 space-y-5 max-w-3xl">
       <div>
-        <h1 className="text-2xl font-bold text-t1">Mi perfil</h1>
-        <p className="text-sm text-t2 mt-0.5">Datos personales, unidad y medios de cobro</p>
+        <h1 className="text-base font-semibold text-t1">Mi perfil</h1>
+        <p className="text-xs text-t2 mt-0.5">Datos personales, unidad y medios de cobro</p>
       </div>
 
       {/* Tabs */}
@@ -2420,19 +2265,19 @@ function DriverProfile() {
       </div>
 
       {tab === 'personal' && (
-        <div className="bg-surface border border-border rounded-lg divide-y divide-border max-w-2xl">
+        <div className="bg-surface border border-border rounded-lg divide-y divide-border">
           {[
             ['Nombres y apellidos', profile?.name || user?.name || 'Conductor'],
             ['DNI', profile?.dni || 'No registrado'],
             ['Teléfono', profile?.phone || 'No registrado'],
             ['Correo de acceso', profile?.email || user?.email || 'No registrado'],
-            ['Asociación', 'ATIPCAR'],
+            ['Asociación', org?.name ?? 'Sin dato'],
             ['Empresa integrante', company],
             ['Código de unidad', code],
             ['Estado de afiliación', profile?.status || 'ACTIVO'],
           ].map(([label, value]) => (
             <div key={label} className="flex items-center justify-between px-4 py-3">
-              <span className="text-sm text-t2 w-40 flex-shrink-0">{label}</span>
+              <span className="text-xs text-t2 w-40 flex-shrink-0">{label}</span>
               <span className="text-sm text-t1 font-medium text-right">{value}</span>
             </div>
           ))}
@@ -2440,10 +2285,10 @@ function DriverProfile() {
       )}
 
       {tab === 'credenciales' && (
-        <div className="space-y-4 max-w-2xl">
+        <div className="space-y-4">
           <div className="bg-surface border border-border rounded-lg overflow-hidden">
             <div className="px-4 py-2.5 bg-bg border-b border-border">
-              <h3 className="text-sm font-semibold text-t2 uppercase tracking-wide">Licencia de conducir</h3>
+              <h3 className="text-xs font-semibold text-t2 uppercase tracking-wide">Licencia de conducir</h3>
             </div>
             <div className="divide-y divide-border">
               {[
@@ -2452,7 +2297,7 @@ function DriverProfile() {
                 ['Fecha de vencimiento', profile?.licenseExpiry || '14 mar 2028'],
               ].map(([label, value]) => (
                 <div key={label} className="flex items-center justify-between px-4 py-3">
-                  <span className="text-sm text-t2 w-44 flex-shrink-0">{label}</span>
+                  <span className="text-xs text-t2 w-44 flex-shrink-0">{label}</span>
                   <span className="text-sm text-t1 font-medium">{value}</span>
                 </div>
               ))}
@@ -2465,7 +2310,7 @@ function DriverProfile() {
 
           <div className="bg-surface border border-border rounded-lg overflow-hidden">
             <div className="px-4 py-2.5 bg-bg border-b border-border">
-              <h3 className="text-sm font-semibold text-t2 uppercase tracking-wide">Certificado médico</h3>
+              <h3 className="text-xs font-semibold text-t2 uppercase tracking-wide">Certificado médico</h3>
             </div>
             <div className="divide-y divide-border">
               {[
@@ -2475,7 +2320,7 @@ function DriverProfile() {
                 ['Centro emisor', 'ESSALUD Puno'],
               ].map(([label, value]) => (
                 <div key={label} className="flex items-center justify-between px-4 py-3">
-                  <span className="text-sm text-t2 w-44 flex-shrink-0">{label}</span>
+                  <span className="text-xs text-t2 w-44 flex-shrink-0">{label}</span>
                   <span className="text-sm text-t1 font-medium">{value}</span>
                 </div>
               ))}
@@ -2488,7 +2333,7 @@ function DriverProfile() {
       )}
 
       {tab === 'unidad' && (
-        <div className="bg-surface border border-border rounded-lg divide-y divide-border max-w-2xl">
+        <div className="bg-surface border border-border rounded-lg divide-y divide-border">
           {[
             ['Código de unidad', code],
             ['Placa actual', unit?.plate || 'Sin placa'],
@@ -2499,7 +2344,7 @@ function DriverProfile() {
             ['Empresa integrante', company],
           ].map(([label, value]) => (
             <div key={label} className="flex items-center justify-between px-4 py-3">
-              <span className="text-sm text-t2 w-40 flex-shrink-0">{label}</span>
+              <span className="text-xs text-t2 w-40 flex-shrink-0">{label}</span>
               <span className="text-sm text-t1 font-medium">{value}</span>
             </div>
           ))}
@@ -2510,7 +2355,7 @@ function DriverProfile() {
         <div className="space-y-4">
           <div className="bg-primary/5 border border-primary/20 px-4 py-3">
             <p className="text-sm font-medium text-t1">Códigos QR para cobros</p>
-            <p className="text-sm text-t2 mt-1">Configura el titular, celular y la imagen real del QR. Estos datos aparecen al usar Mostrar QR.</p>
+            <p className="text-xs text-t2 mt-1">Configura el titular, celular y la imagen real del QR. Estos datos aparecen al usar Mostrar QR.</p>
           </div>
           {walletError && (
             <div className="bg-danger/5 border border-danger/30 px-4 py-2.5 text-sm text-danger flex items-center gap-2">
@@ -2526,26 +2371,26 @@ function DriverProfile() {
                 <section key={type} className="bg-surface border border-border">
                   <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
                     <WalletLogo type={type} className="h-6 w-auto" />
-                    <span className={'text-xs px-2 py-1 font-medium ' + (configured ? 'bg-ok/10 text-ok' : 'bg-warn/10 text-warn')}>
+                    <span className={'text-[11px] px-2 py-1 font-medium ' + (configured ? 'bg-ok/10 text-ok' : 'bg-warn/10 text-warn')}>
                       {configured ? 'Configurado' : 'Pendiente'}
                     </span>
                   </div>
                   <div className="p-4 space-y-3">
                     <div>
-                      <label htmlFor={type + '-holder'} className="block text-sm font-medium text-t1 mb-1">Titular de la cuenta</label>
+                      <label htmlFor={type + '-holder'} className="block text-xs font-medium text-t1 mb-1">Titular de la cuenta</label>
                       <input id={type + '-holder'} value={wallet.holder} onChange={event => updateWalletDraft(type, { holder: event.target.value })} placeholder="Nombre que verá el pasajero" className="w-full h-10 px-3 border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary" />
                     </div>
                     <div>
-                      <label htmlFor={type + '-phone'} className="block text-sm font-medium text-t1 mb-1">Número de celular</label>
+                      <label htmlFor={type + '-phone'} className="block text-xs font-medium text-t1 mb-1">Número de celular</label>
                       <input id={type + '-phone'} inputMode="numeric" maxLength={9} value={wallet.phone} onChange={event => updateWalletDraft(type, { phone: event.target.value.replace(/\D/g, '').slice(0, 9) })} placeholder="999999999" className="w-full h-10 px-3 border border-border rounded-lg text-sm font-mono bg-surface focus:outline-none focus:ring-2 focus:ring-primary" />
                     </div>
                     <div>
-                      <span className="block text-sm font-medium text-t1 mb-1">Imagen del código QR</span>
+                      <span className="block text-xs font-medium text-t1 mb-1">Imagen del código QR</span>
                       <input id={type + '-qr'} type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={event => { attachWalletQr(type, event.target.files?.[0]); event.currentTarget.value = ''; }} />
                       <label htmlFor={type + '-qr'} className="h-10 px-3 border border-border rounded-lg text-sm font-medium text-t1 hover:bg-hover cursor-pointer inline-flex items-center justify-center gap-2 w-full">
-                        <Upload size={14} /> {qrUploading === type ? 'Subiendo…' : wallet.qrImage ? 'Reemplazar imagen' : 'Adjuntar imagen QR'}
+                        <Upload size={14} /> {wallet.qrImage ? 'Reemplazar imagen' : 'Adjuntar imagen QR'}
                       </label>
-                      <p className="text-sm text-muted mt-1">PNG, JPG o WEBP · máximo 3 MB</p>
+                      <p className="text-[11px] text-muted mt-1">PNG, JPG o WEBP · máximo 3 MB</p>
                     </div>
                     {wallet.qrImage ? (
                       <div className="border border-border bg-bg p-3">
@@ -2557,14 +2402,14 @@ function DriverProfile() {
                     ) : (
                       <div className="h-36 border border-dashed border-border bg-bg flex flex-col items-center justify-center text-center px-4">
                         <QrCode size={24} className="text-muted" />
-                        <p className="text-sm text-t2 mt-2">Todavía no hay una imagen adjunta.</p>
+                        <p className="text-xs text-t2 mt-2">Todavía no hay una imagen adjunta.</p>
                       </div>
                     )}
                     <button type="button" onClick={() => handleSaveWallet(type)} className="w-full h-10 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h inline-flex items-center justify-center gap-2">
                       <CheckCircle size={15} /> Guardar cambios
                     </button>
                     {savedWallet === type && (
-                      <p className="text-sm text-ok text-center flex items-center justify-center gap-1.5">
+                      <p className="text-xs text-ok text-center flex items-center justify-center gap-1.5">
                         <CheckCircle size={13} /> Cambios guardados
                       </p>
                     )}
@@ -2573,7 +2418,7 @@ function DriverProfile() {
               );
             })}
           </div>
-          <p className="text-sm text-muted">El QR solo se actualiza después de pulsar Guardar cambios.</p>
+          <p className="text-xs text-muted">El QR solo se actualiza después de pulsar Guardar cambios.</p>
         </div>
       )}
 
@@ -2584,8 +2429,8 @@ function DriverProfile() {
               <CheckCircle size={14} /> Solicitud enviada: {requestSent}
             </div>
           )}
-          <div className="bg-surface border border-border rounded-lg overflow-hidden overflow-x-auto">
-            <table className="w-full text-sm" aria-label="Documentos de unidad">
+          <div className="bg-surface border border-border rounded-lg overflow-hidden">
+            <table className="w-full text-xs" aria-label="Documentos de unidad">
               <thead>
                 <tr className="border-b border-border bg-bg">
                   <th className="text-left px-4 py-2.5 text-t2 font-medium">Documento</th>
@@ -2599,22 +2444,22 @@ function DriverProfile() {
                   <tr key={doc.name} className="border-b border-border last:border-0">
                     <td className="px-4 py-3 text-t1 font-medium">{doc.name}</td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${docStatusStyle(doc.status)}`}>
+                      <span className={`text-[11px] px-2 py-0.5 rounded font-medium ${docStatusStyle(doc.status)}`}>
                         {doc.status}
                       </span>
                     </td>
                     <td className="px-4 py-3 font-mono text-t2">{doc.expires}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <button className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-primary border border-primary/30 rounded-lg hover:bg-primary/5 transition-colors">
+                        <button className="flex items-center gap-1 text-primary hover:underline text-[11px]">
                           <Eye size={11} /> Ver
                         </button>
-                        <button className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-t2 border border-border rounded-lg hover:bg-hover transition-colors">
+                        <button className="flex items-center gap-1 text-t2 hover:text-t1 text-[11px]">
                           <Download size={11} /> Descargar
                         </button>
                         <button
                           onClick={() => handleRequest(doc.name)}
-                          className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-t2 border border-border rounded-lg hover:bg-hover transition-colors"
+                          className="flex items-center gap-1 text-t2 hover:text-t1 text-[11px]"
                         >
                           <FileCheck size={11} /> Solicitar actualización
                         </button>
@@ -2625,15 +2470,15 @@ function DriverProfile() {
               </tbody>
             </table>
           </div>
-          <p className="text-sm text-muted">Documentación sujeta a validación.</p>
+          <p className="text-xs text-muted">Documentación sujeta a validación.</p>
         </div>
       )}
 
       {tab === 'mapa' && (
         <div className="space-y-4">
           <div>
-            <h2 className="text-base font-semibold text-t1">Mi ubicación</h2>
-            <p className="text-sm text-t2 mt-0.5">Mapa en vivo con tu posición actual, solo visible para ti.</p>
+            <h2 className="text-sm font-semibold text-t1">Mi ubicación</h2>
+            <p className="text-xs text-t2 mt-0.5">Mapa en vivo con tu posición actual, solo visible para ti.</p>
           </div>
           {driverLiveMapEnabled ? (
             <DriverLiveMapView />
@@ -2641,7 +2486,7 @@ function DriverProfile() {
             <div className="border border-border rounded-lg p-6 text-center space-y-2 bg-surface">
               <MapPin size={22} className="mx-auto text-muted" />
               <p className="text-sm text-t1 font-medium">Esta opción no está disponible en este momento</p>
-              <p className="text-sm text-t2">Tu asociación no tiene habilitado el mapa en vivo. Consulta con tu administrador si necesitas esta función.</p>
+              <p className="text-xs text-t2">Tu asociación no tiene habilitado el mapa en vivo. Consulta con tu administrador si necesitas esta función.</p>
             </div>
           )}
         </div>
@@ -2650,50 +2495,75 @@ function DriverProfile() {
   );
 }
 
-// ─── App root ─────────────────────────────────────────────────────────────────
-export default function DriverApp({ onLogout }: { onLogout?: () => void }) {
-  const [section, setSection] = useState<Section>(
-    () => (window.history.state as { chaskiSection?: Section } | null)?.chaskiSection ?? 'inicio'
-  );
-  const { code } = useDriverContext();
-  const hasVehicleGPS = code === '045';
-  const navItems = hasVehicleGPS
-    ? [...NAV_ITEMS.slice(0, 4), { id: 'gps', label: 'GPS de mi unidad', icon: MapPin }, NAV_ITEMS[4]]
-    : NAV_ITEMS;
-
-  // Igual que en AdminApp/SuperAdminApp: sin esto, la flecha "atras" del
-  // navegador ignoraba la navegacion entre pantallas del panel y saltaba
-  // directo al portal de asociaciones.
-  useEffect(() => {
-    window.history.replaceState(
-      { ...(window.history.state ?? {}), chaskiSection: section },
-      '',
-      window.location.pathname
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+// ─── Avisos (plan-pro.md §9) ───────────────────────────────────────────────────
+// Solo lectura: los redacta el administrador desde su panel. Nunca llegan por
+// WhatsApp, solo aqui dentro de la plataforma.
+function DriverNotices() {
+  const [notices, setNotices] = useState<Notice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    const handler = (e: PopStateEvent) => {
-      const s = (e.state as { chaskiSection?: Section } | null)?.chaskiSection;
-      setSection(s ?? 'inicio');
-    };
-    window.addEventListener('popstate', handler);
-    return () => window.removeEventListener('popstate', handler);
-  }, []);
-
-  const navigateSection = useCallback((id: Section) => {
-    setSection(id);
-    window.history.pushState({ chaskiSection: id }, '', window.location.pathname);
+    let cancelled = false;
+    fetchNotices()
+      .then(result => { if (!cancelled) setNotices(result); })
+      .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'No se pudieron cargar los avisos.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   return (
-    <Shell navItems={navItems} activeSection={section} onNavigate={(id) => navigateSection(id as Section)} onLogout={onLogout}>
-      {section === 'inicio' && <DriverHome onNavigate={navigateSection} />}
+    <div className="p-4 md:p-6 space-y-4">
+      <div>
+        <h1 className="text-xl font-bold text-t1">Avisos</h1>
+        <p className="text-sm text-t2 mt-0.5">Comunicados de tu administrador.</p>
+      </div>
+      {loading ? (
+        <div className="text-center py-10 text-sm text-t2">Cargando avisos…</div>
+      ) : error ? (
+        <div className="text-center py-10 text-sm text-danger">{error}</div>
+      ) : notices.length === 0 ? (
+        <div className="text-center py-10 text-sm text-t2">
+          <Megaphone size={28} className="mx-auto mb-2 opacity-30" />
+          Todavía no tienes avisos.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {notices.map(n => (
+            <div key={n.id} className="bg-surface border border-border rounded-lg p-4">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold text-t1">{n.title}</h3>
+                <span className="text-xs text-t2 shrink-0">{new Date(n.createdAt).toLocaleDateString('es-PE')}</span>
+              </div>
+              <p className="text-sm text-t2 mt-1 whitespace-pre-wrap">{n.body}</p>
+              <p className="text-xs text-t2 mt-2">Por {n.authorName}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── App root ─────────────────────────────────────────────────────────────────
+export default function DriverApp({ onLogout }: { onLogout?: () => void }) {
+  const [section, setSection] = useState<Section>('inicio');
+  const { hasVehicleGPS, org } = useDriverContext();
+  const navItems = hasVehicleGPS
+    ? [...NAV_ITEMS.slice(0, 4), { id: 'gps', label: 'GPS de mi unidad', icon: MapPin }, ...NAV_ITEMS.slice(4)]
+    : NAV_ITEMS;
+  // GPS Vehicular es un complemento POR UNIDAD, no un plan de la asociacion
+  // (ver mismo comentario en PartnerApp.tsx).
+  const planLabelOverride = hasVehicleGPS && org?.plan === 'OPERACION' ? 'Plan GPS Vehicular' : undefined;
+
+  return (
+    <Shell navItems={navItems} activeSection={section} onNavigate={(id) => setSection(id as Section)} onLogout={onLogout} planLabelOverride={planLabelOverride}>
+      {section === 'inicio' && <DriverHome onNavigate={setSection} />}
       {section === 'cola' && <DriverQueue />}
       {section === 'manifiesto' && <DriverManifest />}
       {section === 'viajes' && <DriverTrips />}
       {section === 'gps' && hasVehicleGPS && <DriverGPS />}
+      {section === 'avisos' && <DriverNotices />}
       {section === 'perfil' && <DriverProfile />}
     </Shell>
   );

@@ -85,6 +85,9 @@ export default function GPSLivePage() {
               <th className="text-left px-4 py-2.5 text-t2 font-medium">Empresa</th>
               <th className="text-left px-4 py-2.5 text-t2 font-medium">Ruta actual</th>
               <th className="text-left px-4 py-2.5 text-t2 font-medium">Velocidad</th>
+              <th className="text-left px-4 py-2.5 text-t2 font-medium">Ignición</th>
+              <th className="text-left px-4 py-2.5 text-t2 font-medium">Energía</th>
+              <th className="text-left px-4 py-2.5 text-t2 font-medium">Kilometraje</th>
               <th className="text-left px-4 py-2.5 text-t2 font-medium">Última señal</th>
             </tr>
           </thead>
@@ -103,12 +106,23 @@ export default function GPSLivePage() {
                   )}
                 </td>
                 <td className="px-4 py-3 text-t1">{p.speedKmh > 0 ? `${p.speedKmh} km/h` : '—'}</td>
+                <td className="px-4 py-3">
+                  {p.ignition == null ? (
+                    <span className="text-t2">—</span>
+                  ) : (
+                    <span className={`text-[11px] px-1.5 py-0.5 rounded font-medium ${p.ignition ? 'bg-ok/10 text-ok' : 'bg-hover text-t2'}`}>
+                      {p.ignition ? 'Encendido' : 'Apagado'}
+                    </span>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-t1">{p.powerVoltage == null ? '—' : `${p.powerVoltage.toFixed(1)} V`}</td>
+                <td className="px-4 py-3 text-t1">{p.odometerKm == null ? '—' : `${p.odometerKm.toLocaleString('es-PE')} km`}</td>
                 <td className="px-4 py-3 font-mono text-t2">{new Date(p.lastUpdate).toLocaleTimeString('es-PE')}</td>
               </tr>
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-sm text-t2">
+                <td colSpan={8} className="px-4 py-10 text-center text-sm text-t2">
                   {positions === null ? 'Cargando…' : 'Ninguna unidad con señal GPS por ahora.'}
                 </td>
               </tr>

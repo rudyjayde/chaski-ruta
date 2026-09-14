@@ -1,99 +1,8 @@
 import type {
   QueueEntry, Manifest, Trip, RelocationOrder, Unit, Company,
-  Person, AuditEntry, Organization, Passenger,
+  AuditEntry, Organization, Passenger,
   Subscription, Payment, CommercialRequest, GPSDevice,
 } from '../types';
-
-export const DEMO_ACCOUNTS = [
-  {
-    email: 'pepito@acceso.atipcar.test',
-    password: 'Conductor#2026',
-    name: 'José "Pepito" Quispe Mamani',
-    role: 'driver' as const,
-    org: 'ATIPCAR',
-    orgId: 'atipcar',
-    code: '015',
-  },
-  {
-    email: 'conductor.jp1@acceso.atipcar.test',
-    password: 'RutaJuli#A26!',
-    name: 'Lucía Quispe Condori',
-    role: 'driver' as const,
-    org: 'ATIPCAR',
-    orgId: 'atipcar',
-    code: '041',
-  },
-  {
-    email: 'conductor.jp2@acceso.atipcar.test',
-    password: 'RutaJuli#B26!',
-    name: 'Daniel Mamani Apaza',
-    role: 'driver' as const,
-    org: 'ATIPCAR',
-    orgId: 'atipcar',
-    code: '042',
-  },
-  {
-    email: 'conductor.pj1@acceso.atipcar.test',
-    password: 'RutaPuno#A26!',
-    name: 'Elena Torres Callo',
-    role: 'driver' as const,
-    org: 'ATIPCAR',
-    orgId: 'atipcar',
-    code: '043',
-  },
-  {
-    email: 'conductor.pj2@acceso.atipcar.test',
-    password: 'RutaPuno#B26!',
-    name: 'Miguel Ramos Flores',
-    role: 'driver' as const,
-    org: 'ATIPCAR',
-    orgId: 'atipcar',
-    code: '044',
-  },
-  {
-    email: 'socio@acceso.atipcar.test',
-    password: 'Socio#2026',
-    name: 'Mario Condori Apaza',
-    role: 'partner' as const,
-    org: 'ATIPCAR',
-    orgId: 'atipcar',
-    code: '015',
-  },
-  {
-    email: 'socio.gps@acceso.atipcar.test',
-    password: 'SocioGPS#2026',
-    name: 'Ricardo Mamani Condori',
-    role: 'partner' as const,
-    org: 'ATIPCAR',
-    orgId: 'atipcar',
-    code: '045',
-  },
-  {
-    email: 'conductor.gps@acceso.atipcar.test',
-    password: 'ConductorGPS#2026',
-    name: 'Alonso Quispe Flores',
-    role: 'driver' as const,
-    org: 'ATIPCAR',
-    orgId: 'atipcar',
-    code: '045',
-  },
-  {
-    email: 'admin@acceso.atipcar.test',
-    password: 'Admin#2026',
-    name: 'Rosa Huanca Flores',
-    role: 'admin' as const,
-    org: 'ATIPCAR',
-    orgId: 'atipcar',
-  },
-  {
-    email: 'superadmin@acceso.chaski.test',
-    password: 'SuperAdmin#2026',
-    name: 'Administrador CHASKI AI',
-    role: 'superadmin' as const,
-    org: 'CHASKI AI',
-    orgId: 'chaski',
-  },
-];
 
 export const COMPANIES: Company[] = [
   { id: 'c1', name: 'Virgen de Fátima', ruc: '20601234567', legalRep: 'Aurelio Ticona Callo', phone: '951234001', email: 'fatima@atipcar.test', status: 'ACTIVA', units: 15, partners: 15, routes: ['JULI_PUNO', 'PUNO_JULI'] },
@@ -272,24 +181,6 @@ export const UNITS: Unit[] = [
   { id: 'u43', code: '043', company: 'Sur Andino', partnerName: 'Socio prueba 043', partnerDni: '48001043', partnerCode: '043', vehicleType: 'SPRINTER', plate: 'T3C-043', model: 'Mercedes Benz Sprinter 516', year: 2022, status: 'ACTIVO', currentDriverName: 'Elena Torres Callo', plateHistory: [{ plate: 'T3C-043', from: '2026-03-15' }], route: 'PUNO_JULI' },
   { id: 'u44', code: '044', company: 'San Miguel', partnerName: 'Socio prueba 044', partnerDni: '48001044', partnerCode: '044', vehicleType: 'HIACE', plate: 'T4D-044', model: 'Toyota Hiace Commuter', year: 2024, status: 'ACTIVO', currentDriverName: 'Miguel Ramos Flores', plateHistory: [{ plate: 'T4D-044', from: '2026-04-18' }], route: 'PUNO_JULI' },
   { id: 'u45', code: '045', company: 'Litoral', partnerName: 'Ricardo Mamani Condori', partnerDni: '48002045', partnerCode: '045', vehicleType: 'HIACE', plate: 'T5E-045', model: 'Toyota Hiace Commuter', year: 2024, status: 'ACTIVO', currentDriverName: 'Alonso Quispe Flores', plateHistory: [{ plate: 'T5E-045', from: '2026-05-20' }], route: 'AMBAS' },
-];
-
-export const PEOPLE: Person[] = [
-  { id: 'per1', name: 'José "Pepito" Quispe Mamani', dni: '45678901', email: 'pepito@acceso.atipcar.test', phone: '951015001', role: 'CONDUCTOR', company: 'San Miguel', code: '015', status: 'ACTIVO', linkedUnit: '015' },
-  { id: 'per2', name: 'Mario Condori Apaza', dni: '45678902', email: 'socio@acceso.atipcar.test', phone: '951015002', role: 'SOCIO', company: 'San Miguel', code: '015', status: 'ACTIVO', linkedUnit: '015' },
-  { id: 'per3', name: 'Rosa Huanca Flores', dni: '45678903', email: 'admin@acceso.atipcar.test', phone: '951099001', role: 'ADMINISTRADOR', status: 'ACTIVO' },
-  { id: 'per4', name: 'Héctor Apaza Condori', dni: '40100004', email: 'h.apaza@atipcar.test', phone: '951001004', role: 'CONDUCTOR', company: 'Virgen de Fátima', code: '003', status: 'ACTIVO', linkedUnit: '003' },
-  { id: 'per5', name: 'Samuel Ramos Flores', dni: '40100005', email: 's.ramos@atipcar.test', phone: '951001005', role: 'CONDUCTOR', company: 'Sur Andino', code: '011', status: 'ACTIVO', linkedUnit: '011' },
-  { id: 'per6', name: 'Carlos Ticona Mamani', dni: '40100006', email: 'c.ticona@atipcar.test', phone: '951001006', role: 'CONDUCTOR', company: 'Virgen de Fátima', code: '004', status: 'ACTIVO', linkedUnit: '004' },
-  { id: 'per7', name: 'Marco Ramos Apaza', dni: '40100007', email: 'm.ramos@atipcar.test', phone: '951001007', role: 'CONDUCTOR', company: 'San Francisco de Borja', code: '006', status: 'ACTIVO', linkedUnit: '006' },
-  { id: 'per8', name: 'Pablo Cruz Mamani', dni: '40100008', email: 'p.cruz@atipcar.test', phone: '951001008', role: 'CONDUCTOR', company: 'Litoral', code: '022', status: 'ACTIVO', linkedUnit: '022' },
-  { id: 'per9', name: 'Nuevacuenta Pendiente', dni: '40100099', email: 'nuevo@acceso.atipcar.test', phone: '951009999', role: 'CONDUCTOR', status: 'PENDIENTE' },
-  { id: 'per41', name: 'Lucía Quispe Condori', dni: '48000041', email: 'conductor.jp1@acceso.atipcar.test', phone: '999100041', role: 'CONDUCTOR', company: 'Virgen de Fátima', code: '041', status: 'ACTIVO', linkedUnit: '041' },
-  { id: 'per42', name: 'Daniel Mamani Apaza', dni: '48000042', email: 'conductor.jp2@acceso.atipcar.test', phone: '999100042', role: 'CONDUCTOR', company: 'San Francisco de Borja', code: '042', status: 'ACTIVO', linkedUnit: '042' },
-  { id: 'per43', name: 'Elena Torres Callo', dni: '48000043', email: 'conductor.pj1@acceso.atipcar.test', phone: '999100043', role: 'CONDUCTOR', company: 'Sur Andino', code: '043', status: 'ACTIVO', linkedUnit: '043' },
-  { id: 'per44', name: 'Miguel Ramos Flores', dni: '48000044', email: 'conductor.pj2@acceso.atipcar.test', phone: '999100044', role: 'CONDUCTOR', company: 'San Miguel', code: '044', status: 'ACTIVO', linkedUnit: '044' },
-  { id: 'per45-owner', name: 'Ricardo Mamani Condori', dni: '48002045', email: 'socio.gps@acceso.atipcar.test', phone: '969450001', role: 'SOCIO', company: 'Litoral', code: '045', status: 'ACTIVO', linkedUnit: '045' },
-  { id: 'per45-driver', name: 'Alonso Quispe Flores', dni: '48000045', email: 'conductor.gps@acceso.atipcar.test', phone: '969450002', role: 'CONDUCTOR', company: 'Litoral', code: '045', status: 'ACTIVO', linkedUnit: '045' },
 ];
 
 export const AUDIT_LOG: AuditEntry[] = [

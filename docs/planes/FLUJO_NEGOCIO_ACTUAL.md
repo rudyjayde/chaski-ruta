@@ -2,6 +2,16 @@
 
 **Corregido y confirmado con Jayde el 4 de septiembre de 2026**, tras la prueba real en vivo con las unidades 001 y 003. Este documento reemplaza como fuente de verdad cualquier versión anterior sobre el flujo de colas — las contradicciones que tenía quedan resueltas aquí. El detalle técnico completo vive en `docs/planes/plan-operacion.md`, `plan-flujo-colas-hardware.md` y `plan-pro.md`; este archivo es el resumen único y legible de todo eso junto.
 
+**Actualización (8 de septiembre de 2026):** la plataforma se organiza en
+cuatro superficies (landing pública, plataforma web, aplicación nativa en
+Flutter — pendiente de construir, al final del roadmap — y backend
+compartido); ver `plataformas-web-y-app-nativa.md`. La landing administrable
+y el formulario comercial dinámico se detallan en
+`landing-publica-y-solicitudes-comerciales.md`. Las propuestas de IA
+aplicadas al negocio (incluida la detección de accidentes, primera
+prioridad) se detallan en `ia-aplicada.md`. Esta misma actualización corrige
+dos reglas de manifiesto que quedan más abajo (§4).
+
 ## 1. Roles
 
 - **Super Admin (CHASKI AI):** crea asociaciones, activa planes, configura parámetros.
@@ -46,7 +56,8 @@ Toda intervención manual queda registrada con motivo obligatorio y auditoría (
 - Nunca se llena en movimiento — debe cerrar antes de la salida, siempre.
 - Solo se prepara y guarda mientras la unidad está LLAMANDO.
 - No hace falta llenar los 20 asientos, pero debe reflejar los pasajeros reales del viaje comercial.
-- Un manifiesto vacío con respaldo físico en papel **solo corresponde a una reubicación, o a una demanda real de pasajeros que no da tiempo de digitar en el momento** — no es una salida válida de rutina.
+- **Corrección (8 de septiembre de 2026, aclarada el mismo día):** un manifiesto vacío o incompleto con respaldo físico en papel corresponde a una reubicación, o a una demanda real de pasajeros que no da tiempo de registrar a todos antes de marcar salida. En ese segundo caso queda "pendiente de digitalizar" y se completa **después**, desde una pantalla aparte — no es reabrir el manifiesto ni "prepararlo" de nuevo (eso sigue siendo exclusivamente mientras está LLAMANDO). Puede apoyarse en IA con visión: foto del papel, la IA pre-llena, se confirma (`ia-aplicada.md` §2.2).
+- **No existe despacho administrativo sin manifiesto**, ni como rutina ni como excepción aprobada — ni en casos de accidente o robo.
 - El conductor solo ve su manifiesto activo actual y sus manifiestos vacíos/pendientes del día — no su historial ya cerrado, ni el de otros conductores.
 
 ## 5. Operación vs. PRO
@@ -81,3 +92,13 @@ PRO además da mapa de flota en vivo, historial de recorridos, geocercas y alert
 - Política formal de ausencia y tolerancia en colas (más allá del acuerdo de principio ya dado).
 - Fórmula de compensación económica por reubicaciones.
 - Comportamiento de una unidad PRO ante pérdida de señal GPS al momento de inscribirse.
+- Diseño técnico detallado de las funciones de IA de `ia-aplicada.md` (empezando por detección de accidentes) y de las 4 propuestas de mejora de `plan-pro.md` §11.
+- Detalle técnico de la app nativa en Flutter: navegación, estrategia offline, proveedor de push, distribución de pruebas, fecha de publicación — ver `plataformas-web-y-app-nativa.md` §3.
+- Backend real de landing/formularios comerciales — ver `landing-publica-y-solicitudes-comerciales.md`.
+
+## 9. Corregido el 8 de septiembre de 2026 (ya no vigente lo anterior)
+
+- Se elimina Capacitor de la arquitectura aprobada — la app nativa es un proyecto Flutter independiente, no un envoltorio de la web.
+- Se elimina el despacho administrativo sin manifiesto, ni como rutina ni como excepción aprobada.
+- El manifiesto vacío/incompleto con respaldo en papel (reubicación o demanda real) se completa después vía "pendiente de digitalizar" — acción separada de prepararlo, no requiere seguir LLAMANDO, puede apoyarse en IA con visión.
+- Orden de construcción acordado: primero se consolida el sistema web (incluidas las funciones de IA), la app nativa en Flutter se construye al final.

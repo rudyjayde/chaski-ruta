@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
@@ -132,6 +132,12 @@ export class OrganizationsService {
   /** Solo Super Admin: alternar mapa en vivo del conductor o cambiar el estado de la asociacion. */
   async update(id: string, actor: JwtPayload, dto: UpdateOrganizationDto) {
     const org = await this.findOne(id);
+    // Sin modulo de Pagos interno, esta auditoria es el UNICO rastro de por
+    // que una asociacion paso a PRO (o volvio a Operacion) -- nunca se
+    // permite sin motivo, igual que cualquier otra excepcion del sistema.
+    if (dto.plan !== undefined && dto.plan !== org.plan && !dto.reason?.trim()) {
+      throw new BadRequestException('Indica un motivo para cambiar el plan (ej. referencia del pago acordado).');
+    }
     let updated;
     try {
       updated = await this.prisma.organization.update({
@@ -147,6 +153,7 @@ export class OrganizationsService {
         ...(dto.status !== undefined ? { status: dto.status } : {}),
         ...(dto.logoUrl !== undefined ? { logoUrl: dto.logoUrl } : {}),
         ...(dto.plan !== undefined ? { plan: dto.plan } : {}),
+        ...(dto.gpsVehicularGraceDays !== undefined ? { gpsVehicularGraceDays: dto.gpsVehicularGraceDays } : {}),
       },
       });
     } catch (err) {
@@ -231,6 +238,20 @@ export class OrganizationsService {
         },
       });
     }
+    if (dto.gpsVehicularGraceDays !== undefined && dto.gpsVehicularGraceDays !== org.gpsVehicularGraceDays) {
+      await this.prisma.auditEntry.create({
+        data: {
+          organizationId: id,
+          actorId: actor.sub,
+          actorRole: actor.role,
+          action: 'CAMBIO_DIAS_GRACIA_GPS_VEHICULAR',
+          resource: `Asociacion ${org.name}`,
+          resourceId: id,
+          before: `${org.gpsVehicularGraceDays} dias`,
+          after: `${dto.gpsVehicularGraceDays} dias`,
+        },
+      });
+    }
     if (dto.plan !== undefined && dto.plan !== org.plan) {
       await this.prisma.auditEntry.create({
         data: {
@@ -242,9 +263,89 @@ export class OrganizationsService {
           resourceId: id,
           before: org.plan,
           after: dto.plan,
+          reason: dto.reason,
         },
       });
+      // Al bajar de PRO a Operacion, las unidades que ya tenian hardware
+      // instalado conservan su GPS gpsVehicularGraceDays dias mas (gracia
+      // acordada con Jayde, editable por Super Admin en el tab "Plan GPS
+      // Vehicular") antes de que el Plan GPS Vehicular individual dependa de
+      // que el socio lo pague aparte. gpsVehicularVenceEn es solo la fecha
+      // de referencia para que Super Admin sepa a quien le toca revisar --
+      // nada la desactiva sola, el toggle sigue siendo una accion manual
+      // (ver vehicles.service.ts setGpsVehicularPlan). Si en esta misma
+      // llamada tambien cambio gpsVehicularGraceDays, usa el valor NUEVO.
+      if (dto.plan === 'OPERACION' && org.plan === 'PRO') {
+        const graceDays = dto.gpsVehicularGraceDays ?? org.gpsVehicularGraceDays;
+        const graceEndsAt = new Date(Date.now() + graceDays * 24 * 3600 * 1000);
+        await this.prisma.vehicle.updateMany({
+          where: { organizationId: id, traccarDeviceId: { not: null } },
+          data: { gpsVehicularActivo: true, gpsVehicularVenceEn: graceEndsAt },
+        });
+      }
     }
     return updated;
+  }
+
+  /**
+   * Metricas reales de negocio para Super Admin (13 sept 2026, decidido con
+   * Jayde) -- "Resumen" antes solo mostraba salud GPS/alertas; esto agrega
+   * cuantas asociaciones hay, en que estado, por que plan, altas recientes
+   * y cuantas unidades tienen el Plan GPS Vehicular activo o en gracia.
+   * Todo contado en vivo de la base de datos real, ningun numero fijo.
+   */
+  async getMetrics() {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    const [total, activas, enConfiguracion, suspendidas, pro, operacion, nuevasUltimos30Dias, unidadesConPlanActivo, unidadesEnGracia] =
+      await Promise.all([
+        this.prisma.organization.count(),
+        this.prisma.organization.count({ where: { status: 'ACTIVA' } }),
+        this.prisma.organization.count({ where: { status: 'EN_CONFIGURACION' } }),
+        this.prisma.organization.count({ where: { status: 'SUSPENDIDA' } }),
+        this.prisma.organization.count({ where: { plan: 'PRO' } }),
+        this.prisma.organization.count({ where: { plan: 'OPERACION' } }),
+        this.prisma.organization.count({ where: { createdAt: { gte: thirtyDaysAgo } } }),
+        this.prisma.vehicle.count({ where: { traccarDeviceId: { not: null }, gpsVehicularActivo: true } }),
+        this.prisma.vehicle.count({ where: { gpsVehicularVenceEn: { gt: new Date() } } }),
+      ]);
+    return {
+      totalOrganizaciones: total,
+      activas,
+      enConfiguracion,
+      suspendidas,
+      pro,
+      operacion,
+      nuevasUltimos30Dias,
+      unidadesConPlanGpsVehicularActivo: unidadesConPlanActivo,
+      unidadesEnGraciaGpsVehicular: unidadesEnGracia,
+    };
+  }
+
+  /**
+   * Checklist real de onboarding por asociacion (13 sept 2026) -- cada
+   * senal viene de datos que ya existen, ninguna casilla se marca a mano.
+   * corredorConfigurado exige direccion real en AMBOS terminales (no el
+   * nombre: "Juli"/"Puno" son el default del schema, asi que el nombre solo
+   * nunca distingue "ya lo configuraron" de "nadie lo toco todavia").
+   */
+  async getOnboardingStatus(id: string) {
+    await this.findOne(id);
+    const [adminActivo, corredor, empresas, vehiculos, unidadesConGps] = await Promise.all([
+      this.prisma.person.count({ where: { organizationId: id, role: 'ADMINISTRADOR', status: 'ACTIVO' } }),
+      this.prisma.operationalConfig.findUnique({
+        where: { organizationId: id },
+        select: { terminalOriginAddress: true, terminalDestinationAddress: true },
+      }),
+      this.prisma.company.count({ where: { organizationId: id } }),
+      this.prisma.vehicle.count({ where: { organizationId: id } }),
+      this.prisma.vehicle.count({ where: { organizationId: id, traccarDeviceId: { not: null } } }),
+    ]);
+    return {
+      adminActivo: adminActivo > 0,
+      corredorConfigurado: Boolean(corredor?.terminalOriginAddress && corredor?.terminalDestinationAddress),
+      empresasRegistradas: empresas,
+      vehiculosRegistrados: vehiculos,
+      unidadesConGps,
+    };
   }
 }

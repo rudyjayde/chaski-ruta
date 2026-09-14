@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Search, MapPin, AlertCircle, Loader2, CheckCircle2, FilePlus2, X } from 'lucide-react';
-import { fetchTrips, completeTrip, openManifest, routeLabel } from '../../lib/operacion-api';
+import { Search, MapPin, AlertCircle, Loader2, CheckCircle2, FilePlus2, X, Ban } from 'lucide-react';
+import { fetchTrips, completeTrip, cancelTrip, openManifest, routeLabel } from '../../lib/operacion-api';
 import type { Trip, TripStatus } from '../../types';
 import { useAdminDemo } from './AdminApp';
 
@@ -9,6 +9,7 @@ const STATUS_STYLE: Record<TripStatus, { label: string; cls: string }> = {
   ACTIVO: { label: 'En ruta', cls: 'bg-ok/10 text-ok' },
   COMPLETADO: { label: 'Completado', cls: 'bg-primary/10 text-primary' },
   CON_INCIDENCIA: { label: 'Con incidencia', cls: 'bg-danger/10 text-danger' },
+  CANCELADO: { label: 'Anulado', cls: 'bg-muted/10 text-muted' },
 };
 
 const GPS_STYLE: Record<string, string> = {
@@ -29,6 +30,9 @@ export default function TripsPage() {
   const [manifestTrip, setManifestTrip] = useState<Trip | null>(null);
   const [capacityInput, setCapacityInput] = useState('19');
   const [openingManifest, setOpeningManifest] = useState(false);
+  const [cancelTripTarget, setCancelTripTarget] = useState<Trip | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -59,6 +63,30 @@ export default function TripsPage() {
     }
   };
 
+  // "Anular viaje" -- solo para un viaje Programado atascado (se preparo el
+  // manifiesto pero nunca se marco salida). Motivo obligatorio, igual que las
+  // demas excepciones manuales (§3.6).
+  const handleCancel = async () => {
+    if (!cancelTripTarget) return;
+    if (cancelReason.trim().length < 3) {
+      setLoadError('El motivo debe tener al menos 3 caracteres');
+      return;
+    }
+    setCancelling(true);
+    setLoadError('');
+    try {
+      await cancelTrip(cancelTripTarget.id, cancelReason.trim());
+      await reload();
+      setCancelTripTarget(null);
+      setCancelReason('');
+      setSelected(prev => (prev?.id === cancelTripTarget.id ? null : prev));
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'No se pudo anular el viaje');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const handleOpenManifest = async () => {
     if (!manifestTrip) return;
     const capacity = Number(capacityInput);
@@ -86,7 +114,7 @@ export default function TripsPage() {
     return matchSearch && matchStatus;
   });
 
-  const STATUSES: TripStatus[] = ['PROGRAMADO', 'ACTIVO', 'COMPLETADO', 'CON_INCIDENCIA'];
+  const STATUSES: TripStatus[] = ['PROGRAMADO', 'ACTIVO', 'COMPLETADO', 'CON_INCIDENCIA', 'CANCELADO'];
 
   return (
     <div className="flex flex-col h-full">
@@ -209,6 +237,16 @@ export default function TripsPage() {
                         Manifiesto
                       </button>
                     )}
+                    {t.status === 'PROGRAMADO' && (
+                      <button
+                        onClick={e => { e.stopPropagation(); setCancelTripTarget(t); setCancelReason(''); }}
+                        className="flex items-center gap-1.5 px-2 py-1 border border-danger text-danger rounded text-xs font-medium hover:bg-danger/5"
+                        title="Anular un viaje atascado que nunca salio"
+                      >
+                        <Ban size={12} />
+                        Anular
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -251,6 +289,39 @@ export default function TripsPage() {
                 className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary-h disabled:opacity-50"
               >
                 {openingManifest ? 'Abriendo…' : 'Abrir manifiesto'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cancelTripTarget && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true">
+          <div className="bg-surface rounded-lg shadow-xl w-full max-w-sm p-6">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-base font-semibold text-t1">Anular viaje</h3>
+              <button onClick={() => setCancelTripTarget(null)} className="text-muted hover:text-t1" aria-label="Cerrar"><X size={16} /></button>
+            </div>
+            <p className="text-sm text-t2 mb-4">
+              Código {cancelTripTarget.code} — {cancelTripTarget.driverName} · {routeLabel(cancelTripTarget.route, org)}.
+              Esto no borra el manifiesto (queda como historial) — solo libera la unidad para que se pueda inscribir de nuevo en esta ruta.
+            </p>
+            <label className="block text-sm font-medium text-t1 mb-1">Motivo <span className="text-danger">*</span></label>
+            <textarea
+              value={cancelReason}
+              onChange={e => setCancelReason(e.target.value)}
+              rows={3}
+              placeholder="Ej. el conductor se equivocó de ruta y nunca salió"
+              className="w-full px-3 py-2 border border-border rounded-lg text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setCancelTripTarget(null)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-hover">Cerrar</button>
+              <button
+                onClick={handleCancel}
+                disabled={cancelling || cancelReason.trim().length < 3}
+                className="px-4 py-2 text-sm bg-danger text-white rounded-lg hover:opacity-90 disabled:opacity-50"
+              >
+                {cancelling ? 'Anulando…' : 'Anular viaje'}
               </button>
             </div>
           </div>

@@ -63,6 +63,7 @@ Las dos vías reales para que una posición bloqueada no frene la operación:
 2. **Intervención manual del gerente/administrador** — con motivo obligatorio y registro de auditoría (actor, fecha, motivo, cambio antes/después). Reservada para casos de excepción real (accidente, robo, celular perdido, unidad ilocalizable) — **nunca para la operación normal del día a día**. Incluye dos mecanismos ya construidos:
    - Reasignar el dispositivo vinculado a la cuenta del conductor, cuando cambia de celular (§3.2).
    - Resolver una solicitud de **"Inscripción retrasada"**: el conductor bloqueado por un predecesor sin resolver la envía desde su propio panel; el administrador recibe la notificación y decide si llama al predecesor para que se anote, o autoriza la inscripción igual.
+   - **Corrección (8 de septiembre de 2026):** el vehículo predecesor que se demoró, cuando finalmente se inscribe, entra al **final** de la cola de retorno — no recupera el lugar que le correspondía por orden real de salida.
 
 Importante: la evidencia que aporta el propio conductor beneficiado (ej. captura de llamada) **nunca** decide por sí sola — ayuda al gerente a decidir más rápido, pero la decisión formal siempre es una acción explícita del conductor o una intervención manual del gerente. Nunca hay liberación automática por tiempo.
 
@@ -77,8 +78,11 @@ Este es también el único caso en que el administrador coloca manualmente a una
 - **El manifiesto nunca se llena en movimiento.** Regla de seguridad sin excepción — el conductor no puede hacer registro de datos mientras conduce. El manifiesto debe cerrar antes de la salida, siempre.
 - **Solo puede prepararse y guardarse estando LLAMANDO** — ni antes (no hay viaje que llenar) ni en un estado posterior. Corrección (4 de septiembre de 2026): no es "LLAMANDO o más adelante en la fila", es exclusivamente LLAMANDO.
 - No es obligatorio completar los 20 asientos, pero un viaje comercial debe llevar su manifiesto con los pasajeros reales que lleva.
-- Bajo presión real, un manifiesto vacío con respaldo físico en papel **solo corresponde a una reubicación o a una demanda real de pasajeros que no da tiempo de digitar** — no es una salida de rutina para evitar llenar el manifiesto.
-- La digitalización de ese respaldo en papel no es opcional indefinidamente: necesita un estado tipo "pendiente de digitalizar" con una ventana de resolución, para no debilitar la verificación por QR.
+- **Corrección (8 de septiembre de 2026, aclarada el mismo día):** un manifiesto puede cerrar vacío o incompleto con respaldo físico en papel en dos casos — una reubicación (sin pasajeros, no aplica digitalizar después), o una demanda real de pasajeros que no da tiempo de registrar a todos antes de marcar salida. En ambos casos el manifiesto queda con estado "pendiente de digitalizar".
+- **Completar un manifiesto "pendiente de digitalizar" no es reabrirlo ni prepararlo de nuevo — es una acción distinta.** La regla de la línea anterior ("solo se prepara y guarda estando LLAMANDO") es sobre iniciar/preparar un manifiesto nuevo. Digitalizar es pasar a texto lo que el papel ya tiene, sobre un manifiesto que **ya está cerrado** — se hace desde una pantalla aparte ("manifiestos sin completar"), en cualquier momento posterior, sin que el vehículo tenga que seguir LLAMANDO ni estar en ningún estado de cola particular. No se agregan pasajeros que no viajaron; solo se digita lo que el papel ya registró.
+- La digitalización puede apoyarse en IA con visión (`ia-aplicada.md` §2.2, `PENDIENTE DE DECISIÓN`): se sube la foto del papel y Claude pre-llena nombres, asientos y tarifas para que el conductor o administrador solo confirmen, en vez de tipear todo de cero.
+- Sigue existiendo una ventana de resolución obligatoria para digitalizar — no puede quedar pendiente indefinidamente, para no debilitar la verificación por QR.
+- **No existe un despacho administrativo sin manifiesto** ni como flujo normal ni como excepción aprobada (corrección 8 de septiembre de 2026) — ni siquiera en un caso de accidente/robo/celular perdido: esos casos se resuelven reasignando el dispositivo o interviniendo la cola (§3.2, §3.7), nunca saltándose el manifiesto.
 - **Visibilidad del manifiesto para el conductor:** solo ve su manifiesto activo actual y sus propios manifiestos vacíos/pendientes de esa jornada. No ve su propio historial de manifiestos ya cerrados, ni los de otros conductores — eso queda reservado a administrador, socio dueño de la unidad y Super Admin (§6.2 del documento maestro).
 
 ### 3.8.1 Regla global de datos de identidad de pasajero (Jayde, agosto 2026)
@@ -117,7 +121,18 @@ Función adicional (no ligada a la integridad de cola) ya implementada en el có
 
 El documento maestro (§9, §13) exige que ATIPCAR apruebe formalmente estas políticas de tolerancia antes de automatizarlas. El gerente de ATIPCAR ya dio su aceptación en principio a este diseño, y confirmó personalmente la corrección del 4 de septiembre de 2026 (sin timeout, condiciones de re-inscripción, fusión de "marcar llegada" en "inscribirme"). Queda pendiente que el panel de Super Admin permita ajustar estos parámetros (tiempo mínimo, radio GPS, umbral de anomalía) para asociaciones futuras, en caso de que necesiten valores distintos a los de ATIPCAR.
 
-## 6. Pendientes que no deben inventarse (heredados del documento maestro §13)
+## 6. Canal principal por rol (agregado 8 de septiembre de 2026)
+
+Todo este flujo (LLAMANDO, manifiesto, marcar salida, inscribirme, no saldré
+ahora, inscripción retrasada) es hoy pantallas web del conductor y del
+administrador (React + Vite). Cuando la aplicación nativa en Flutter se
+construya -- al final del roadmap, después del sistema web, ver
+`plataformas-web-y-app-nativa.md` §3 -- este mismo flujo será su uso
+principal para el conductor, y el canal de acciones rápidas para el
+administrador (atender una inscripción retrasada, autorizar una
+reubicación) sin tener que abrir la plataforma web completa.
+
+## 6.1. Pendientes que no deben inventarse (heredados del documento maestro §13)
 
 - Precio definitivo de Operación.
 - Política aprobada de ausencia y tolerancia en colas (formalización final más allá del acuerdo de principio ya dado).

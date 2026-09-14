@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Search, ShieldCheck } from 'lucide-react';
 import type { AuditEntry } from '../../types';
 import { fetchAudit } from '../../lib/operacion-api';
+import { useAdminDemo } from './AdminApp';
 
 const maskPersonalData = (text: string | undefined) => {
   if (!text) return '—';
@@ -9,6 +10,7 @@ const maskPersonalData = (text: string | undefined) => {
 };
 
 export default function AuditPage() {
+  const { org } = useAdminDemo();
   const [search, setSearch] = useState('');
   const [filterAction, setFilterAction] = useState('');
   const [entries, setEntries] = useState<AuditEntry[]>([]);
@@ -41,7 +43,7 @@ export default function AuditPage() {
         <ShieldCheck size={16} className="text-t2" />
         <div>
           <h1 className="text-2xl font-bold text-t1">Auditoría</h1>
-          <p className="text-sm text-t2 mt-0.5">Registro de acciones — ATIPCAR</p>
+          <p className="text-sm text-t2 mt-0.5">Registro de acciones — {org?.name ?? 'tu asociación'}</p>
         </div>
       </div>
 

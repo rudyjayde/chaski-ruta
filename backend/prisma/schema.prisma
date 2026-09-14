@@ -4,7 +4,14 @@
 // Ver docs/planes/arquitectura-tecnica.md
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // "native" para desarrollo local (Windows); "debian-openssl-3.0.x" para la
+  // imagen de produccion (node:20-slim sobre Debian Bookworm, que trae
+  // OpenSSL 3 -- Prisma no lo detecta solo dentro de esa imagen "slim" y por
+  // defecto asume 1.1.x, que no existe ahi. Verificado en vivo 13 sept 2026
+  // contra el primer deploy real a Cloud Run: crasheaba con "libssl.so.1.1:
+  // cannot open shared object file").
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
@@ -48,6 +55,15 @@ model Organization {
   driverLiveMapEnabled Boolean   @default(false)
   whatsappAssistantEnabled Boolean @default(false)
 
+  // Dias de gracia del Plan GPS Vehicular (13 sept 2026, decidido con
+  // Jayde): al bajar esta asociacion de PRO a Operacion, las unidades con
+  // equipo instalado conservan GPS este numero de dias antes de necesitar
+  // que el socio pague el servicio individual aparte (ver
+  // organizations.service.ts update() y vehicles.service.ts
+  // setGpsVehicularPlan). Editable por Super Admin en el tab "Plan GPS
+  // Vehicular" -- 10 es el acuerdo comercial por defecto, no un limite fijo.
+  gpsVehicularGraceDays Int @default(10)
+
   // Datos institucionales capturados en el wizard "Nueva asociacion" (paso 0)
   // -- antes se pedian en el formulario y se descartaban silenciosamente,
   // nunca llegaban a guardarse. Editables despues desde el panel de Super
@@ -72,6 +88,12 @@ model Organization {
   manifests          Manifest[]
   relocationOrders   RelocationOrder[]
   delayedRegistrationRequests DelayedRegistrationRequest[]
+  gpsAlerts          GpsAlert[]
+  notices            Notice[]
+  engineLockRequests EngineLockRequest[]
+  routeGeofence      RouteGeofence?
+  passengerProfiles  PassengerProfile[]
+  supportTickets     SupportTicket[]
 
   @@map("organizations")
 }
@@ -95,11 +117,20 @@ model Person {
   role   PersonRole
   status PersonStatus @default(PENDIENTE)
 
-  // Identidad de Google verificada (Sign in with Google) — nunca se le asigna contrasena.
+  // Identidad de Google verificada (Sign in with Google).
   // Ya no es @unique: la MISMA cuenta real de Google confirma dos filas de Person
   // distintas (una por rol) cuando el correo tiene cuenta Socio y Conductor a la vez.
   googleId              String?
   googleEmailVerifiedAt DateTime?
+
+  // Login alternativo por correo + contrasena (ver AuthService.loginWithPassword /
+  // requestPasswordReset / resetPassword). La contrasena es POR CORREO, no por
+  // fila: si el mismo correo tiene 2 cuentas (Socio + Conductor), ambas comparten
+  // el mismo hash -- se define/renueva para todas a la vez en resetPassword(), y
+  // PeopleService.create() la copia automaticamente si ya existe al dar de alta
+  // una segunda cuenta para ese correo. null significa que esa persona nunca puso
+  // contrasena y solo puede entrar por Google.
+  passwordHash String?
 
   // Numero de WhatsApp vinculado para el asistente por WhatsApp (docs/planes/plan-pro.md §8).
   // Solo se responde con datos reales si coincide exactamente con este numero.
@@ -127,6 +158,11 @@ model Person {
   manifestsAsOperator    Manifest[]        @relation("ManifestOperator")
   relocationsConfirmed   RelocationOrder[] @relation("RelocationConfirmedBy")
   delayedRegistrationsResolved DelayedRegistrationRequest[] @relation("DelayedRegistrationResolvedBy")
+  commercialRequestsReviewed CommercialRequest[] @relation("CommercialRequestReviewedBy")
+  landingContentUpdates      LandingContent[]    @relation("LandingContentUpdatedBy")
+  noticesAsAuthor            Notice[]            @relation("NoticeAuthor")
+  noticesAsTarget            Notice[]            @relation("NoticeTarget")
+  supportTicketsAsAuthor     SupportTicket[]     @relation("SupportTicketAuthor")
 
   @@unique([email, role])
   @@index([organizationId])
@@ -227,6 +263,7 @@ enum TripStatus {
   ACTIVO
   COMPLETADO
   CON_INCIDENCIA
+  CANCELADO
 }
 
 enum GpsStatus {
@@ -319,6 +356,47 @@ model Vehicle {
   // nunca coordenadas como si vinieran de un rastreador real, sin serlo).
   traccarDeviceId String? @unique
 
+  // Operador y numero de la SIM del equipo GPS (12 sept 2026, decidido con
+  // Jayde): dato PURAMENTE informativo/de control interno de Super Admin --
+  // ninguna alerta, geocerca ni bloqueo de motor lo lee. Se guarda aparte
+  // (no se trae de Traccar) para no perder ese dato con el tiempo.
+  simOperator String? // 'CLARO' | 'MOVISTAR' | 'BITEL' | 'ENTEL'
+  simNumber   String?
+
+  // Plan GPS Vehicular individual (13 sept 2026, decidido con Jayde): cuando
+  // la asociacion NO es PRO, cada unidad con hardware instalado (traccarDeviceId
+  // presente) puede tener este plan pagado por separado. gpsVehicularActivo
+  // es el interruptor real que Super Admin prende/apaga segun si el socio
+  // pagó -- mientras esta en false, Socio y Conductor de esa unidad dejan de
+  // ver GPS (mapa, historial, alertas, bloqueo de motor, plan) igual que si
+  // no tuvieran hardware, aunque el traccarDeviceId (el hecho tecnico de que
+  // el equipo esta instalado) nunca se borra por esto -- desvincular el IMEI
+  // sigue siendo una accion aparte, solo para cuando el equipo realmente se
+  // retira. gpsVehicularVenceEn es solo una fecha de referencia (ej. el fin
+  // de los 10 dias de gracia al bajar de PRO a Operacion) para que Super
+  // Admin sepa a quien le toca cortar -- nada la lee automaticamente, no hay
+  // cron que desactive nada solo, porque el cobro real es conversacional/
+  // manual (no un gateway de pago integrado).
+  gpsVehicularActivo Boolean   @default(true)
+  gpsVehicularVenceEn DateTime?
+
+  // Mantenimiento predictivo (plan-pro.md §11.1, 12 sept 2026): el intervalo
+  // NUNCA lo inventa el sistema -- lo define el administrador segun la
+  // realidad de su flota. lastServiceKm se compara contra el kilometraje real
+  // que ya reporta Traccar (gps.service.ts) para avisar cuando toca servicio.
+  // Ambos null = la unidad aun no tiene este seguimiento configurado.
+  lastServiceKm     Float?
+  serviceIntervalKm Float?
+  lastServiceAt     DateTime?
+
+  // Bloqueo remoto de motor (12 sept 2026, decidido con Jayde): el socio
+  // SOLICITA, Super Admin CONFIRMA y EJECUTA -- nunca el Administrador de la
+  // asociacion (decision explicita: "los administradores son irresponsables
+  // para esto"). engineLocked es solo el estado actual para mostrar en el
+  // panel; el detalle completo (quien pidio, quien confirmo, cuando se
+  // ejecuto de verdad) vive en EngineLockRequest.
+  engineLocked Boolean @default(false)
+
   plateHistory  VehiclePlateHistory[]
   queueEntries  QueueEntry[]
   trips         Trip[]
@@ -326,6 +404,8 @@ model Vehicle {
   relocationUnits RelocationUnit[]
   delayedRegistrationsRequested DelayedRegistrationRequest[] @relation("DelayedRegistrationRequesting")
   delayedRegistrationsBlocking  DelayedRegistrationRequest[] @relation("DelayedRegistrationBlockedBy")
+  gpsAlerts       GpsAlert[]
+  engineLockRequests EngineLockRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -345,6 +425,225 @@ model VehiclePlateHistory {
 
   @@index([vehicleId])
   @@map("vehicle_plate_history")
+}
+
+/// Alertas GPS automaticas (docs/planes/ia-aplicada.md §1, principio rector):
+/// el sistema SOLO marca evidencia para que el administrador revise -- nunca
+/// sanciona ni concluye nada por su cuenta. Detectadas por un cron sobre la
+/// telemetria real de Traccar (backend/src/gps-alerts), NUNCA inventadas.
+/// (12 sept 2026): se agregan CORTE_ENERGIA y POSIBLE_REMOLQUE porque el
+/// equipo ya reporta energia/ignicion via Traccar (attributes.power/ignition/
+/// motion, verificado en vivo contra ATIPCAR-001) -- ya no falta el dato real
+/// que este mismo enum exigia antes de agregarlos. Sigue sin existir
+/// geometria de ruta para detectar desvio ni deteccion de choque -- esos
+/// siguen sin tipo hasta que haya un dato real que los respalde.
+/// BOTON_PANICO (12 sept 2026): requiere que el instalador cablee un boton
+/// fisico a una entrada digital del Teltonika configurada en prioridad
+/// "Panic" (Teltonika Configurator, pestaña I/O) -- NINGUN equipo real de
+/// esta flota lo tiene cableado todavia, asi que este tipo nunca se ha
+/// disparado con datos reales. La deteccion (gps-alerts.service.ts) asume
+/// que Traccar normaliza ese evento como attributes.alarm === 'sos' (su
+/// convencion estandar para boton de panico/SOS en varios protocolos) --
+/// verificar contra un equipo real con el boton cableado antes de confiar en
+/// esto para una emergencia real.
+/// FALLA_REPORTADA (12 sept 2026): a diferencia de todo lo demas en este enum
+/// (siempre detectado automaticamente por el cron sobre datos reales de
+/// Traccar), esta la crea directamente el conductor desde su panel ("Reportar
+/// falla GPS" / "Reportar emergencia" -- antes esos botones eran decorativos,
+/// solo mostraban un mensaje local sin avisar a nadie). BOTON_PANICO desde
+/// este mismo boton reusa el tipo de arriba -- misma alerta, distinto origen
+/// (hardware vs. reporte manual).
+enum GpsAlertType {
+  DESCONEXION
+  MOVIMIENTO_SIN_VIAJE
+  CORTE_ENERGIA
+  POSIBLE_REMOLQUE
+  FALLA_REPORTADA
+  BOTON_PANICO
+  // Union con accident-detection.service.ts (12 sept 2026): esa deteccion ya
+  // existia (patron de velocidad + inmovilidad, ver comentario ahi -- NO
+  // lectura real de un sensor de impacto) pero solo cambiaba el estado del
+  // viaje y mandaba un correo, nunca aparecia en Alertas GPS ni en el
+  // banner/campanita. Este tipo la conecta al mismo sistema que ya usan
+  // panico/remolque/energia, sin cambiar la logica de deteccion en si.
+  POSIBLE_ACCIDENTE
+  // Geocerca del corredor autorizado (12 sept 2026, ver RouteGeofence): la
+  // unidad tiene un viaje ACTIVO pero su posicion real cae fuera del
+  // poligono dibujado a mano por el administrador. Solo se evalua con viaje
+  // activo -- una unidad parada en su cochera fuera del corredor es normal.
+  FUERA_DE_RUTA
+}
+
+enum GpsAlertStatus {
+  NUEVA
+  EN_REVISION
+  REVISADA
+  DESCARTADA
+}
+
+model GpsAlert {
+  id             String         @id @default(cuid())
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  vehicleId      String
+  vehicle        Vehicle        @relation(fields: [vehicleId], references: [id])
+
+  type        GpsAlertType
+  status      GpsAlertStatus @default(NUEVA)
+  description String
+
+  detectedAt DateTime  @default(now())
+  reviewedAt DateTime?
+  reviewedBy String?
+  reviewNote String?
+
+  @@index([organizationId, status])
+  @@index([vehicleId, type, status])
+  @@map("gps_alerts")
+}
+
+/// Bloqueo remoto de motor (12 sept 2026, decidido con Jayde) -- flujo de
+/// doble confirmacion: el socio SOLICITA su propia unidad (motivo
+/// obligatorio), Super Admin CONFIRMA o CANCELA (nunca el Administrador de
+/// la asociacion). Si al confirmar la unidad ya esta detenida, se ejecuta al
+/// toque; si esta en movimiento, queda CONFIRMADO y el cron de
+/// engine-lock.service.ts espera una detencion SOSTENIDA (no un instante,
+/// para no cortar en medio de un semaforo) antes de ejecutar de verdad.
+///
+/// Ejecutar = enviar el comando estandar de Traccar 'engineStop' /
+/// 'engineResume' (docs.traccar.org/api) -- es la abstraccion oficial de
+/// Traccar para inmovilizadores, NO un indice de salida digital inventado
+/// por este sistema. Sin verificar todavia contra un equipo real: ningun
+/// vehiculo de esta flota tiene el rele de combustible/ignicion cableado a
+/// una salida digital del Teltonika -- eso es instalacion fisica, no
+/// software, y sigue pendiente.
+enum EngineLockStatus {
+  SOLICITADO
+  CONFIRMADO
+  EJECUTADO
+  CANCELADO
+  RESTAURADO
+}
+
+model EngineLockRequest {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  vehicleId      String
+  vehicle        Vehicle      @relation(fields: [vehicleId], references: [id])
+
+  status EngineLockStatus @default(SOLICITADO)
+
+  requestedById String // Person.id del socio (siempre dueño de esta unidad)
+  requestReason String
+
+  confirmedById String? // Person.id del Super Admin
+  confirmedAt   DateTime?
+
+  // Mientras esta CONFIRMADO y el vehiculo sigue en movimiento, el cron
+  // marca aqui desde cuando lo ve detenido de forma continua -- si vuelve a
+  // moverse antes de cumplir el tiempo minimo, se reinicia a null (nunca
+  // cuenta una parada de semaforo como si fuera la definitiva).
+  stopCandidateSince DateTime?
+
+  executedAt DateTime? // cuando de verdad se envio el comando engineStop
+
+  restoredById String? // Person.id del Super Admin que desbloqueo
+  restoredAt   DateTime?
+  restoreReason String?
+
+  cancelledById String?
+  cancelledAt   DateTime?
+  cancelReason  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@index([vehicleId, status])
+  @@map("engine_lock_requests")
+}
+
+enum NoticeAudience {
+  CONDUCTORES
+  SOCIOS
+  AMBOS
+  // Solo para el aviso masivo de Super Admin (13 sept 2026) -- un aviso
+  // dirigido SOLO al Administrador de la asociacion, invisible para
+  // Socio/Conductor (ver NoticesService.findForRole: CONDUCTOR/SOCIO nunca
+  // incluyen este valor en su consulta).
+  ADMINISTRADORES
+}
+
+/// Aviso que un administrador redacta y dirige a conductores, socios o ambos
+/// (plan-pro.md §9). Se entrega SOLO como notificacion dentro de la
+/// plataforma -- nunca por WhatsApp: Business Platform no permite texto libre
+/// iniciado por el negocio fuera de plantillas pre-aprobadas por Meta, y esas
+/// plantillas cuestan mas y tienen mas restricciones si califican como
+/// "marketing". authorName queda denormalizado (igual que AuditEntry.actorRole)
+/// para no depender de un JOIN solo para mostrar quien lo escribio.
+model Notice {
+  id             String         @id @default(cuid())
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  authorId       String
+  author         Person         @relation("NoticeAuthor", fields: [authorId], references: [id])
+  authorName     String
+
+  title    String
+  body     String
+  audience NoticeAudience
+
+  // Aviso PRIVADO a una sola persona (12 sept 2026) -- a diferencia del resto
+  // (audience-broadcast, sin autor de sistema), esto lo crea el propio
+  // backend (ej. engine-lock.service.ts) para avisar al socio dueño de una
+  // unidad que su solicitud de bloqueo cambio de estado. null = aviso normal
+  // por audiencia, como siempre. readAt solo tiene sentido para estos.
+  targetPersonId String?
+  targetPerson   Person?   @relation("NoticeTarget", fields: [targetPersonId], references: [id])
+  readAt         DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([targetPersonId, readAt])
+  @@map("notices")
+}
+
+enum SupportTicketStatus {
+  ABIERTO
+  EN_PROGRESO
+  RESUELTO
+}
+
+/// Ticket de soporte real (13 sept 2026, decidido con Jayde): el
+/// Administrador de una asociacion reporta un problema desde su propio
+/// panel; Super Admin lo ve en una cola cruzando TODAS las asociaciones
+/// (mismo patron que ComplaintBookEntry/CommercialRequest) y responde con
+/// una nota real, nunca resuelve nada solo. Reemplaza la pantalla
+/// "Soporte" que antes era un placeholder fijo ("Módulo disponible en la
+/// versión completa").
+model SupportTicket {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  authorId       String
+  author         Person       @relation("SupportTicketAuthor", fields: [authorId], references: [id])
+  authorName     String
+
+  subject String
+  message String
+
+  status      SupportTicketStatus @default(ABIERTO)
+  response    String?
+  respondedAt DateTime?
+  respondedBy String? // nombre de quien respondio en Super Admin, denormalizado
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([status])
+  @@map("support_tickets")
 }
 
 /// Parámetros configurables por asociación para las reglas antifraude
@@ -566,8 +865,41 @@ model Passenger {
   origin        String
   destination   String
 
+  // Dato NO obligatorio (12 sept 2026, decidido con Jayde): si el conductor
+  // lo llena, se guarda y se usa para mandarle un "boleto" real por correo a
+  // ese pasajero (ver ManifestsService.recordPassengerAndNotify) -- si lo
+  // deja vacio, el manifiesto se guarda igual, nunca bloquea.
+  email String?
+
   @@index([manifestId])
   @@map("passengers")
+}
+
+/// Perfil agregado de pasajero recurrente por asociacion (12 sept 2026,
+/// decidido con Jayde): identificado por DNI dentro de cada asociacion (el
+/// mismo DNI puede viajar con distintas asociaciones sin mezclarse). El
+/// email persiste aunque un viaje futuro no lo vuelva a escribir el
+/// conductor -- asi no hace falta reescribirlo cada vez. tripCount/lastTripAt
+/// alimentan el CRM de pasajeros en Super Admin (recurrencia real, nunca
+/// inventada).
+model PassengerProfile {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  dni   String
+  name  String
+  email String?
+
+  tripCount  Int       @default(0)
+  lastTripAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, dni])
+  @@index([organizationId])
+  @@map("passenger_profiles")
 }
 
 /// Orden de reubicación de flota entre terminales (§9 / plan-operacion.md).
@@ -656,4 +988,212 @@ model DelayedRegistrationRequest {
 
   @@index([organizationId, status])
   @@map("delayed_registration_requests")
+}
+
+enum CommercialSolution {
+  OPERACION
+  PRO
+  GPS_VEHICULAR
+}
+
+enum CommercialRequestStatus {
+  NUEVA
+  CONTACTADA
+  COTIZADA
+  CONVERTIDA
+  DESCARTADA
+}
+
+/// Solicitud comercial enviada desde la landing publica -- NO crea nada por si
+/// sola: ni asociacion, ni usuario, ni suscripcion, ni pago (docs/planes/
+/// landing-publica-y-solicitudes-comerciales.md §5). El Super Admin la revisa
+/// aqui; la cotizacion y la coordinacion de pagos/instalacion pasan por fuera
+/// del sistema (llamada, correo). Recien despues, si se concreta, el Super
+/// Admin crea la asociacion real con el wizard existente
+/// (OrganizationsService.create) -- este modelo no se convierte solo en
+/// Organization.
+///
+/// `answers` guarda el formulario completo tal como el interesado lo envio.
+/// Hoy los campos son fijos segun `solution` (ver Landing.tsx); el campo es
+/// JSON a proposito para poder migrar al formulario administrable/dinamico
+/// (Nivel 2 del roadmap, ver docs/planes/roadmap-implementacion.md) sin
+/// romper ni reinterpretar solicitudes ya guardadas -- cada una conserva
+/// exactamente las preguntas y respuestas que vio el cliente en su momento.
+model CommercialRequest {
+  id       String                  @id @default(cuid())
+  solution CommercialSolution
+  status   CommercialRequestStatus @default(NUEVA)
+
+  contactName  String
+  contactEmail String
+  contactPhone String?
+  orgName      String? // asociacion (Operacion/PRO); vacio en GPS Vehicular individual
+  ruc          String? // RUC de la asociacion, o DNI/RUC del socio en GPS Vehicular
+
+  answers Json
+
+  reviewedById String?
+  reviewedBy   Person?   @relation("CommercialRequestReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt   DateTime?
+  notes        String? // notas internas del Super Admin -- nunca visibles para el interesado
+
+  createdAt DateTime @default(now())
+
+  @@index([status, createdAt])
+  @@map("commercial_requests")
+}
+
+/// Cuenta de VISITANTE de la landing publica -- completamente separada de
+/// Person/Organization (nunca da acceso al panel operativo por si sola).
+/// Sirve solo para cosas de bajo riesgo, como ver el estado de las
+/// Solicitudes comerciales que el visitante envio con este correo.
+///
+/// Regla dura de seguridad: passwordHash NUNCA prueba que el visitante es
+/// dueño real de ese correo (cualquiera puede escribir un correo ajeno al
+/// registrarse). Por eso una cuenta de visitante -- tenga o no contraseña --
+/// JAMAS otorga acceso al portal de asociaciones. Solo Google (que si
+/// verifica el correo) puede resultar en una sesion real de Person -- ver
+/// AuthService#loginOrCreateVisitor(), que ni siquiera pasa por esta tabla
+/// cuando el correo de Google ya es un Person real.
+model WebVisitor {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String?
+  googleId     String?
+  createdAt    DateTime @default(now())
+
+  @@map("web_visitors")
+}
+
+/// Contenido editable de la landing publica desde Super Admin (Nivel 2 del
+/// roadmap, ver docs/planes/landing-publica-y-solicitudes-comerciales.md §9).
+/// Alcance actual: solo el contenido visual (hero, problemas/capacidades,
+/// planes y caracteristicas, referencia ATIPCAR, FAQ) -- guardado directo,
+/// sin borrador/preview/historial de versiones (eso queda pendiente para mas
+/// adelante si se necesita). NO es por asociacion: es el sitio publico propio
+/// de CHASKI AI, una sola fila por seccion (`key`).
+///
+/// Si una `key` todavia no tiene fila, el backend devuelve como valor por
+/// defecto el mismo contenido que hoy vive escrito directo en Landing.tsx --
+/// recien se crea/actualiza una fila cuando alguien la edita y guarda desde
+/// Super Admin. Claves usadas hoy (ver landing-content.service.ts):
+/// HERO, PROBLEMS, CAPABILITIES, PLANS, ATIPCAR_REFERENCE, FAQ.
+model LandingContent {
+  id  String @id @default(cuid())
+  key String @unique
+
+  data Json
+
+  updatedById String?
+  updatedBy   Person?  @relation("LandingContentUpdatedBy", fields: [updatedById], references: [id])
+  updatedAt   DateTime @updatedAt
+
+  @@map("landing_content")
+}
+
+enum ComplaintType {
+  RECLAMO
+  QUEJA
+}
+
+enum ComplaintStatus {
+  RECIBIDO
+  EN_PROCESO
+  RESPONDIDO
+}
+
+/// Libro de Reclamaciones virtual de CHASKI AI (IMPORT STAR PERUVIAN EIRL)
+/// como proveedor del servicio -- requisito legal en Peru (Codigo de
+/// Proteccion y Defensa del Consumidor, Ley 29571, y su reglamento de hoja
+/// de reclamacion virtual). Es GLOBAL, no por asociacion: aqui reclama
+/// cualquier persona sobre el servicio que presta CHASKI AI, no sobre el
+/// servicio de transporte de una asociacion cliente (eso, si algun dia hace
+/// falta, seria un libro aparte por asociacion -- fuera de alcance hoy).
+/// `number` es el correlativo que se le entrega al consumidor (RC-{año}-{secuencial}).
+model ComplaintBookEntry {
+  id     String        @id @default(cuid())
+  number String        @unique
+  type   ComplaintType
+
+  consumerName     String
+  consumerDocument String // DNI/CE/Pasaporte
+  consumerAddress  String?
+  consumerEmail    String
+  consumerPhone    String?
+
+  // Si el reclamante es menor de edad, la norma exige los datos del padre/
+  // apoderado que reclama en su representacion.
+  isMinor      Boolean @default(false)
+  guardianName String?
+
+  serviceDescription String // bien o servicio contratado sobre el que reclama
+  claimedAmount      Float? // monto reclamado, si aplica
+
+  detail          String // detalle del reclamo/queja
+  consumerRequest String // que pide el consumidor
+
+  status           ComplaintStatus @default(RECIBIDO)
+  providerResponse String? // respuesta de CHASKI AI, cargada desde Super Admin
+  respondedAt      DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([status, createdAt])
+  @@map("complaint_book_entries")
+}
+
+/// Geocerca del corredor autorizado (12 sept 2026, decidido con Jayde): un
+/// polígono dibujado A MANO por el administrador sobre el mapa real -- NUNCA
+/// generado a partir de una línea recta entre los dos terminales (la
+/// carretera de montaña Juli-Puno tiene curvas reales, una franja recta
+/// daría falsos positivos). `points` es el arreglo de vértices en el orden
+/// en que se dibujaron: [{ lat, lng }, ...]. Un corredor por asociación por
+/// ahora (se redibuja/reemplaza, no se versiona).
+model RouteGeofence {
+  id             String       @id @default(cuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  points Json // [{ lat: number, lng: number }, ...]
+
+  updatedById String // Person.id de quien lo dibujó/guardó por última vez
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("route_geofences")
+}
+
+/// Salud tecnica REAL de la propia infraestructura de CHASKI AI (12 sept
+/// 2026, decidido con Jayde) -- NO es el GPS de las asociaciones (eso ya
+/// vive en GpsAlert/Vehicle), es monitoreo de los servicios propios: la
+/// base de datos, el servidor Traccar y el envio de correos (Resend). Un
+/// cron guarda una fila por servicio cada pocos minutos; "Salud tecnica"
+/// (Super Admin) lee este historial para mostrar estado actual + uptime 30d
+/// + una tira de los ultimos chequeos -- nunca un numero inventado.
+enum HealthCheckService {
+  BASE_DE_DATOS
+  TRACCAR
+  NOTIFICACIONES
+  CLOUDINARY
+  ASISTENTE_IA
+}
+
+enum HealthCheckStatus {
+  OK
+  DEGRADADO
+  CAIDO
+}
+
+model HealthCheckLog {
+  id           String             @id @default(cuid())
+  service      HealthCheckService
+  status       HealthCheckStatus
+  latencyMs    Int?
+  errorMessage String?
+  checkedAt    DateTime           @default(now())
+
+  @@index([service, checkedAt])
+  @@map("health_check_logs")
 }

@@ -7,8 +7,20 @@ import { PrismaService } from '../prisma/prisma.service';
 // Regla de diseno obligatoria: Claude SOLO puede responder con datos reales llamando
 // a una de las herramientas de abajo (function/tool calling) -- nunca debe inventar
 // ni calcular una cifra de memoria, para que nunca "alucine" un dato operativo.
-const MODEL = 'claude-sonnet-4-5-20250929';
+//
+// Modelo Haiku por defecto (Jayde, 9 sept 2026): este asistente responde
+// preguntas puntuales de lookup (donde esta un vehiculo, cuantas vueltas
+// hizo, etc.) -- no necesita el modelo mas caro para eso. Configurable por
+// ASSISTANT_MODEL en .env sin tocar codigo (por si el id de modelo cambia,
+// o si mas adelante se prefiere Sonnet para preguntas mas complejas).
+const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 const MAX_TOOL_ROUNDS = 5;
+
+// El hash de la contraseña NUNCA debe salir del backend -- ni al navegador
+// ni, en este caso, a la API de Anthropic como resultado de una herramienta
+// (mismo criterio que people.service.ts / vehicles.service.ts). Select
+// explicito en vez de "currentDriver: true" / "driver: true".
+const PERSON_NAME_SELECT = { id: true, name: true } as const;
 
 export interface ChatTurn {
   role: 'user' | 'assistant';
@@ -66,7 +78,7 @@ Regla obligatoria de aislamiento entre asociaciones (muy importante, nunca la ro
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const response = await this.client.messages.create({
-        model: MODEL,
+        model: this.config.get<string>('ASSISTANT_MODEL') || DEFAULT_MODEL,
         max_tokens: 1024,
         system,
         tools: this.tools(),
@@ -226,7 +238,7 @@ Regla obligatoria de aislamiento entre asociaciones (muy importante, nunca la ro
     if (!codigo) return { error: 'Falta el codigo de la unidad' };
     const vehicle = await this.prisma.vehicle.findFirst({
       where: { organizationId, code: codigo },
-      include: { company: true, currentDriver: true },
+      include: { company: true, currentDriver: { select: PERSON_NAME_SELECT } },
     });
     if (!vehicle) {
       return { encontrado: false, mensaje: `No existe ninguna unidad con codigo "${codigo}" en esta asociacion.` };
@@ -257,6 +269,7 @@ Regla obligatoria de aislamiento entre asociaciones (muy importante, nunca la ro
     if (!nombre) return { error: 'Falta el nombre del conductor' };
     const drivers = await this.prisma.person.findMany({
       where: { organizationId, role: 'CONDUCTOR', name: { contains: nombre, mode: 'insensitive' } },
+      select: { name: true, code: true, company: true, status: true },
       take: 5,
     });
     if (drivers.length === 0) {
@@ -290,6 +303,7 @@ Regla obligatoria de aislamiento entre asociaciones (muy importante, nunca la ro
     if (nombre_conductor) {
       const driver = await this.prisma.person.findFirst({
         where: { organizationId, role: 'CONDUCTOR', name: { contains: nombre_conductor, mode: 'insensitive' } },
+        select: { id: true, name: true },
       });
       if (!driver) return { encontrado: false, mensaje: `No se encontro al conductor "${nombre_conductor}".` };
       driverId = driver.id;
@@ -333,7 +347,7 @@ Regla obligatoria de aislamiento entre asociaciones (muy importante, nunca la ro
     }
     const entries = await this.prisma.queueEntry.findMany({
       where: { organizationId, route: ruta as any },
-      include: { vehicle: true, driver: true },
+      include: { vehicle: true, driver: { select: PERSON_NAME_SELECT } },
       orderBy: { position: 'asc' },
     });
     return {
@@ -400,6 +414,7 @@ Regla obligatoria de aislamiento entre asociaciones (muy importante, nunca la ro
         organizationId,
         ...(rol ? { role: rol as any } : { role: { in: ['CONDUCTOR', 'SOCIO', 'ADMINISTRADOR'] } }),
       },
+      select: { role: true, status: true },
     });
     const porRol: Record<string, number> = {};
     const porEstadoCuenta: Record<string, number> = {};

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   AlertTriangle, ArrowRight, Clock, CheckCircle, AlertCircle,
-  TrendingUp, Truck, Users, MapPin, Wifi, WifiOff,
+  TrendingUp, Truck, Users, MapPin, Wifi, WifiOff, Sparkles,
 } from 'lucide-react';
 import type { QueueEntry, Trip, Manifest, RelocationOrder } from '../../types';
 import { useAdminDemo } from './AdminApp';
@@ -9,8 +9,10 @@ import { getQueueDisplayOrder, getOperationalPosition } from '../../lib/queue-ui
 import {
   fetchQueue, fetchTrips, fetchManifests, fetchRelocations, advanceQueueEntry, routeLabel, routeLabelShort, terminalName,
   fetchGpsLive, fetchOperationalConfig, type LiveVehiclePosition, type OperationalConfig,
+  fetchDailyDigest, type DailyDigestFacts, fetchVehicles, fetchGpsDevices, type VehicleGpsStatus,
 } from '../../lib/operacion-api';
 import LiveFleetMap, { ROUTE_COLOR } from '../../components/LiveFleetMap';
+import GpsAlertBanner from '../../components/GpsAlertBanner';
 
 const GPS_WIDGET_REFRESH_MS = 15000;
 
@@ -80,6 +82,28 @@ export default function OperationsCenter({ onNavigate }: Props) {
   const [version, setVersion] = useState(0);
   const [gpsPositions, setGpsPositions] = useState<LiveVehiclePosition[] | null>(null);
   const [gpsConfig, setGpsConfig] = useState<OperationalConfig | null>(null);
+  const [digestSummary, setDigestSummary] = useState<string | null>(null);
+  const [digestFacts, setDigestFacts] = useState<DailyDigestFacts | null>(null);
+  const [digestLoading, setDigestLoading] = useState(true);
+  const [totalUnits, setTotalUnits] = useState<number | null>(null);
+  const [offlineDevice, setOfflineDevice] = useState<VehicleGpsStatus | null>(null);
+
+  // Resumen diario para el gerente (ia-aplicada.md §2.3) -- se pide una vez al
+  // abrir el panel, no en cada refresco de las colas. Best-effort: si falla o
+  // Claude no esta configurado, la tarjeta simplemente no aparece (nunca
+  // bloquea ni rompe el resto del panel).
+  useEffect(() => {
+    let cancelled = false;
+    fetchDailyDigest()
+      .then(res => {
+        if (cancelled) return;
+        setDigestFacts(res.facts);
+        setDigestSummary(res.summary);
+      })
+      .catch(() => { /* se degrada sin mostrar la tarjeta */ })
+      .finally(() => { if (!cancelled) setDigestLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000 * 30);
@@ -102,6 +126,17 @@ export default function OperationsCenter({ onNavigate }: Props) {
     return () => clearInterval(id);
   }, [isPRO, refreshGps]);
 
+  // Tarjeta de alerta GPS del resumen: solo aparece si de verdad hay una
+  // unidad vinculada sin señal -- nunca un texto fijo (ia-aplicada.md §2.6).
+  useEffect(() => {
+    if (!isPRO) return;
+    let cancelled = false;
+    fetchGpsDevices()
+      .then(list => { if (!cancelled) setOfflineDevice(list.find(d => d.linked && d.online === 'offline') ?? null); })
+      .catch(() => { /* se degrada sin mostrar la tarjeta */ });
+    return () => { cancelled = true; };
+  }, [isPRO]);
+
   useEffect(() => {
     let cancelled = false;
     Promise.all([fetchQueue('JULI_PUNO'), fetchQueue('PUNO_JULI'), fetchTrips(), fetchManifests(), fetchRelocations()])
@@ -116,6 +151,12 @@ export default function OperationsCenter({ onNavigate }: Props) {
       .catch(() => { /* se degrada a listas vacias mientras tanto */ });
     return () => { cancelled = true; };
   }, [version]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchVehicles().then(list => { if (!cancelled) setTotalUnits(list.length); }).catch(() => { /* se degrada sin mostrar el total */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const todayLabel = new Date().toLocaleDateString('es-PE', { day: '2-digit', month: 'long', year: 'numeric' });
   const timeLabel = now.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: true });
@@ -160,6 +201,37 @@ export default function OperationsCenter({ onNavigate }: Props) {
         </div>
       </div>
 
+      {isPRO && <GpsAlertBanner />}
+
+      {/* Resumen diario IA (ia-aplicada.md §2.3) -- las cifras ya las calculo
+          el backend con Prisma; Claude solo las redacta. Si no hay resumen en
+          prosa (Claude no configurado o fallo puntual), se arma una version
+          simple con los mismos `facts` en vez de ocultar la tarjeta entera. */}
+      {!digestLoading && digestFacts && (
+        <div className="bg-gradient-to-r from-primary/5 to-transparent border border-primary/20 rounded-lg px-5 py-4 flex items-start gap-3">
+          <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+            <Sparkles size={18} className="text-primary" />
+          </div>
+          <div className="flex-1">
+            <p className="text-xs font-semibold text-primary uppercase tracking-wide mb-1">Resumen del día (IA)</p>
+            <p className="text-sm text-t1 leading-relaxed">
+              {digestSummary ?? [
+                `Hoy se completaron ${digestFacts.vueltasCompletadasHoy} vuelta(s), con ${digestFacts.pasajerosTransportadosHoy} pasajero(s) transportado(s) y S/ ${digestFacts.recaudacionHoy} recaudados.`,
+                digestFacts.manifiestosPendientesDeDigitalizar > 0
+                  ? `Hay ${digestFacts.manifiestosPendientesDeDigitalizar} manifiesto(s) pendiente(s) de digitalizar.`
+                  : '',
+                digestFacts.inscripcionesRetrasadasPendientesAhora > 0
+                  ? `Hay ${digestFacts.inscripcionesRetrasadasPendientesAhora} inscripción(es) retrasada(s) esperando resolución.`
+                  : '',
+                digestFacts.anomaliasRecaudacionHoy.length > 0
+                  ? `${digestFacts.anomaliasRecaudacionHoy.length} manifiesto(s) quedaron marcados para revisar por una caída de recaudación frente a su historial (no es una acusación).`
+                  : '',
+              ].filter(Boolean).join(' ')}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Day totals */}
       <div className="grid grid-cols-4 gap-4">
         {[
@@ -184,7 +256,7 @@ export default function OperationsCenter({ onNavigate }: Props) {
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-base font-semibold text-t1">Distribución de flota</h2>
-          <span className="text-sm text-muted">Mostrando {queueJP.length + queuePJ.length + activeTrips.length + FLEET_EN_RUTA_PJ.length + (activeRelocation?.units.length ?? 0)} de 60 unidades</span>
+          <span className="text-sm text-muted">Mostrando {queueJP.length + queuePJ.length + activeTrips.length + FLEET_EN_RUTA_PJ.length + (activeRelocation?.units.length ?? 0)} de {totalUnits ?? '—'} unidades</span>
         </div>
         <div className="grid grid-cols-7 gap-3">
           {[
@@ -403,7 +475,7 @@ export default function OperationsCenter({ onNavigate }: Props) {
                 </div>
               </div>
             )}
-            {!activeRelocation && !incidentManifest && !nextToCall && !isPRO && (
+            {!activeRelocation && !incidentManifest && !nextToCall && !(isPRO && offlineDevice) && (
               <p className="text-sm text-t2 py-2">Sin alertas ni decisiones pendientes por ahora.</p>
             )}
             {nextToCall && (
@@ -421,12 +493,15 @@ export default function OperationsCenter({ onNavigate }: Props) {
                 </div>
               </div>
             )}
-            {isPRO && (
+            {isPRO && offlineDevice && (
               <div className="flex items-start gap-3 p-3.5 rounded-lg border border-t2/20 bg-t2/5">
                 <WifiOff size={16} className="text-muted mt-0.5 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-t1">GPS PRO — Alerta de señal</p>
-                  <p className="text-sm text-t2 mt-0.5">Unidad 003 sin señal desde hace 2 días. Requiere revisión técnica.</p>
+                  <p className="text-sm text-t2 mt-0.5">
+                    Unidad {offlineDevice.code} sin señal
+                    {offlineDevice.lastUpdate ? ` desde ${new Date(offlineDevice.lastUpdate).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}. Requiere revisión técnica.
+                  </p>
                   <button
                     onClick={() => onNavigate('gps-alerts')}
                     className="flex items-center gap-1 mt-2.5 px-3 py-1.5 text-sm font-medium text-t1 border border-border rounded-lg bg-white hover:bg-hover transition-colors"

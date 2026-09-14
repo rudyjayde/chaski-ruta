@@ -30,7 +30,7 @@ export type EvidenceType =
 export type VehicleType = 'SPRINTER' | 'HIACE' | 'MASTER';
 export type RouteDir = 'JULI_PUNO' | 'PUNO_JULI';
 export type ManifestStatus = 'BORRADOR' | 'CERRADO' | 'CON_INCIDENCIA' | 'CORREGIDO';
-export type TripStatus = 'PROGRAMADO' | 'ACTIVO' | 'COMPLETADO' | 'CON_INCIDENCIA';
+export type TripStatus = 'PROGRAMADO' | 'ACTIVO' | 'COMPLETADO' | 'CON_INCIDENCIA' | 'CANCELADO';
 export type RelocationStatus = 'DETECTADO' | 'PROPUESTA' | 'AUTORIZADA' | 'EN_TRASLADO' | 'COMPLETADA';
 export type PaymentMethod = 'EFECTIVO' | 'YAPE' | 'PLIN' | 'TRANSFERENCIA' | 'QR';
 
@@ -59,6 +59,9 @@ export interface Passenger {
   paymentMethod: PaymentMethod;
   origin: string;
   destination: string;
+  // No obligatorio (12 sept 2026): si el conductor lo llena, se le manda un
+  // correo tipo boleto para ese viaje.
+  email?: string;
 }
 
 export interface Manifest {
@@ -87,6 +90,7 @@ export interface Manifest {
 
 export interface Trip {
   id: string;
+  vehicleId?: string;
   code: string;
   plate: string;
   vehicleType: VehicleType;
@@ -104,6 +108,7 @@ export interface Trip {
   scheduledDepartureISO?: string;
   actualDepartureISO?: string;
   scheduledArrivalISO?: string;
+  actualArrivalISO?: string;
 }
 
 export interface RelocationUnit {
@@ -168,6 +173,23 @@ export interface Unit {
   // GPS PRO / GPS Vehicular: uniqueId del dispositivo Traccar vinculado a esta
   // unidad (normalmente el IMEI del Teltonika). Undefined = sin GPS real todavia.
   traccarDeviceId?: string;
+  // Operador y numero de la SIM del equipo GPS (12 sept 2026): dato
+  // PURAMENTE informativo/de control interno de Super Admin -- ninguna
+  // alerta, geocerca ni bloqueo de motor lo lee.
+  simOperator?: string;
+  simNumber?: string;
+  // Plan GPS Vehicular individual (13 sept 2026): interruptor real que Super
+  // Admin prende/apaga segun si el socio pago el servicio -- si es false,
+  // Socio/Conductor de esta unidad dejan de ver GPS aunque traccarDeviceId
+  // siga vinculado. gpsVehicularVenceEn es solo una fecha de referencia
+  // (ej. fin de los 10 dias de gracia), nadie la lee automaticamente.
+  gpsVehicularActivo?: boolean;
+  gpsVehicularVenceEn?: string | null;
+  // Mantenimiento predictivo (plan-pro.md §11.1): el intervalo lo define el
+  // administrador -- undefined = todavia no configurado para esta unidad.
+  lastServiceKm?: number;
+  serviceIntervalKm?: number;
+  lastServiceAt?: string;
 }
 
 export interface Company {

@@ -68,7 +68,48 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new Error(message);
   }
   if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  // Un GET que devuelve null (ej. "todavia no hay corredor dibujado para
+  // esta asociacion") llega con el cuerpo vacio incluso en 200 -- res.json()
+  // truena con "Unexpected end of JSON input" sobre texto vacio. Se lee como
+  // texto primero para nunca romper una pantalla solo porque el recurso
+  // legitimamente no existe todavia.
+  const text = await res.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
+}
+
+export type ManifestPublicVerification = {
+  number: string;
+  route: RouteDir;
+  date: string;
+  departureTime: string;
+  arrivalTime: string | null;
+  code: string;
+  plate: string;
+  model: string;
+  vehicleType: VehicleType;
+  capacity: number;
+  association: string;
+  company: string;
+  driver: string;
+  passengers: {
+    seat: number;
+    name: string;
+    dni: string;
+    origin: string;
+    destination: string;
+    fare: number;
+    paymentMethod: PaymentMethod;
+  }[];
+};
+
+// Verificacion PUBLICA de un manifiesto (quien escanea el QR de un manifiesto
+// impreso puede no tener cuenta ni token) -- por eso NO usa request(), que
+// siempre agrega Authorization/organizationId; es un fetch directo y simple.
+export async function verifyManifestPublic(token: string): Promise<ManifestPublicVerification | null> {
+  const res = await fetch(`${apiUrl()}/manifests-public/verify/${encodeURIComponent(token)}`);
+  if (!res.ok) return null;
+  return (await res.json()) as ManifestPublicVerification;
 }
 
 function formatTime(value?: string | null): string {
@@ -116,6 +157,13 @@ interface RawVehicle {
   currentDriver?: { id: string; name: string } | null;
   plateHistory?: { plate: string; fromDate: string; toDate: string | null }[];
   traccarDeviceId?: string | null;
+  simOperator?: string | null;
+  simNumber?: string | null;
+  gpsVehicularActivo?: boolean;
+  gpsVehicularVenceEn?: string | null;
+  lastServiceKm?: number | null;
+  serviceIntervalKm?: number | null;
+  lastServiceAt?: string | null;
 }
 interface RawPerson {
   id: string;
@@ -143,6 +191,7 @@ interface RawPassenger {
   paymentMethod: PaymentMethod;
   origin: string;
   destination: string;
+  email?: string | null;
 }
 interface RawManifest {
   id: string;
@@ -199,7 +248,7 @@ function mapQueueEntry(raw: RawQueueEntry): QueueEntry {
 }
 
 function mapPassenger(raw: RawPassenger): Passenger {
-  return { id: raw.id, name: raw.name, dni: raw.dni, seat: raw.seat, fare: raw.fare, paymentMethod: raw.paymentMethod, origin: raw.origin, destination: raw.destination };
+  return { id: raw.id, name: raw.name, dni: raw.dni, seat: raw.seat, fare: raw.fare, paymentMethod: raw.paymentMethod, origin: raw.origin, destination: raw.destination, email: raw.email ?? undefined };
 }
 
 function mapManifest(raw: RawManifest): Manifest {
@@ -231,6 +280,7 @@ function mapManifest(raw: RawManifest): Manifest {
 function mapTrip(raw: RawTrip): Trip {
   return {
     id: raw.id,
+    vehicleId: raw.vehicle?.id,
     code: raw.vehicle?.code ?? '—',
     plate: raw.vehicle?.plate ?? '—',
     vehicleType: raw.vehicle?.vehicleType ?? 'SPRINTER',
@@ -248,6 +298,7 @@ function mapTrip(raw: RawTrip): Trip {
     scheduledDepartureISO: raw.scheduledDeparture ?? undefined,
     actualDepartureISO: raw.actualDeparture ?? undefined,
     scheduledArrivalISO: raw.scheduledArrival ?? undefined,
+    actualArrivalISO: raw.actualArrival ?? undefined,
   };
 }
 
@@ -259,8 +310,11 @@ export async function fetchQueue(route: RouteDir): Promise<QueueEntry[]> {
   return raw.map(mapQueueEntry);
 }
 
-export async function joinQueue(route: RouteDir, vehicleId: string, deviceId?: string, isRelocation?: boolean): Promise<void> {
-  await request(`/queues/${route}/join`, { method: 'POST', body: JSON.stringify({ vehicleId, deviceId, isRelocation }) });
+// lat/lng: ubicacion del celular al momento de "Inscribirme" (§3.3), chequeo
+// puntual (nunca rastreo continuo). Confirma la llegada como parte del mismo
+// paso -- ya no existe un boton "Marcar llegada" ni "Confirmar llegada" separados.
+export async function joinQueue(route: RouteDir, vehicleId: string, deviceId?: string, isRelocation?: boolean, lat?: number, lng?: number): Promise<void> {
+  await request(`/queues/${route}/join`, { method: 'POST', body: JSON.stringify({ vehicleId, deviceId, isRelocation, lat, lng }) });
 }
 
 export async function confirmArrival(entryId: string, lat: number, lng: number): Promise<void> {
@@ -319,6 +373,49 @@ export async function closeManifest(manifestId: string, arrivalTime?: string, pa
   return mapManifest(raw);
 }
 
+// IA con vision (ia-aplicada.md §2.2): lee la foto del respaldo en papel y
+// devuelve una SUGERENCIA de pasajeros -- no guarda nada, quien llama debe
+// revisar/editar y recien despues confirmar con digitizeManifest() arriba.
+export interface DigitizeSuggestResult {
+  suggested: Omit<Passenger, 'id'>[];
+  skipped: number;
+  total: number;
+}
+
+export async function digitizeSuggest(manifestId: string, imageBase64: string, mediaType: string): Promise<DigitizeSuggestResult> {
+  return request<DigitizeSuggestResult>(`/manifests/${manifestId}/digitize-suggest`, {
+    method: 'POST',
+    body: JSON.stringify({ imageBase64, mediaType }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Resumen diario para el gerente (ia-aplicada.md §2.3)
+// ---------------------------------------------------------------------------
+// Todas las cifras las calcula el backend con Prisma antes de llamar a la IA
+// -- `summary` es solo la redaccion en prosa de esos mismos numeros, nunca un
+// calculo propio. `summary` puede venir null (Claude no configurado o fallo
+// puntual) -- en ese caso el panel se apoya en `facts` directamente.
+export interface DailyDigestFacts {
+  fecha: string;
+  vueltasCompletadasHoy: number;
+  viajesEnCurso: number;
+  pasajerosTransportadosHoy: number;
+  recaudacionHoy: number;
+  manifiestosPendientesDeDigitalizar: number;
+  inscripcionesRetrasadasResueltasHoy: number;
+  inscripcionesRetrasadasPendientesAhora: number;
+  incidentesHoy: Array<{ unidad: string; ruta: string; nota: string | null }>;
+  // Anomalias de recaudacion (ia-aplicada.md §2.4) -- manifiestos marcados
+  // CON_INCIDENCIA hoy por una caida fuerte de ingresos frente al propio
+  // historial de esa unidad. Evidencia para revisar, nunca una acusacion.
+  anomaliasRecaudacionHoy: Array<{ manifiesto: string; unidad: string; nota: string | null }>;
+}
+
+export async function fetchDailyDigest(): Promise<{ facts: DailyDigestFacts; summary: string | null }> {
+  return request(`/digest/today`);
+}
+
 export async function digitizeManifest(manifestId: string, passengers: Omit<Passenger, 'id'>[]): Promise<Manifest> {
   const raw = await request<RawManifest>(`/manifests/${manifestId}/digitize`, {
     method: 'POST',
@@ -360,6 +457,14 @@ export async function alertTrip(tripId: string, note: string): Promise<Trip> {
   return mapTrip(raw);
 }
 
+// "Anular viaje" (admin/superadmin): para un viaje Programado atascado que
+// el conductor nunca despacho (se equivoco de unidad/ruta, se arrepintio,
+// etc.). Motivo obligatorio, igual que las demas excepciones manuales.
+export async function cancelTrip(tripId: string, reason: string): Promise<Trip> {
+  const raw = await request<RawTrip>(`/trips/${tripId}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) });
+  return mapTrip(raw);
+}
+
 export async function resolveTripIncident(tripId: string, resolution: 'ACTIVO' | 'COMPLETADO', reason: string): Promise<Trip> {
   const raw = await request<RawTrip>(`/trips/${tripId}/resolve-incident`, {
     method: 'POST',
@@ -371,8 +476,15 @@ export async function resolveTripIncident(tripId: string, resolution: 'ACTIVO' |
 // ---------------------------------------------------------------------------
 // Vehiculos (para el selector "inscribir unidad en cola")
 // ---------------------------------------------------------------------------
-export async function fetchVehicles(route?: RouteDir): Promise<Unit[]> {
-  const raw = await request<RawVehicle[]>(`/vehicles${route ? `?route=${route}` : ''}`);
+// organizationId es solo para Super Admin viendo una asociacion puntual desde
+// su propio panel (nunca "actuando como" -- ver acting-org.ts) -- cualquier
+// otro rol lo ignora en el backend (resolveOrgId siempre usa el suyo propio).
+export async function fetchVehicles(route?: RouteDir, organizationId?: string): Promise<Unit[]> {
+  const params = new URLSearchParams();
+  if (route) params.set('route', route);
+  if (organizationId) params.set('organizationId', organizationId);
+  const qs = params.toString();
+  const raw = await request<RawVehicle[]>(`/vehicles${qs ? `?${qs}` : ''}`);
   return raw.map((v) => ({
     id: v.id,
     code: v.code,
@@ -391,7 +503,24 @@ export async function fetchVehicles(route?: RouteDir): Promise<Unit[]> {
     partnerId: v.partner?.id,
     currentDriverId: v.currentDriver?.id,
     traccarDeviceId: v.traccarDeviceId ?? undefined,
+    simOperator: v.simOperator ?? undefined,
+    simNumber: v.simNumber ?? undefined,
+    gpsVehicularActivo: v.gpsVehicularActivo ?? true,
+    gpsVehicularVenceEn: v.gpsVehicularVenceEn ?? null,
+    lastServiceKm: v.lastServiceKm ?? undefined,
+    serviceIntervalKm: v.serviceIntervalKm ?? undefined,
+    lastServiceAt: v.lastServiceAt ?? undefined,
   }));
+}
+
+// Mantenimiento predictivo (plan-pro.md §11.1): el administrador define el
+// intervalo real de su flota -- nunca un numero inventado por el sistema.
+export async function setVehicleMaintenance(vehicleId: string, lastServiceKm?: number, serviceIntervalKm?: number, organizationId?: string): Promise<void> {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+  await request(`/vehicles/${vehicleId}/maintenance${qs}`, {
+    method: 'POST',
+    body: JSON.stringify({ lastServiceKm, serviceIntervalKm }),
+  });
 }
 
 // ─── Flota (Unidades) — panel admin ──────────────────────────────────────────
@@ -501,11 +630,43 @@ export async function deactivateVehicle(vehicleId: string, reason: string): Prom
   });
 }
 
-/** Vincula (o, con cadena vacia, desvincula) el dispositivo GPS real (Traccar) de la unidad. */
-export async function setVehicleGpsDevice(vehicleId: string, traccarDeviceId: string): Promise<void> {
-  await request<RawVehicle>(`/vehicles/${vehicleId}/gps-device`, {
+/**
+ * Vincula (o, con cadena vacia, desvincula) el dispositivo GPS real (Traccar)
+ * de la unidad. Solo Super Admin -- ver comentario en vehicles.controller.ts
+ * sobre por que el IMEI nunca lo define el admin de la asociacion.
+ * organizationId es obligatorio para Super Admin viendo una asociacion
+ * puntual desde su propio panel (nunca tiene organizationId propio).
+ */
+export async function setVehicleGpsDevice(
+  vehicleId: string,
+  traccarDeviceId: string,
+  organizationId?: string,
+  simOperator?: string,
+  simNumber?: string,
+): Promise<void> {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+  await request<RawVehicle>(`/vehicles/${vehicleId}/gps-device${qs}`, {
     method: 'POST',
-    body: JSON.stringify({ traccarDeviceId }),
+    body: JSON.stringify({ traccarDeviceId, simOperator, simNumber }),
+  });
+}
+
+/**
+ * Prende/apaga el Plan GPS Vehicular individual de la unidad (13 sept 2026)
+ * -- nunca toca el IMEI/traccarDeviceId, solo si el socio pago el servicio.
+ * Solo Super Admin, motivo obligatorio (mismo criterio que gps-device).
+ */
+export async function setVehicleGpsVehicularPlan(
+  vehicleId: string,
+  activo: boolean,
+  reason: string,
+  organizationId?: string,
+  venceEn?: string | null,
+): Promise<void> {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+  await request<RawVehicle>(`/vehicles/${vehicleId}/gps-vehicular-plan${qs}`, {
+    method: 'POST',
+    body: JSON.stringify({ activo, reason, venceEn }),
   });
 }
 
@@ -526,6 +687,15 @@ export interface CreatePersonInput {
 
 export async function fetchPeople(organizationId?: string): Promise<Person[]> {
   return request<Person[]>(organizationId ? `/people?organizationId=${encodeURIComponent(organizationId)}` : '/people');
+}
+
+// Autoservicio (people.controller.ts GET /people/me): a diferencia de
+// fetchPeople(), esto lo puede llamar CUALQUIER rol autenticado -- devuelve
+// solo el propio registro (dni, telefono, licencia, etc.), nunca el
+// directorio completo de la asociacion. Socio/Conductor deben usar esto para
+// leer su propio perfil, nunca fetchPeople().
+export async function fetchMyPersonProfile(): Promise<Person> {
+  return request<Person>('/people/me');
 }
 
 export async function createPerson(input: CreatePersonInput, organizationId?: string): Promise<Person> {
@@ -561,6 +731,9 @@ export interface Organization {
   plan: 'OPERACION' | 'PRO';
   driverLiveMapEnabled: boolean;
   whatsappAssistantEnabled: boolean;
+  // Dias de gracia del Plan GPS Vehicular al bajar de PRO a Operacion (13
+  // sept 2026) -- editable por Super Admin en el tab "Plan GPS Vehicular".
+  gpsVehicularGraceDays: number;
   createdAt: string;
   // Datos institucionales (paso 0 del wizard "Nueva asociacion"). El correo
   // institucional (contactEmail) es distinto del correo del gerente -- ese
@@ -658,7 +831,7 @@ export async function createOrganization(input: CreateOrganizationInput): Promis
   return request<Organization>('/organizations', { method: 'POST', body: JSON.stringify(input) });
 }
 
-export async function updateOrganization(id: string, patch: { name?: string; ruc?: string; city?: string; legalRepName?: string; contactPhone?: string; contactEmail?: string; driverLiveMapEnabled?: boolean; status?: Organization['status']; logoUrl?: string; plan?: Organization['plan'] }): Promise<Organization> {
+export async function updateOrganization(id: string, patch: { name?: string; ruc?: string; city?: string; legalRepName?: string; contactPhone?: string; contactEmail?: string; driverLiveMapEnabled?: boolean; status?: Organization['status']; logoUrl?: string; plan?: Organization['plan']; reason?: string; gpsVehicularGraceDays?: number }): Promise<Organization> {
   return request<Organization>(`/organizations/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
 }
 
@@ -710,6 +883,15 @@ export interface LiveVehiclePosition {
   lastUpdate: string;
   route: 'JULI_PUNO' | 'PUNO_JULI' | null;
   traccarStatus: string;
+  // null = el equipo todavia no reporta ese dato (firmware sin ese I/O
+  // habilitado) -- nunca se muestra un valor inventado en su lugar.
+  ignition: boolean | null;
+  motion: boolean | null;
+  powerVoltage: number | null;
+  batteryVoltage: number | null;
+  signal: number | null;
+  odometerKm: number | null;
+  panicAlarm: boolean;
 }
 
 /**
@@ -718,8 +900,9 @@ export interface LiveVehiclePosition {
  * Solo Plan PRO -- el backend rechaza la llamada si la asociacion esta en
  * Operacion (salvo Super Admin).
  */
-export async function fetchGpsLive(): Promise<LiveVehiclePosition[]> {
-  return request<LiveVehiclePosition[]>('/gps/live');
+export async function fetchGpsLive(organizationId?: string): Promise<LiveVehiclePosition[]> {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+  return request<LiveVehiclePosition[]>(`/gps/live${qs}`);
 }
 
 // Fila de la pantalla "Dispositivos GPS" (solo lectura) -- a diferencia de
@@ -736,8 +919,337 @@ export interface VehicleGpsStatus {
   lastUpdate: string | null;
 }
 
-export async function fetchGpsDevices(): Promise<VehicleGpsStatus[]> {
-  return request<VehicleGpsStatus[]>('/gps/devices');
+export async function fetchGpsDevices(organizationId?: string): Promise<VehicleGpsStatus[]> {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+  return request<VehicleGpsStatus[]>(`/gps/devices${qs}`);
+}
+
+export type GpsAlertType = 'DESCONEXION' | 'MOVIMIENTO_SIN_VIAJE' | 'CORTE_ENERGIA' | 'POSIBLE_REMOLQUE' | 'BOTON_PANICO' | 'FALLA_REPORTADA' | 'POSIBLE_ACCIDENTE' | 'FUERA_DE_RUTA';
+export type GpsAlertStatus = 'NUEVA' | 'EN_REVISION' | 'REVISADA' | 'DESCARTADA';
+
+interface RawGpsAlert {
+  id: string;
+  type: GpsAlertType;
+  status: GpsAlertStatus;
+  description: string;
+  detectedAt: string;
+  reviewedAt: string | null;
+  reviewedBy: string | null;
+  reviewNote: string | null;
+  vehicle: { code: string; plate: string; currentDriver: { name: string } | null };
+}
+
+export interface GpsAlert {
+  id: string;
+  type: GpsAlertType;
+  status: GpsAlertStatus;
+  description: string;
+  detectedAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  reviewNote?: string;
+  unitCode: string;
+  plate: string;
+  driver: string;
+}
+
+// Alertas GPS (docs/planes/ia-aplicada.md §1): el sistema solo marca
+// evidencia, el administrador revisa. Deteccion automatica real por cron
+// (backend/src/gps-alerts) -- nunca una alerta inventada en el frontend.
+export async function fetchGpsAlerts(organizationId?: string): Promise<GpsAlert[]> {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+  const raw = await request<RawGpsAlert[]>(`/gps-alerts${qs}`);
+  return raw.map((a) => ({
+    id: a.id,
+    type: a.type,
+    status: a.status,
+    description: a.description,
+    detectedAt: a.detectedAt,
+    reviewedAt: a.reviewedAt ?? undefined,
+    reviewedBy: a.reviewedBy ?? undefined,
+    reviewNote: a.reviewNote ?? undefined,
+    unitCode: a.vehicle.code,
+    plate: a.vehicle.plate,
+    driver: a.vehicle.currentDriver?.name ?? 'Sin conductor',
+  }));
+}
+
+// Resumen de Super Admin (12 sept 2026): alertas graves abiertas en
+// asociaciones SIN Plan PRO -- mismo criterio que decide el correo a Super
+// Admin (ver notifySuperAdminIfNoPro en el backend). El Administrador de
+// esas asociaciones nunca ve estas alertas, por eso Super Admin necesita su
+// propia vista consolidada.
+export interface SuperAdminUrgentAlert {
+  id: string;
+  type: GpsAlertType;
+  status: GpsAlertStatus;
+  description: string;
+  detectedAt: string;
+  vehicleCode: string;
+  vehiclePlate: string;
+  organizationId: string;
+  organizationName: string;
+}
+
+interface RawSuperAdminUrgentAlert {
+  id: string;
+  type: GpsAlertType;
+  status: GpsAlertStatus;
+  description: string;
+  detectedAt: string;
+  vehicle: { code: string; plate: string };
+  organization: { id: string; name: string };
+}
+
+export async function fetchSuperAdminUrgentGpsAlerts(): Promise<SuperAdminUrgentAlert[]> {
+  const raw = await request<RawSuperAdminUrgentAlert[]>('/gps-alerts/superadmin-urgent');
+  return raw.map(a => ({
+    id: a.id,
+    type: a.type,
+    status: a.status,
+    description: a.description,
+    detectedAt: a.detectedAt,
+    vehicleCode: a.vehicle.code,
+    vehiclePlate: a.vehicle.plate,
+    organizationId: a.organization.id,
+    organizationName: a.organization.name,
+  }));
+}
+
+export async function updateGpsAlertStatus(id: string, status: Exclude<GpsAlertStatus, 'NUEVA'>, note?: string, organizationId?: string): Promise<void> {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+  await request<RawGpsAlert>(`/gps-alerts/${id}${qs}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status, note }),
+  });
+}
+
+// "Reportar falla GPS" / "Reportar emergencia" (12 sept 2026) -- antes eran
+// botones decorativos, ahora crean una GpsAlert real sobre la propia unidad
+// del conductor/socio (visible al toque en el banner y en "Alertas GPS").
+export async function reportGpsAlert(type: 'BOTON_PANICO' | 'FALLA_REPORTADA', note?: string): Promise<void> {
+  await request('/gps-alerts/report', {
+    method: 'POST',
+    body: JSON.stringify({ type, note }),
+  });
+}
+
+export interface GpsHistoryPoint {
+  lat: number;
+  lng: number;
+  speedKmh: number;
+  course: number;
+  motion: boolean;
+  fixTime: string;
+}
+
+// Historial GPS (docs/planes/plan-gps-vehicular.md): serie real de fixes de
+// UNA unidad entre dos fechas, via Traccar -- nunca una posicion inventada.
+export async function fetchGpsHistory(vehicleId: string, fromISO: string, toISO: string): Promise<GpsHistoryPoint[]> {
+  return request<GpsHistoryPoint[]>(`/gps/history?vehicleId=${encodeURIComponent(vehicleId)}&from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}`);
+}
+
+// ─── Mapa de riesgo de ruta (docs/planes/ia-aplicada.md §3.2, version basica) ─
+// Cada punto agrega frenadas bruscas y paradas anomalas detectadas en el
+// historial GPS real de la flota, agrupadas por celda de mapa -- nunca
+// eventos inventados, solo lo que Traccar reporto de verdad. Depende del
+// mismo Plan PRO que el GPS en vivo (hardware real vinculado).
+export interface RouteRiskPoint {
+  lat: number;
+  lng: number;
+  totalEvents: number;
+  harshBrakingCount: number;
+  anomalousStopCount: number;
+  lastSeen: string;
+}
+
+export interface RouteRiskResult {
+  points: RouteRiskPoint[];
+  vehiclesAnalyzed: number;
+  windowDays: number;
+}
+
+export async function fetchRouteRisk(days = 30): Promise<RouteRiskResult> {
+  return request<RouteRiskResult>(`/route-risk?days=${days}`);
+}
+
+// ─── Reportes de flota (plan-pro.md §11, PENDIENTE DE DECISIÓN hasta el 12
+// sept 2026) — 11.3 sugerencia de reubicación y 11.4 eficiencia usan datos
+// de cola/viajes que ya existen, no dependen de hardware GPS. ──────────────
+export interface HourlyQueueTerminal {
+  route: RouteDir;
+  currentCount: number;
+  historicalAverageThisHour: number;
+}
+export interface HourlyQueuePattern {
+  hour: number;
+  windowDays: number;
+  terminals: HourlyQueueTerminal[];
+  suggestedRelocation: { from: RouteDir; to: RouteDir; units: number } | null;
+}
+export async function fetchHourlyQueuePattern(days = 30): Promise<HourlyQueuePattern> {
+  return request<HourlyQueuePattern>(`/fleet-reports/hourly-queue?days=${days}`);
+}
+
+export interface TurnaroundByCompany {
+  companyId: string;
+  companyName: string;
+  tripCount: number;
+  averageMinutes: number;
+}
+export interface TurnaroundEfficiency {
+  windowDays: number;
+  corridorAverageMinutes: number | null;
+  companies: TurnaroundByCompany[];
+}
+export async function fetchTurnaroundEfficiency(days = 30): Promise<TurnaroundEfficiency> {
+  return request<TurnaroundEfficiency>(`/fleet-reports/turnaround?days=${days}`);
+}
+
+// 11.2: SOLO conteo crudo de eventos de frenada brusca por conductor —
+// deliberadamente sin ningún puntaje ni ranking todavía (ver backend).
+export interface DriverEventCount {
+  driverId: string;
+  driverName: string;
+  harshBrakingCount: number;
+}
+export interface DrivingEventsResult {
+  windowDays: number;
+  drivers: DriverEventCount[];
+}
+export async function fetchDrivingEventCounts(days = 30): Promise<DrivingEventsResult> {
+  return request<DrivingEventsResult>(`/fleet-reports/driving-events?days=${days}`);
+}
+
+// ─── Bloqueo remoto de motor (12 sept 2026, decidido con Jayde) ─────────────
+// Socio SOLICITA su propia unidad, Super Admin CONFIRMA/CANCELA/RESTAURA --
+// el Administrador de la asociación nunca tiene acceso a esto (ver
+// backend/src/engine-lock).
+export type EngineLockStatus = 'SOLICITADO' | 'CONFIRMADO' | 'EJECUTADO' | 'CANCELADO' | 'RESTAURADO';
+
+export interface EngineLockRequest {
+  id: string;
+  vehicleId: string;
+  status: EngineLockStatus;
+  requestReason: string;
+  confirmedAt?: string | null;
+  executedAt?: string | null;
+  restoredAt?: string | null;
+  restoreReason?: string | null;
+  cancelledAt?: string | null;
+  cancelReason?: string | null;
+  createdAt: string;
+  vehicle: { code: string; plate: string };
+}
+
+export async function fetchEngineLockRequests(organizationId?: string): Promise<EngineLockRequest[]> {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+  return request<EngineLockRequest[]>(`/engine-lock${qs}`);
+}
+
+export async function requestEngineLock(vehicleId: string, reason: string): Promise<EngineLockRequest> {
+  return request<EngineLockRequest>(`/engine-lock/vehicles/${vehicleId}`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+// Bloqueo directo por Super Admin (12 sept 2026): para cuando el socio llama
+// por teléfono en vez de solicitarlo digitalmente -- el motivo sigue siendo
+// obligatorio. Crea la solicitud y la confirma/ejecuta en el mismo paso.
+export async function requestEngineLockDirect(vehicleId: string, reason: string, organizationId?: string): Promise<EngineLockRequest> {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+  return request<EngineLockRequest>(`/engine-lock/vehicles/${vehicleId}/direct${qs}`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function confirmEngineLock(requestId: string, organizationId?: string): Promise<EngineLockRequest> {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+  return request<EngineLockRequest>(`/engine-lock/${requestId}/confirm${qs}`, { method: 'POST' });
+}
+
+export async function cancelEngineLock(requestId: string, reason: string, organizationId?: string): Promise<EngineLockRequest> {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+  return request<EngineLockRequest>(`/engine-lock/${requestId}/cancel${qs}`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function restoreEngineLock(requestId: string, reason: string, organizationId?: string): Promise<EngineLockRequest> {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+  return request<EngineLockRequest>(`/engine-lock/${requestId}/restore${qs}`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+// Cross-organización, solo Super Admin (12 sept 2026): para mostrar un badge
+// en la lista de Asociaciones sin tener que entrar a cada una a revisar.
+export async function fetchEngineLockPendingSummary(): Promise<{ organizationId: string; pendingCount: number }[]> {
+  return request(`/engine-lock/pending-summary`);
+}
+
+// ─── CRM de pasajeros por asociación (12 sept 2026, decidido con Jayde) ────
+// Perfil agregado por DNI dentro de cada asociación -- alimentado en cada
+// manifiesto real (ManifestsService.recordPassengerAndNotify), nunca
+// inventado. Solo Super Admin lo consulta.
+export interface PassengerProfile {
+  id: string;
+  dni: string;
+  name: string;
+  email: string | null;
+  tripCount: number;
+  lastTripAt: string | null;
+  createdAt: string;
+}
+
+export async function fetchPassengerProfiles(organizationId: string): Promise<PassengerProfile[]> {
+  return request<PassengerProfile[]>(`/passenger-profiles?organizationId=${encodeURIComponent(organizationId)}`);
+}
+
+// Dashboard de pasajeros (12 sept 2026, decidido con Jayde) -- todo calculado
+// en el backend a partir de manifiestos y perfiles reales, nunca inventado.
+export interface PassengerDashboard {
+  totals: { uniquePassengers: number; recurrentPassengers: number; withEmail: number; totalTripRows: number };
+  topByTrips: { dni: string; name: string; tripCount: number; email: string | null }[];
+  topByRevenue: { dni: string; name: string; totalFare: number }[];
+  paymentMethods: { method: PaymentMethod; count: number; totalFare: number }[];
+  directions: { label: string; count: number }[];
+  monthly: { month: string; newCount: number; recurrentCount: number }[];
+  emailCaptureByMonth: { month: string; pct: number }[];
+  avgDaysBetweenTrips: number | null;
+}
+
+export async function fetchPassengerDashboard(organizationId: string): Promise<PassengerDashboard> {
+  return request<PassengerDashboard>(`/passenger-profiles/dashboard?organizationId=${encodeURIComponent(organizationId)}`);
+}
+
+// ─── Corredor autorizado (geocerca, 12 sept 2026) ───────────────────────────
+// Poligono dibujado A MANO por el administrador sobre el mapa real -- nunca
+// generado por el sistema. Cualquier rol lee (para mostrarlo); solo
+// Administrador/Super Admin lo guarda.
+export interface GeofencePoint {
+  lat: number;
+  lng: number;
+}
+export interface RouteGeofence {
+  id: string;
+  points: GeofencePoint[];
+  updatedAt: string;
+}
+export async function fetchRouteGeofence(organizationId?: string): Promise<RouteGeofence | null> {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+  return request<RouteGeofence | null>(`/route-geofence${qs}`);
+}
+export async function saveRouteGeofence(points: GeofencePoint[], organizationId?: string): Promise<RouteGeofence> {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+  return request<RouteGeofence>(`/route-geofence${qs}`, {
+    method: 'PUT',
+    body: JSON.stringify({ points }),
+  });
 }
 
 // ─── Auditoria (solo lectura) ────────────────────────────────────────────────
@@ -762,6 +1274,29 @@ export async function fetchAudit(): Promise<AuditEntry[]> {
     actor: a.actor?.name ?? 'Sistema',
     actorRole: a.actorRole,
     org: '',
+    action: a.action,
+    resource: a.resource,
+    resourceId: a.resourceId,
+    timestamp: a.createdAt,
+    before: a.before ?? undefined,
+    after: a.after ?? undefined,
+    reason: a.reason ?? undefined,
+    evidence: a.evidence ?? undefined,
+  }));
+}
+
+interface RawGlobalAuditEntry extends RawAuditEntry {
+  organization?: { name: string } | null;
+}
+
+// Panel SaaS de Super Admin: auditoria de todas las asociaciones a la vez.
+export async function fetchGlobalAudit(): Promise<AuditEntry[]> {
+  const raw = await request<RawGlobalAuditEntry[]>('/audit/all');
+  return raw.map((a) => ({
+    id: a.id,
+    actor: a.actor?.name ?? 'Sistema',
+    actorRole: a.actorRole,
+    org: a.organization?.name ?? '',
     action: a.action,
     resource: a.resource,
     resourceId: a.resourceId,
@@ -971,4 +1506,267 @@ export async function resolveDelayedRegistrationRequest(id: string, resolution: 
     body: JSON.stringify({ resolution }),
   });
   return mapDelayedRegistrationRequest(raw);
+}
+
+// ─── Solicitudes comerciales (landing publica) ────────────────────────────
+// La landing publica envia estas solicitudes sin autenticacion (ver
+// src/lib/commercial-requests-api.ts, endpoint publico). Estas funciones son
+// para el panel de Super Admin: listar, ver detalle y marcar atendida. Ver
+// docs/planes/landing-publica-y-solicitudes-comerciales.md.
+export type CommercialSolution = 'OPERACION' | 'PRO' | 'GPS_VEHICULAR';
+export type CommercialRequestStatus = 'NUEVA' | 'CONTACTADA' | 'COTIZADA' | 'CONVERTIDA' | 'DESCARTADA';
+
+export interface CommercialRequest {
+  id: string;
+  solution: CommercialSolution;
+  status: CommercialRequestStatus;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string | null;
+  orgName: string | null;
+  ruc: string | null;
+  answers: Record<string, unknown>;
+  reviewedBy: { id: string; name: string } | null;
+  reviewedAt: string | null;
+  notes: string | null;
+  createdAt: string;
+}
+
+export async function fetchCommercialRequests(): Promise<CommercialRequest[]> {
+  return request<CommercialRequest[]>('/commercial-requests');
+}
+
+export async function fetchCommercialRequest(id: string): Promise<CommercialRequest> {
+  return request<CommercialRequest>(`/commercial-requests/${id}`);
+}
+
+export async function markCommercialRequestReviewed(id: string, notes?: string): Promise<CommercialRequest> {
+  return request<CommercialRequest>(`/commercial-requests/${id}/reviewed`, {
+    method: 'PATCH',
+    body: JSON.stringify({ notes }),
+  });
+}
+
+// Triaje automatico (ia-aplicada.md §2.1) -- resumen ejecutivo aparte del
+// detalle real de la solicitud, nunca lo reemplaza. summary puede venir
+// null (Claude no configurado o fallo puntual).
+export async function fetchCommercialRequestTriage(id: string): Promise<{ summary: string | null }> {
+  return request(`/commercial-requests/${id}/triage`);
+}
+
+// Asistente de onboarding (ia-aplicada.md §2.5) -- sugerencia para pre-llenar
+// el wizard "Nueva asociación" a partir de esta solicitud. Nunca crea nada:
+// el Super Admin ve estos valores ya escritos en el formulario del wizard y
+// los edita o borra libremente antes de confirmar. aiParsed indica si Claude
+// pudo interpretar terminales/rutas del texto libre, o si solo se copiaron
+// los datos directos del formulario (terminal1/terminal2/routes vienen
+// vacíos en ese caso -- nunca un valor inventado).
+export interface OnboardingSuggestion {
+  name: string | null;
+  ruc: string | null;
+  city: string | null;
+  adminName: string | null;
+  adminEmail: string | null;
+  adminPhone: string | null;
+  plan: 'OPERACION' | 'PRO';
+  units: string | null;
+  gpsUnits: string | null;
+  terminal1: string | null;
+  terminal2: string | null;
+  routes: { origin: string; destination: string }[];
+  configNotes: string | null;
+  aiParsed: boolean;
+}
+
+export async function fetchCommercialRequestOnboardingSuggestion(id: string): Promise<OnboardingSuggestion> {
+  return request(`/commercial-requests/${id}/onboarding-suggestion`);
+}
+
+// Edicion de la landing publica desde Super Admin (landing-publica-y-
+// solicitudes-comerciales.md §9). El GET publico que consume la landing en
+// si (sin auth) vive en landing-content-api.ts -- esto es solo lo protegido.
+export async function fetchLandingSection(key: string): Promise<{ key: string; data: unknown; isDefault: boolean }> {
+  return request(`/landing-content/${key}`);
+}
+
+export async function updateLandingSection(key: string, data: unknown): Promise<void> {
+  await request(`/landing-content/${key}`, {
+    method: 'PUT',
+    body: JSON.stringify({ data }),
+  });
+}
+
+// Libro de Reclamaciones -- lado Super Admin (el envio publico vive en
+// complaint-book-api.ts). Ver backend/src/complaint-book.
+export interface ComplaintBookEntry {
+  id: string;
+  number: string;
+  type: 'RECLAMO' | 'QUEJA';
+  consumerName: string;
+  consumerDocument: string;
+  consumerAddress?: string | null;
+  consumerEmail: string;
+  consumerPhone?: string | null;
+  isMinor: boolean;
+  guardianName?: string | null;
+  serviceDescription: string;
+  claimedAmount?: number | null;
+  detail: string;
+  consumerRequest: string;
+  status: 'RECIBIDO' | 'EN_PROCESO' | 'RESPONDIDO';
+  providerResponse?: string | null;
+  respondedAt?: string | null;
+  createdAt: string;
+}
+
+export async function fetchComplaints(): Promise<ComplaintBookEntry[]> {
+  return request<ComplaintBookEntry[]>('/complaint-book');
+}
+
+export async function respondComplaint(id: string, providerResponse: string): Promise<ComplaintBookEntry> {
+  return request<ComplaintBookEntry>(`/complaint-book/${id}/respond`, {
+    method: 'PATCH',
+    body: JSON.stringify({ providerResponse }),
+  });
+}
+
+// Avisos del administrador a conductores/socios (plan-pro.md §9) -- se
+// entregan SOLO dentro de la plataforma, nunca por WhatsApp.
+export type NoticeAudience = 'CONDUCTORES' | 'SOCIOS' | 'AMBOS' | 'ADMINISTRADORES';
+
+export interface Notice {
+  id: string;
+  title: string;
+  body: string;
+  audience: NoticeAudience;
+  authorName: string;
+  createdAt: string;
+}
+
+// Cada rol ve solo lo que le corresponde -- el backend filtra por audiencia
+// segun el rol de quien pregunta (CONDUCTOR/SOCIO), y Administrador/Super
+// Admin ven todos como vista de gestion.
+export async function fetchNotices(): Promise<Notice[]> {
+  return request<Notice[]>('/notices');
+}
+
+export async function createNotice(input: { title: string; body: string; audience: NoticeAudience }): Promise<Notice> {
+  return request<Notice>('/notices', { method: 'POST', body: JSON.stringify(input) });
+}
+
+// Aviso masivo de Super Admin (13 sept 2026) -- ej. mantenimiento
+// programado. organizationIds vacio o ausente = todas las asociaciones
+// reales, sin importar plan; con IDs = solo esas (filtro real).
+export async function broadcastNotice(input: { title: string; body: string; audience: NoticeAudience; organizationIds?: string[] }): Promise<{ sent: number; organizations: string[] }> {
+  return request<{ sent: number; organizations: string[] }>('/notices/broadcast', { method: 'POST', body: JSON.stringify(input) });
+}
+
+// Campanita real del Shell (12 sept 2026) -- solo cuenta avisos privados
+// (creados por el propio backend, ej. engine-lock.service.ts), no los de
+// audiencia general.
+export async function fetchNoticesUnreadCount(): Promise<{ count: number }> {
+  return request<{ count: number }>('/notices/unread-count');
+}
+
+export async function markNoticesRead(): Promise<void> {
+  await request('/notices/mark-read', { method: 'POST' });
+}
+
+// ─── Soporte (13 sept 2026, reemplaza el placeholder de Super Admin) ─────────
+// El Administrador reporta un problema desde su propio panel; Super Admin ve
+// la cola completa cruzando todas las asociaciones y responde.
+export type SupportTicketStatus = 'ABIERTO' | 'EN_PROGRESO' | 'RESUELTO';
+
+export interface SupportTicket {
+  id: string;
+  organizationId: string;
+  organizationName?: string; // solo presente en la vista cruzada de Super Admin
+  authorName: string;
+  subject: string;
+  message: string;
+  status: SupportTicketStatus;
+  response: string | null;
+  respondedAt: string | null;
+  respondedBy: string | null;
+  createdAt: string;
+}
+
+interface RawSupportTicket extends Omit<SupportTicket, 'organizationName'> {
+  organization?: { name: string };
+}
+
+function adaptSupportTicket(raw: RawSupportTicket): SupportTicket {
+  const { organization, ...rest } = raw;
+  return { ...rest, organizationName: organization?.name };
+}
+
+export async function fetchSupportTickets(organizationId?: string): Promise<SupportTicket[]> {
+  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+  const raw = await request<RawSupportTicket[]>(`/support-tickets${qs}`);
+  return raw.map(adaptSupportTicket);
+}
+
+export async function createSupportTicket(subject: string, message: string): Promise<SupportTicket> {
+  const raw = await request<RawSupportTicket>('/support-tickets', { method: 'POST', body: JSON.stringify({ subject, message }) });
+  return adaptSupportTicket(raw);
+}
+
+export async function respondSupportTicket(id: string, status: 'EN_PROGRESO' | 'RESUELTO', response?: string): Promise<SupportTicket> {
+  const raw = await request<RawSupportTicket>(`/support-tickets/${id}`, { method: 'PATCH', body: JSON.stringify({ status, response }) });
+  return adaptSupportTicket(raw);
+}
+
+// ─── Métricas de negocio y onboarding (13 sept 2026, Super Admin) ────────────
+export interface OrganizationMetrics {
+  totalOrganizaciones: number;
+  activas: number;
+  enConfiguracion: number;
+  suspendidas: number;
+  pro: number;
+  operacion: number;
+  nuevasUltimos30Dias: number;
+  unidadesConPlanGpsVehicularActivo: number;
+  unidadesEnGraciaGpsVehicular: number;
+}
+
+export async function fetchOrganizationMetrics(): Promise<OrganizationMetrics> {
+  return request<OrganizationMetrics>('/organizations/metrics');
+}
+
+export interface OrganizationOnboardingStatus {
+  adminActivo: boolean;
+  corredorConfigurado: boolean;
+  empresasRegistradas: number;
+  vehiculosRegistrados: number;
+  unidadesConGps: number;
+}
+
+export async function fetchOrganizationOnboarding(organizationId: string): Promise<OrganizationOnboardingStatus> {
+  return request<OrganizationOnboardingStatus>(`/organizations/${organizationId}/onboarding`);
+}
+
+// ─── Salud técnica de CHASKI AI (12 sept 2026, decidido con Jayde) ─────────
+// Monitoreo REAL de la propia infraestructura (base de datos, Traccar,
+// Resend) -- reemplaza la version anterior que mostraba 5 numeros escritos a
+// mano. Solo Super Admin. Nunca es informacion de una asociacion.
+export type HealthCheckServiceName = 'BASE_DE_DATOS' | 'TRACCAR' | 'NOTIFICACIONES' | 'CLOUDINARY' | 'ASISTENTE_IA';
+export type HealthCheckStatusValue = 'OK' | 'DEGRADADO' | 'CAIDO';
+
+export interface HealthCheckHistoryPoint {
+  status: HealthCheckStatusValue;
+  checkedAt: string;
+}
+
+export interface HealthCheckServiceStatus {
+  service: HealthCheckServiceName;
+  status: HealthCheckStatusValue | null;
+  latencyMs: number | null;
+  errorMessage: string | null;
+  checkedAt: string | null;
+  uptime30d: number | null;
+  history: HealthCheckHistoryPoint[];
+}
+
+export async function fetchHealthStatus(): Promise<HealthCheckServiceStatus[]> {
+  return request<HealthCheckServiceStatus[]>('/health-monitor');
 }

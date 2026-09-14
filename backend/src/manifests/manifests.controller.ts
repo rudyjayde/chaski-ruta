@@ -4,6 +4,7 @@ import { OpenManifestDto } from './dto/open-manifest.dto';
 import { AddPassengerDto } from './dto/add-passenger.dto';
 import { CloseManifestDto } from './dto/close-manifest.dto';
 import { CorrectManifestDto } from './dto/correct-manifest.dto';
+import { DigitizeSuggestDto } from './dto/digitize-suggest.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -69,6 +70,20 @@ export class ManifestsController {
   ) {
     const orgId = resolveOrgId(user, organizationId);
     return this.manifests.digitize(orgId, user, id, body.passengers);
+  }
+
+  // IA con vision (ia-aplicada.md §2.2): solo sugiere, no guarda -- el
+  // frontend revisa/edita y confirma con POST /:id/digitize (arriba).
+  @Post(':id/digitize-suggest')
+  @Roles('CONDUCTOR', 'ADMINISTRADOR', 'SUPERADMIN')
+  digitizeSuggest(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: DigitizeSuggestDto,
+    @Query('organizationId') organizationId?: string,
+  ) {
+    const orgId = resolveOrgId(user, organizationId);
+    return this.manifests.digitizeSuggest(orgId, user, id, dto);
   }
 
   @Post(':id/correct')

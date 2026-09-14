@@ -5,6 +5,12 @@ import { JwtPayload } from '../auth/jwt.strategy';
 import { AlertTripDto } from './dto/alert-trip.dto';
 import { CompleteTripDto } from './dto/complete-trip.dto';
 import { ResolveIncidentDto } from './dto/resolve-incident.dto';
+import { CancelTripDto } from './dto/cancel-trip.dto';
+
+// El hash de la contraseña NUNCA debe llegar al navegador (mismo criterio
+// que people.service.ts / vehicles.service.ts) -- select explicito en vez
+// de "driver: true".
+const PERSON_TRIP_SELECT = { id: true, name: true, dni: true, phone: true, email: true } as const;
 
 @Injectable()
 export class TripsService {
@@ -20,7 +26,7 @@ export class TripsService {
         ...(route ? { route: route as any } : {}),
         ...(status ? { status: status as any } : {}),
       },
-      include: { vehicle: true, driver: true, manifest: true },
+      include: { vehicle: true, driver: { select: PERSON_TRIP_SELECT }, manifest: true },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -114,6 +120,47 @@ export class TripsService {
         before: trip.status,
         after: 'CON_INCIDENCIA',
         reason: dto.note,
+      },
+    });
+    return updated;
+  }
+
+  /**
+   * "Anular viaje" (admin/superadmin) -- para un viaje PROGRAMADO atascado:
+   * el conductor preparo/cerro el manifiesto pero nunca marco salida (se
+   * arrepintio, se equivoco de ruta, cambio de unidad, etc.). Solo aplica a
+   * PROGRAMADO -- un viaje ACTIVO se resuelve con "Marcar llegada" o con la
+   * alerta de incidencia, nunca anulandolo (ya salio de verdad). El
+   * manifiesto asociado (si existe) no se toca -- queda como historial,
+   * ligado a un viaje CANCELADO; deja de contar como "PROGRAMADO existente"
+   * para prepareTrip()/depart(), asi que una nueva inscripcion de la misma
+   * unidad en esa ruta crea un viaje y manifiesto nuevos sin chocar con este.
+   */
+  async cancel(organizationId: string, actor: JwtPayload, id: string, dto: CancelTripDto) {
+    const trip = await this.prisma.trip.findUnique({ where: { id } });
+    if (!trip || trip.organizationId !== organizationId) {
+      throw new NotFoundException('Viaje no encontrado');
+    }
+    if (trip.status !== 'PROGRAMADO') {
+      throw new BadRequestException(
+        'Solo se puede anular un viaje Programado que todavia no salio -- uno Activo se completa o se marca con incidencia',
+      );
+    }
+    const updated = await this.prisma.trip.update({
+      where: { id },
+      data: { status: 'CANCELADO' },
+    });
+    await this.prisma.auditEntry.create({
+      data: {
+        organizationId,
+        actorId: actor.sub,
+        actorRole: actor.role,
+        action: 'ANULAR_VIAJE',
+        resource: 'Viaje',
+        resourceId: id,
+        before: trip.status,
+        after: 'CANCELADO',
+        reason: dto.reason,
       },
     });
     return updated;

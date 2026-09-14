@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, createContext, useContext } from 'rea
 import {
   LayoutDashboard, Radio, ListOrdered, FileText, Route, ArrowLeftRight,
   Truck, Building2, Users, BarChart2, ShieldCheck, Settings,
-  Map, History, Cpu, Bell, Sparkles, Clock,
+  Map, MapPin, History, Cpu, Bell, Sparkles, Clock, AlertTriangle, Megaphone, Headphones as HeadphonesIcon,
 } from 'lucide-react';
 import Shell, { type NavItem } from '../../components/layout/Shell';
 import OperationsCenter from './OperationsCenter';
@@ -17,14 +17,18 @@ import PeoplePage from './PeoplePage';
 import ReportsPage from './ReportsPage';
 import AuditPage from './AuditPage';
 import SettingsPage from './SettingsPage';
+import NoticesPage from './NoticesPage';
+import SupportPage from './SupportPage';
 import GPSLivePage from './GPSLivePage';
 import GPSHistoryPage from './GPSHistoryPage';
 import GPSDevicesAdminPage from './GPSDevicesAdminPage';
 import GPSAlertsPage from './GPSAlertsPage';
+import RouteRiskPage from './RouteRiskPage';
+import RouteGeofencePage from './RouteGeofencePage';
 import AssistantPage from './AssistantPage';
 import AssistantWidget from './AssistantWidget';
 import { AssistantChatProvider } from './assistant-chat-context';
-import { fetchMyOrganization, type Organization } from '../../lib/operacion-api';
+import { fetchMyOrganization, fetchRelocations, fetchGpsAlerts, type Organization } from '../../lib/operacion-api';
 
 interface AdminDemoCtx {
   // El plan REAL de la asociacion (Organization.plan === 'PRO') -- ya no hay
@@ -44,30 +48,34 @@ export const useAdminDemo = () => useContext(AdminDemoContext);
 type Section =
   | 'inicio' | 'operacion' | 'colas' | 'manifiestos' | 'viajes' | 'reubicaciones'
   | 'inscripcion-retrasada'
-  | 'flota' | 'empresas' | 'personas' | 'reportes' | 'auditoria' | 'configuracion'
+  | 'flota' | 'empresas' | 'personas' | 'avisos' | 'reportes' | 'auditoria' | 'configuracion' | 'soporte'
   | 'asistente'
-  | 'gps-live' | 'gps-history' | 'gps-devices' | 'gps-alerts';
+  | 'gps-live' | 'gps-history' | 'gps-devices' | 'gps-alerts' | 'gps-risk' | 'gps-geofence';
 
 const BASE_NAV: NavItem[] = [
   { id: 'inicio', label: 'Inicio', icon: LayoutDashboard },
   { id: 'colas', label: 'Colas', icon: ListOrdered },
   { id: 'manifiestos', label: 'Ventas y manifiestos', icon: FileText },
   { id: 'viajes', label: 'Viajes', icon: Route },
-  { id: 'reubicaciones', label: 'Reubicaciones', icon: ArrowLeftRight, badge: 1 },
+  { id: 'reubicaciones', label: 'Reubicaciones', icon: ArrowLeftRight },
   { id: 'inscripcion-retrasada', label: 'Inscripción retrasada', icon: Clock },
   { id: 'flota', label: 'Unidades y flota', icon: Truck },
   { id: 'empresas', label: 'Empresas integrantes', icon: Building2 },
   { id: 'personas', label: 'Personas', icon: Users },
+  { id: 'avisos', label: 'Avisos', icon: Megaphone },
   { id: 'reportes', label: 'Reportes', icon: BarChart2 },
   { id: 'auditoria', label: 'Auditoría', icon: ShieldCheck },
-  { id: 'configuracion', label: 'Configuración', icon: Settings },
+  { id: 'soporte', label: 'Soporte', icon: HeadphonesIcon },
+  { id: 'configuracion', label: 'Plan', icon: Settings },
 ];
 
 const GPS_NAV: NavItem[] = [
   { id: 'gps-live', label: 'GPS en vivo', icon: Map },
   { id: 'gps-history', label: 'Historial GPS', icon: History },
   { id: 'gps-devices', label: 'Dispositivos GPS', icon: Cpu },
-  { id: 'gps-alerts', label: 'Alertas GPS', icon: Bell, badge: 2 },
+  { id: 'gps-alerts', label: 'Alertas GPS', icon: Bell },
+  { id: 'gps-risk', label: 'Mapa de riesgo', icon: AlertTriangle },
+  { id: 'gps-geofence', label: 'Corredor autorizado', icon: MapPin },
 ];
 
 // Solo Plan PRO (plan-pro.md #6) -- por eso vive aparte de BASE_NAV/GPS_NAV.
@@ -138,17 +146,47 @@ export default function AdminApp({
     return () => { cancelled = true; };
   }, [superAdminActingOrg]);
 
-  const navItems: NavItem[] = isPRO
-    ? [...BASE_NAV, { id: '__gps_sep__', label: '── GPS PRO ──', icon: Radio }, ...GPS_NAV]
-    : BASE_NAV;
+  // Badges reales de la barra lateral (12 sept 2026, corregido) -- ANTES eran
+  // numeros fijos en el codigo (badge: 1, badge: 2) que nunca cambiaban sin
+  // importar los datos reales. "Pendiente" en reubicaciones = cualquier
+  // estado antes de COMPLETADA (mismo criterio que RelocationsPage.tsx); en
+  // alertas GPS = NUEVA o EN_REVISION (mismo criterio que GPSAlertsPage.tsx).
+  const [pendingRelocations, setPendingRelocations] = useState(0);
+  const [pendingGpsAlerts, setPendingGpsAlerts] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      fetchRelocations()
+        .then(list => { if (!cancelled) setPendingRelocations(list.filter(r => r.status !== 'COMPLETADA').length); })
+        .catch(() => { /* se degrada sin badge */ });
+      fetchGpsAlerts()
+        .then(list => { if (!cancelled) setPendingGpsAlerts(list.filter(a => a.status === 'NUEVA' || a.status === 'EN_REVISION').length); })
+        .catch(() => { /* se degrada sin badge */ });
+    };
+    poll();
+    const id = setInterval(poll, 20000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
 
-  const effectiveNavItems = navItems.filter(n => n.id !== '__gps_sep__').concat(
-    isPRO ? [] : []
+  const withRealBadges = (items: NavItem[]): NavItem[] => items.map(item =>
+    item.id === 'reubicaciones' ? { ...item, badge: pendingRelocations }
+      : item.id === 'gps-alerts' ? { ...item, badge: pendingGpsAlerts }
+      : item
   );
 
-  const navItemsFull: NavItem[] = isPRO
-    ? [...BASE_NAV.slice(0, 1), ASSISTANT_NAV, { id: 'operacion', label: 'Operación', icon: Radio }, ...BASE_NAV.slice(1), ...GPS_NAV]
-    : [...BASE_NAV.slice(0, 1), { id: 'operacion', label: 'Operación', icon: Radio }, ...BASE_NAV.slice(1)];
+  // Revertido (12 sept 2026, decidido con Jayde): el GPS Vehicular individual
+  // de un socio es un producto privado que EL paga -- el Administrador de la
+  // asociacion no tiene por que ver nada de eso si la asociacion no tiene
+  // PRO, ni el menu, ni las alertas. Ese rol de "controlador" cuando no hay
+  // PRO lo cumple Super Admin (ver Super Admin -> GPS -> Alertas, y el
+  // correo de notifySuperAdminIfNoPro en el backend), nunca el Administrador.
+  const navItemsFull: NavItem[] = withRealBadges([
+    ...BASE_NAV.slice(0, 1),
+    ...(isPRO ? [ASSISTANT_NAV] : []),
+    { id: 'operacion', label: 'Operación', icon: Radio },
+    ...BASE_NAV.slice(1),
+    ...(isPRO ? GPS_NAV : []),
+  ]);
 
   return (
     <AdminDemoContext.Provider value={{ isPRO, org }}>
@@ -174,14 +212,18 @@ export default function AdminApp({
         {section === 'flota' && <FleetPage />}
         {section === 'empresas' && <CompaniesPage />}
         {section === 'personas' && <PeoplePage />}
+        {section === 'avisos' && <NoticesPage />}
         {section === 'reportes' && <ReportsPage />}
         {section === 'auditoria' && <AuditPage />}
+        {section === 'soporte' && <SupportPage />}
         {section === 'configuracion' && <SettingsPage />}
         {section === 'asistente' && <AssistantPage />}
         {section === 'gps-live' && <GPSLivePage />}
         {section === 'gps-history' && <GPSHistoryPage />}
         {section === 'gps-devices' && <GPSDevicesAdminPage />}
         {section === 'gps-alerts' && <GPSAlertsPage />}
+        {section === 'gps-risk' && <RouteRiskPage />}
+        {section === 'gps-geofence' && <RouteGeofencePage />}
       </Shell>
       {isPRO && section !== 'asistente' && <AssistantWidget />}
       </AssistantChatProvider>

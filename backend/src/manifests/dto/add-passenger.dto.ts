@@ -1,4 +1,4 @@
-import { IsIn, IsInt, IsNumber, IsString, Matches, Min, MinLength } from 'class-validator';
+import { IsEmail, IsIn, IsInt, IsNumber, IsOptional, IsString, Matches, Min, MinLength } from 'class-validator';
 
 export class AddPassengerDto {
   @IsString()
@@ -25,4 +25,10 @@ export class AddPassengerDto {
 
   @IsString()
   destination: string;
+
+  // No obligatorio (12 sept 2026, decidido con Jayde): si el conductor lo
+  // llena, se guarda y se le envia un correo tipo boleto a ese pasajero.
+  @IsOptional()
+  @IsEmail()
+  email?: string;
 }

@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "GpsAlertType" ADD VALUE 'FALLA_REPORTADA';
