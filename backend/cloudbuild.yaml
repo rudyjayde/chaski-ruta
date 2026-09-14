@@ -1,0 +1,36 @@
+# Pipeline de despliegue continuo (13 sept 2026): cada push a la rama `main`
+# que toque algo dentro de backend/ dispara esto -- construye la imagen con
+# el Dockerfile real y la despliega a Cloud Run, con exactamente los mismos
+# flags (region, Cloud SQL, secretos, min-instances) que el primer deploy
+# manual. Nunca reinventar los flags aqui: si cambian, cambiar en los dos
+# lados o dejar solo este archivo como fuente de verdad.
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'southamerica-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/chaski-backend:$SHORT_SHA', '.']
+    dir: 'backend'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'southamerica-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/chaski-backend:$SHORT_SHA']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - chaski-backend
+      - --image=southamerica-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/chaski-backend:$SHORT_SHA
+      - --region=southamerica-west1
+      - --add-cloudsql-instances=$PROJECT_ID:southamerica-west1:chaski-db
+      - --min-instances=1
+      - --max-instances=3
+      - --memory=1Gi
+      - --cpu=1
+      - --allow-unauthenticated
+      - --set-env-vars=GOOGLE_CLIENT_ID=1000739699561-7lqcsqb86h3il6546stb3gq7gtkr3fj3.apps.googleusercontent.com,GOOGLE_CALLBACK_URL=https://api.chaskiai.com.pe/auth/google/callback,JWT_EXPIRES_IN=7d,FRONTEND_URL=https://chaskiai.com.pe,ALLOW_DEV_LOGIN=false,CLOUDINARY_CLOUD_NAME=sgf8nwgk,CLOUDINARY_API_KEY=533721519631869,TRACCAR_API_URL=http://147.182.187.28:8082,TRACCAR_EMAIL=importstarperuvian@gmail.com,COMMERCIAL_NOTIFICATIONS_EMAIL=chaskiai7@gmail.com
+      - --set-secrets=DATABASE_URL=database-url:latest,JWT_SECRET=jwt-secret:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,CLOUDINARY_API_SECRET=cloudinary-api-secret:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest,TRACCAR_PASSWORD=traccar-password:latest,RESEND_API_KEY=resend-api-key:latest
+
+images:
+  - 'southamerica-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/chaski-backend:$SHORT_SHA'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
