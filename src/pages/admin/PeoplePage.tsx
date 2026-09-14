@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import type { Person, Unit } from '../../types';
 import { useAdminDemo } from './AdminApp';
+import { useAuth } from '../../contexts/AuthContext';
 import {
   fetchPeople, createPerson, type CreatePersonInput,
   fetchVehicles, fetchCompanies, type CompanyOption,
@@ -691,9 +692,16 @@ function CreatePersonModal({
 
 export default function PeoplePage() {
   const { org } = useAdminDemo();
+  const { user } = useAuth();
+  // Un Administrador real ya no puede invitar a otro administrador (13 sept
+  // 2026, decidido con Jayde: eso queda exclusivo de Super Admin). Pero un
+  // Super Admin "actuando como administrador" (acting-org.ts) sigue viendo
+  // este mismo PeoplePage -- para el, el boton debe seguir disponible.
+  const isSuperAdmin = user?.role === 'superadmin';
   const [tab, setTab] = useState<PersonTab>('conductores');
   const [search, setSearch] = useState('');
   const [filterCompany, setFilterCompany] = useState('');
+  const [showSuspended, setShowSuspended] = useState(false);
   const [selected, setSelected] = useState<Person | null>(null);
   const [linking, setLinking] = useState<Person | null>(null);
   const [showInvite, setShowInvite] = useState(false);
@@ -731,8 +739,8 @@ export default function PeoplePage() {
 
   const filteredPeople = useMemo(() => people.filter(p => tab === 'pendientes' ? p.status === 'PENDIENTE' : p.role === roleMap[tab] && p.status !== 'PENDIENTE').filter(p => {
     const q = search.toLowerCase();
-    return (!q || p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q) || p.code?.includes(q)) && (!filterCompany || p.company === filterCompany);
-  }), [people, tab, search, filterCompany]);
+    return (!q || p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q) || p.code?.includes(q)) && (!filterCompany || p.company === filterCompany) && (showSuspended || p.status !== 'SUSPENDIDO');
+  }), [people, tab, search, filterCompany, showSuspended]);
 
   const counts = {
     conductores: people.filter(p => p.role === 'CONDUCTOR' && p.status !== 'PENDIENTE').length,
@@ -754,18 +762,20 @@ export default function PeoplePage() {
         <div className="flex items-center gap-2">
           {tab === 'conductores' && <button onClick={() => setShowDriverRegistration(true)} className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h"><UserPlus size={15} /> Registrar conductor</button>}
           {tab === 'socios' && <button onClick={() => setShowSocioRegistration(true)} className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h"><UserPlus size={15} /> Registrar socio</button>}
-          {tab === 'administradores' && <button onClick={() => setShowInvite(true)} className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg text-sm text-t1 hover:bg-hover"><UserPlus size={15} /> Invitar administrador auxiliar</button>}
+          {tab === 'administradores' && isSuperAdmin && <button onClick={() => setShowInvite(true)} className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg text-sm text-t1 hover:bg-hover"><UserPlus size={15} /> Invitar administrador auxiliar</button>}
         </div>
       </div>
 
       {toast && <div className="mx-6 mt-3 p-3 bg-ok/5 border border-ok/30 rounded-lg text-sm text-ok flex items-center gap-2"><CheckCircle size={14} />{toast}</div>}
       {loadError && <div className="mx-6 mt-3 p-3 bg-danger/5 border border-danger/30 rounded-lg text-sm text-danger">{loadError}</div>}
+      {tab === 'administradores' && !isSuperAdmin && <div className="mx-6 mt-3 p-3 bg-bg border border-border rounded-lg text-sm text-t2">Para registrar a otro administrador, comunícate con CHASKI AI — el alta de cuentas de administrador es exclusiva de Super Admin.</div>}
 
       <div className="border-b border-border bg-surface"><div className="flex px-6">{tabs.map(t => <button key={t.id} onClick={() => { setTab(t.id); setSelected(null); }} className={`px-4 py-3 text-sm font-medium border-b-2 ${tab === t.id ? 'border-primary text-primary' : 'border-transparent text-t2 hover:text-t1'}`}>{t.label}<span className="ml-2 text-sm text-muted">({counts[t.id]})</span></button>)}</div></div>
 
       <div className="px-6 py-3 border-b border-border bg-surface flex items-center gap-3">
         <div className="relative"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" /><input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Nombre, correo o código..." className="w-72 h-9 pl-9 pr-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" /></div>
         <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)} className="h-9 px-3 border border-border rounded-lg text-sm"><option value="">Todas las empresas</option>{companies.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</select>
+        <label className="flex items-center gap-2 text-sm text-t2 select-none"><input type="checkbox" checked={showSuspended} onChange={e => setShowSuspended(e.target.checked)} /> Mostrar dados de baja</label>
         <span className="text-sm text-t2 ml-auto">{filteredPeople.length} personas</span>
       </div>
 

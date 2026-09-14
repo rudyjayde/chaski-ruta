@@ -22,3 +22,6 @@ logs/
 /.opencode-skills/
 nul
 Claude outputs/env
+
+.vercel
+.env*

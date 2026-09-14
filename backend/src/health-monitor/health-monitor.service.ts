@@ -18,10 +18,16 @@ const RESEND_DEGRADED_MS = 1500;
 const CLOUDINARY_DEGRADED_MS = 1500;
 const HISTORY_POINTS = 48; // ultimos 48 chequeos (~4h a cada 5 min)
 const RETENTION_DAYS = 35; // 30d de uptime + margen
+const NOTIFICATIONS_REAL_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 1 vez al dia
 
 @Injectable()
 export class HealthMonitorService {
   private readonly logger = new Logger(HealthMonitorService.name);
+
+  // Ultima vez que se hizo el envio de prueba real a Resend (en memoria --
+  // si la instancia se reinicia, en el peor caso se adelanta un chequeo real,
+  // nunca es un problema de cuota). Ver checkNotifications().
+  private lastNotificationsRealCheckAt: number | null = null;
 
   constructor(
     private prisma: PrismaService,
@@ -77,21 +83,54 @@ export class HealthMonitorService {
     return { status: this.classify(result.latencyMs, TRACCAR_DEGRADED_MS), latencyMs: result.latencyMs, errorMessage: null };
   }
 
-  // Resend no tiene un endpoint "health" dedicado -- GET /api-keys es liviano
-  // y ademas confirma que la clave configurada de verdad autentica, no solo
-  // que la variable de entorno existe.
+  // Resend no tiene un endpoint "health" dedicado, y nuestra API key es a
+  // proposito de tipo "Sending access" (minimo privilegio -- una key "Full
+  // access" podria borrar dominios/otras keys si algun dia se filtrara). Una
+  // key "Sending access" NO puede llamar GET /api-keys (403/401, es un
+  // endpoint de administracion de cuenta) -- por eso ese chequeo daba
+  // siempre "CAIDO" aunque el envio real funcionara bien (13 sept 2026).
+  //
+  // El chequeo real de extremo a extremo (POST /emails a delivered@resend.dev,
+  // la direccion oficial de pruebas de Resend -- nunca llega a una bandeja
+  // real) solo corre 1 vez al dia: correrlo cada 5 min (288/dia) agotaria la
+  // cuota diaria del plan gratuito de Resend (100/dia) y terminaria
+  // bloqueando los correos reales de bienvenida/soporte. Entre chequeos
+  // reales, solo se confirma que la clave este configurada.
   private async checkNotifications(): Promise<{ status: HealthCheckStatus; latencyMs: number; errorMessage: string | null }> {
     const apiKey = this.config.get<string>('RESEND_API_KEY');
     if (!apiKey) {
       return { status: 'DEGRADADO', latencyMs: 0, errorMessage: 'RESEND_API_KEY no configurada -- los correos no se envian (se registran en el log).' };
     }
+
+    const dueForRealCheck =
+      this.lastNotificationsRealCheckAt === null ||
+      Date.now() - this.lastNotificationsRealCheckAt >= NOTIFICATIONS_REAL_CHECK_INTERVAL_MS;
+    if (!dueForRealCheck) {
+      return { status: 'OK', latencyMs: 0, errorMessage: null };
+    }
+
+    const from = this.config.get<string>('RESEND_FROM_EMAIL') || 'CHASKI AI <onboarding@resend.dev>';
     const start = Date.now();
     try {
-      const res = await fetch('https://api.resend.com/api-keys', { headers: { Authorization: `Bearer ${apiKey}` } });
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from,
+          to: 'delivered@resend.dev',
+          subject: 'Chequeo de salud tecnica -- CHASKI AI',
+          html: '<p>Chequeo automatico diario de Salud tecnica. Este correo nunca llega a una bandeja real (direccion de prueba de Resend).</p>',
+        }),
+      });
       const latencyMs = Date.now() - start;
-      if (!res.ok) return { status: 'CAIDO', latencyMs, errorMessage: `Resend respondio ${res.status} al validar la clave.` };
+      this.lastNotificationsRealCheckAt = Date.now();
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        return { status: 'CAIDO', latencyMs, errorMessage: `Resend respondio ${res.status} en el envio de prueba: ${text}` };
+      }
       return { status: this.classify(latencyMs, RESEND_DEGRADED_MS), latencyMs, errorMessage: null };
     } catch (err) {
+      this.lastNotificationsRealCheckAt = Date.now();
       return { status: 'CAIDO', latencyMs: Date.now() - start, errorMessage: err instanceof Error ? err.message : String(err) };
     }
   }

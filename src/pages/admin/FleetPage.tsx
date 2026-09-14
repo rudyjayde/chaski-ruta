@@ -480,7 +480,11 @@ function RegisterWizard({ companies, onClose, onCreated }: { companies: CompanyO
 export default function FleetPage() {
   const [search, setSearch] = useState('');
   const [filterCompany, setFilterCompany] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
+  // Por defecto solo activos -- las dadas de baja no deben mezclarse con la
+  // flota operativa a simple vista, pero siguen accesibles eligiendo
+  // "Todos los estados" o "SUSPENDIDO"/"INACTIVO" aqui mismo (su historial de
+  // viajes/GPS nunca se borra, ver Vehicle.status vs registros de Trip).
+  const [filterStatus, setFilterStatus] = useState('ACTIVO');
   const [selected, setSelected] = useState<Unit | null>(null);
   const [showWizard, setShowWizard] = useState(false);
   const [units, setUnits] = useState<Unit[]>([]);

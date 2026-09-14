@@ -1128,12 +1128,21 @@ export default function Landing({ onNavigateToLogin, navigate }: Props) {
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-6 text-xs text-t2">
               <div className="space-y-2">
                 <p className="font-semibold text-t1 mb-1">Producto</p>
-                {['CHASKI RUTA', 'Capacidades', 'Planes'].map(l => <p key={l} className="hover:text-t1 cursor-pointer">{l}</p>)}
+                {[
+                  { label: 'Problemas que resolvemos', id: 'soluciones' },
+                  { label: 'Producto', id: 'como-funciona' },
+                  { label: 'Capacidades', id: 'capacidades' },
+                  { label: 'Clientes de referencia', id: 'empresa' },
+                  { label: 'Planes', id: 'planes' },
+                  { label: 'Preguntas frecuentes', id: 'faq' },
+                  { label: 'Contacto', id: 'contacto' },
+                ].map(l => (
+                  <button key={l.id} type="button" onClick={() => scrollTo(l.id)} className="block text-left hover:text-t1">{l.label}</button>
+                ))}
               </div>
               <div className="space-y-2">
                 <p className="font-semibold text-t1 mb-1">Empresa</p>
                 <button type="button" onClick={() => navigate('/empresa')} className="block text-left hover:text-t1">Sobre nosotros</button>
-                <button type="button" onClick={() => scrollTo('contacto')} className="block text-left hover:text-t1">Contacto</button>
               </div>
               <div className="space-y-2">
                 <p className="font-semibold text-t1 mb-1">Legal</p>

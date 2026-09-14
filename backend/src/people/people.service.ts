@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePersonDto } from './dto/create-person.dto';
 import { UpdatePersonStatusDto } from './dto/update-person-status.dto';
@@ -62,6 +62,16 @@ export class PeopleService {
    * las pantallas de cada rol en una sola cuenta).
    */
   async create(organizationId: string, actor: JwtPayload, dto: CreatePersonDto) {
+    // Decision 13 sept 2026: dar de alta a OTRO administrador queda exclusivo
+    // de Super Admin -- un Administrador no puede auto-invitar a otro admin,
+    // debe pedirselo a CHASKI AI. Socio/Conductor siguen siendo autoservicio
+    // normal del Administrador.
+    if (actor.role === 'ADMINISTRADOR' && dto.role === 'ADMINISTRADOR') {
+      throw new ForbiddenException(
+        'Solo Super Admin puede registrar una cuenta de Administrador. Pide a CHASKI AI que la dé de alta.',
+      );
+    }
+
     const existing = await this.prisma.person.findFirst({
       where: { email: dto.email, role: dto.role },
     });

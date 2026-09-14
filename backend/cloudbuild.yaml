@@ -26,7 +26,7 @@ steps:
       - --memory=1Gi
       - --cpu=1
       - --allow-unauthenticated
-      - --set-env-vars=GOOGLE_CLIENT_ID=1000739699561-7lqcsqb86h3il6546stb3gq7gtkr3fj3.apps.googleusercontent.com,GOOGLE_CALLBACK_URL=https://api.chaskiai.com.pe/auth/google/callback,JWT_EXPIRES_IN=7d,FRONTEND_URL=https://chaskiai.com.pe,ALLOW_DEV_LOGIN=false,CLOUDINARY_CLOUD_NAME=sgf8nwgk,CLOUDINARY_API_KEY=533721519631869,TRACCAR_API_URL=http://147.182.187.28:8082,TRACCAR_EMAIL=importstarperuvian@gmail.com,COMMERCIAL_NOTIFICATIONS_EMAIL=chaskiai7@gmail.com
+      - --set-env-vars=GOOGLE_CLIENT_ID=1000739699561-7lqcsqb86h3il6546stb3gq7gtkr3fj3.apps.googleusercontent.com,GOOGLE_CALLBACK_URL=https://api.chaskiai.com.pe/auth/google/callback,JWT_EXPIRES_IN=7d,FRONTEND_URL=https://chaskiai.com.pe,ALLOW_DEV_LOGIN=false,CLOUDINARY_CLOUD_NAME=sgf8nwgk,CLOUDINARY_API_KEY=533721519631869,TRACCAR_API_URL=http://147.182.187.28:8082,TRACCAR_EMAIL=importstarperuvian@gmail.com,COMMERCIAL_NOTIFICATIONS_EMAIL=chaskiai7@gmail.com,RESEND_FROM_EMAIL=CHASKI AI <notificaciones@chaskiai.com.pe>
       - --set-secrets=DATABASE_URL=database-url:latest,JWT_SECRET=jwt-secret:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,CLOUDINARY_API_SECRET=cloudinary-api-secret:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest,TRACCAR_PASSWORD=traccar-password:latest,RESEND_API_KEY=resend-api-key:latest
 
 images:

@@ -624,7 +624,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
         city: infoForm.city.trim(),
         legalRepName: infoForm.legalRepName.trim(),
         contactPhone: infoForm.contactPhone.trim(),
-        contactEmail: infoForm.contactEmail.trim(),
+        ...(infoForm.contactEmail.trim() ? { contactEmail: infoForm.contactEmail.trim() } : {}),
         logoUrl: infoForm.logoUrl,
       });
       setEditingInfo(false);
@@ -655,7 +655,11 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
     reloadAdmins();
   }, [reloadAdmins]);
 
-  const handleSwapAdmin = async () => {
+  // Decision 13 sept 2026 (Jayde): agregar un administrador NUNCA suspende a
+  // los demas -- una asociacion puede tener varios administradores activos a
+  // la vez. Dar de baja a uno es una accion aparte (handleRemoveAdmin), y
+  // exige motivo, igual que en Personas (PeoplePage.tsx toggleStatus).
+  const handleAddAdmin = async () => {
     if (!swapName.trim() || !swapEmail.trim()) return;
     setSwapError('');
     setSwapBusy(true);
@@ -669,10 +673,6 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
         },
         org.id,
       );
-      const toSuspend = admins.filter(a => a.status !== 'SUSPENDIDO');
-      for (const a of toSuspend) {
-        await updatePersonStatus(a.id, 'SUSPENDIDO', 'Reemplazado por nuevo administrador (Super Admin)', org.id);
-      }
       setSwapName('');
       setSwapEmail('');
       setSwapPhone('');
@@ -682,6 +682,21 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
       setSwapError(err instanceof Error ? err.message : 'No se pudo registrar al nuevo administrador.');
     } finally {
       setSwapBusy(false);
+    }
+  };
+
+  const [removingAdminId, setRemovingAdminId] = useState<string | null>(null);
+  const handleRemoveAdmin = async (admin: Person) => {
+    const reason = window.prompt(`Motivo para dar de baja a ${admin.name} como administrador (obligatorio):`);
+    if (!reason || !reason.trim()) return;
+    setRemovingAdminId(admin.id);
+    try {
+      await updatePersonStatus(admin.id, 'SUSPENDIDO', reason.trim(), org.id);
+      reloadAdmins();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'No se pudo dar de baja al administrador.');
+    } finally {
+      setRemovingAdminId(null);
     }
   };
 
@@ -1060,7 +1075,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
   } else if (step === 1) {
     stepAction = !editingAdmin ? (
       <button onClick={() => setEditingAdmin(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h">
-        <Pencil size={13} /> {activeAdmins.length > 0 ? 'Cambiar administrador' : 'Registrar administrador'}
+        <Pencil size={13} /> {activeAdmins.length > 0 ? 'Agregar administrador' : 'Registrar administrador'}
       </button>
     ) : (
       <div className="flex items-center gap-2">
@@ -1072,7 +1087,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           Cancelar
         </button>
         <button
-          onClick={handleSwapAdmin}
+          onClick={handleAddAdmin}
           disabled={swapBusy || !swapName.trim() || !swapEmail.trim()}
           className="px-3.5 py-1.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h disabled:opacity-50"
         >
@@ -1212,19 +1227,28 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           {step === 1 && (
             <div className="space-y-4">
               <div>
-                <p className="text-sm font-medium text-t1 mb-2">Administrador actual</p>
+                <p className="text-sm font-medium text-t1 mb-2">Administradores</p>
                 {activeAdmins.length > 0 ? (
                   <div className="border border-border rounded-lg divide-y divide-border">
                     {activeAdmins.map(a => (
-                      <div key={a.id} className="px-3.5 py-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="font-medium text-t1 text-sm">{a.name}</p>
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${a.status === 'ACTIVO' ? 'bg-ok/10 text-ok' : 'bg-warn/10 text-warn'}`}>
-                            {a.status === 'ACTIVO' ? 'Activo' : 'Pendiente (aún no ingresó con Google)'}
-                          </span>
+                      <div key={a.id} className="px-3.5 py-3 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium text-t1 text-sm">{a.name}</p>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${a.status === 'ACTIVO' ? 'bg-ok/10 text-ok' : 'bg-warn/10 text-warn'}`}>
+                              {a.status === 'ACTIVO' ? 'Activo' : 'Pendiente (aún no ingresó con Google)'}
+                            </span>
+                          </div>
+                          <p className="text-sm text-t2 mt-0.5">{a.email}</p>
+                          {a.phone && <p className="text-sm text-t2 mt-0.5">{a.phone}</p>}
                         </div>
-                        <p className="text-sm text-t2 mt-0.5">{a.email}</p>
-                        {a.phone && <p className="text-sm text-t2 mt-0.5">{a.phone}</p>}
+                        <button
+                          onClick={() => handleRemoveAdmin(a)}
+                          disabled={removingAdminId === a.id}
+                          className="flex-shrink-0 px-3 py-1.5 text-sm font-medium text-danger border border-danger/30 rounded-lg hover:bg-danger/5 disabled:opacity-50"
+                        >
+                          {removingAdminId === a.id ? 'Dando de baja…' : 'Eliminar'}
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -1236,7 +1260,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
               {editingAdmin && (
                 <div className="p-3.5 border border-border rounded-lg space-y-3 bg-bg">
                   <p className="text-sm font-medium text-t1">
-                    {activeAdmins.length > 0 ? 'Nuevo administrador (reemplaza al actual)' : 'Registrar administrador'}
+                    {activeAdmins.length > 0 ? 'Nuevo administrador adicional' : 'Registrar administrador'}
                   </p>
                   <div>
                     <label className="block text-sm font-medium text-t1 mb-1">Nombre del administrador *</label>
@@ -1269,7 +1293,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                   {swapError && <p className="text-sm text-danger">{swapError}</p>}
                   <p className="text-xs text-t2">
                     {activeAdmins.length > 0
-                      ? 'Al guardar, este correo queda como nuevo administrador y se suspende automáticamente al anterior.'
+                      ? 'Al guardar, este correo queda como administrador adicional -- los demás administradores activos siguen igual.'
                       : 'Se enviará una invitación al administrador cuando guardes (entra con su cuenta de Google).'}
                   </p>
                 </div>
@@ -1828,7 +1852,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 ['Representante', infoForm.legalRepName || '—'],
                 ['Teléfono', infoForm.contactPhone || '—'],
                 ['Correo institucional', infoForm.contactEmail || '—'],
-                ['Administrador', activeAdmins[0]?.name || '—'],
+                ['Administrador', activeAdmins.length > 1 ? `${activeAdmins[0]?.name} (+${activeAdmins.length - 1} más)` : activeAdmins[0]?.name || '—'],
                 ['Correo admin', activeAdmins[0]?.email || '—'],
                 ['Terminal 1', opForm.terminalOriginName || '—'],
                 ['Terminal 2', opForm.terminalDestinationName || '—'],

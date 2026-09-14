@@ -1,7 +1,9 @@
 {
-  "description": "Provides secure web access with role-based dashboards enabling users to manage tasks efficiently after authentication.",
+  "title": "CHASKI AI",
+  "description": "Plataforma digital para asociaciones de transporte y operaciones logísticas: colas, ventas, manifiestos, viajes y control operativo en un solo sistema.",
+  "language": "es",
   "robots": {
-    "index": false
+    "index": true
   },
   "accessibility": {
     "addBypassLinks": false,

@@ -1,0 +1,4 @@
+# El backend NestJS vive en Google Cloud Run, nunca en Vercel -- se oculta
+# por completo del escaneo de proyecto para que Vercel no lo detecte como un
+# "service" mas de un monorepo (13 sept 2026).
+backend
