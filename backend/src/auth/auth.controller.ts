@@ -1,5 +1,6 @@
 import { Body, Controller, ForbiddenException, Get, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Throttle } from '@nestjs/throttler';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
@@ -84,7 +85,11 @@ export class AuthController {
   }
 
   // Login alternativo por correo + contraseña (ver AuthService.loginWithPassword).
+  // Limite propio, mas estricto que el default global (13 sept 2026, auditoria
+  // de seguridad): sin esto, alguien podia probar contraseñas sin limite por
+  // segundo contra una cuenta.
   @Post('login')
+  @Throttle({ default: { limit: 8, ttl: 60_000 } })
   async login(@Body() dto: LoginDto) {
     return this.authService.loginWithPassword(dto.email, dto.password);
   }
@@ -92,6 +97,7 @@ export class AuthController {
   // Solicita el enlace para definir/restablecer contraseña. Siempre responde
   // igual exista o no la cuenta -- nunca revela si un correo esta registrado.
   @Post('forgot-password')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
     await this.authService.requestPasswordReset(dto.email);
     return { ok: true, message: 'Si el correo está registrado, te enviamos un enlace para continuar.' };
@@ -99,6 +105,7 @@ export class AuthController {
 
   // Confirma el enlace enviado por correo y guarda la nueva contraseña.
   @Post('reset-password')
+  @Throttle({ default: { limit: 8, ttl: 60_000 } })
   async resetPassword(@Body() dto: ResetPasswordDto) {
     await this.authService.resetPassword(dto.token, dto.password);
     return { ok: true };

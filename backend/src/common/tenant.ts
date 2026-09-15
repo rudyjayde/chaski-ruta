@@ -31,3 +31,19 @@ export function resolveOrgId(user: JwtPayload, queryOrgId?: string): string {
       : 'Esta cuenta no pertenece a ninguna asociacion',
   );
 }
+
+/**
+ * Regla dura para funciones exclusivas del Plan PRO (asistente conversacional,
+ * Corredor autorizado, reportes avanzados de flota): nunca depender solo de
+ * que el frontend oculte el menu -- un Administrador podria llamar el
+ * endpoint directo sin pasar por la pantalla. Super Admin puede usar
+ * cualquier funcion PRO en cualquier asociacion (soporte); un Administrador
+ * solo si su propia asociacion de verdad esta en PRO (13 sept 2026,
+ * auditoria de separacion de planes).
+ */
+export function assertProPlan(user: JwtPayload, orgPlan: string): void {
+  if (user.role === 'SUPERADMIN') return;
+  if (orgPlan !== 'PRO') {
+    throw new ForbiddenException('Esta función es del Plan PRO. Actualiza tu asociación a PRO para activarla.');
+  }
+}

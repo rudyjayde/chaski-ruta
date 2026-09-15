@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { OrganizationsModule } from './organizations/organizations.module';
@@ -35,6 +37,12 @@ import { SupportTicketsModule } from './support-tickets/support-tickets.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    // Limite de peticiones por IP (13 sept 2026, auditoria de seguridad):
+    // sin esto, alguien podia probar contraseñas ilimitadas por segundo
+    // contra /auth/login. Default generoso (no molesta el uso normal, ni el
+    // polling cada 15-20s del frontend); /auth/login tiene su propio limite
+    // mas estricto via @Throttle en auth.controller.ts.
+    ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 120 }]),
     ScheduleModule.forRoot(),
     PrismaModule,
     AuthModule,
@@ -67,5 +75,6 @@ import { SupportTicketsModule } from './support-tickets/support-tickets.module';
     HealthMonitorModule,
     SupportTicketsModule,
   ],
+  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}
