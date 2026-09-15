@@ -185,6 +185,52 @@ export class MailService {
   }
 
   /**
+   * Correo cuando una cuenta suspendida vuelve a ACTIVO (13 sept 2026,
+   * decidido con Jayde): para la persona es como si la registraran de
+   * nuevo -- avisa igual que sendWelcomeEmail, pero con copy de
+   * reactivacion en vez de bienvenida por primera vez. Mismo patron
+   * best-effort: PeopleService.updateStatus ya cambio el estado antes de
+   * llamar esto, un correo fallido nunca revierte la reactivacion.
+   */
+  async sendReactivationEmail(params: WelcomeEmailParams): Promise<void> {
+    const apiKey = this.config.get<string>('RESEND_API_KEY');
+    if (!apiKey) {
+      this.logger.warn(
+        `RESEND_API_KEY no configurada -- no se envio el correo de reactivacion a ${params.to} (${params.role}).`,
+      );
+      return;
+    }
+
+    const from = this.config.get<string>('RESEND_FROM_EMAIL') || 'CHASKI AI <onboarding@resend.dev>';
+    const frontendUrl = this.config.get<string>('FRONTEND_URL') || 'http://localhost:8443';
+    const subject = `Tu cuenta en ${params.orgName} fue reactivada`;
+
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from,
+          to: params.to,
+          subject,
+          html: buildReactivationEmailHtml(params, frontendUrl),
+        }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        this.logger.error(`Resend respondio ${res.status} al enviar reactivacion a ${params.to}: ${text}`);
+      }
+    } catch (err) {
+      this.logger.error(
+        `Error enviando correo de reactivacion a ${params.to}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /**
    * "Boleto" por correo al pasajero (12 sept 2026, decidido con Jayde): el
    * correo del pasajero en el manifiesto es un dato NO obligatorio -- si el
    * conductor lo llena, se guarda (ver PassengerProfile en
@@ -691,6 +737,24 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;');
 }
 
+// Encabezado compartido (wordmark de CHASKI AI + logo real de la asociacion,
+// con texto como respaldo si no tiene logo cargado) -- reusado por el correo
+// de bienvenida y el de reactivacion, para que ambos se vean como el mismo
+// producto.
+function buildEmailHeaderHtml(orgName: string, orgLogoUrl?: string | null): string {
+  const safeOrgName = escapeHtml(orgName);
+  return `<img src="${CHASKI_WORDMARK_URL}" alt="CHASKI AI" style="height:28px;width:auto;object-fit:contain;" />
+          <div style="margin-top:6px;font-size:11px;font-weight:500;color:#c7d2ff;letter-spacing:0.2px;">${escapeHtml(CHASKI_TAGLINE)}</div>
+          ${orgLogoUrl
+            ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:12px auto 0;"><tr><td style="background-color:#ffffff;border-radius:999px;padding:6px 14px;">
+                 <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+                   <td style="padding-right:8px;"><img src="${escapeHtml(orgLogoUrl)}" alt="${safeOrgName}" style="height:20px;width:auto;max-width:110px;object-fit:contain;display:block;" /></td>
+                   <td style="font-size:12px;font-weight:600;color:#1d3fb8;letter-spacing:0.3px;white-space:nowrap;">${safeOrgName}</td>
+                 </tr></table>
+               </td></tr></table>`
+            : `<div style="display:inline-block;margin-top:10px;padding:3px 10px;background-color:rgba(255,255,255,0.16);border-radius:6px;font-size:12px;font-weight:600;color:#ffe9a8;letter-spacing:0.5px;">${safeOrgName}</div>`}`;
+}
+
 function buildWelcomeEmailHtml(params: WelcomeEmailParams, frontendUrl: string): string {
   const copy = ROLE_COPY[params.role];
   const name = escapeHtml(params.name);
@@ -719,16 +783,7 @@ function buildWelcomeEmailHtml(params: WelcomeEmailParams, frontendUrl: string):
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background-color:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e2e8f0;">
       <tr>
         <td style="background-color:#1d3fb8;background-image:linear-gradient(135deg,#1d3fb8,#0b1a4d);padding:32px 32px 24px;text-align:center;">
-          <img src="${CHASKI_WORDMARK_URL}" alt="CHASKI AI" style="height:28px;width:auto;object-fit:contain;" />
-          <div style="margin-top:6px;font-size:11px;font-weight:500;color:#c7d2ff;letter-spacing:0.2px;">${escapeHtml(CHASKI_TAGLINE)}</div>
-          ${params.orgLogoUrl
-            ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:12px auto 0;"><tr><td style="background-color:#ffffff;border-radius:999px;padding:6px 14px;">
-                 <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-                   <td style="padding-right:8px;"><img src="${escapeHtml(params.orgLogoUrl)}" alt="${orgName}" style="height:20px;width:auto;max-width:110px;object-fit:contain;display:block;" /></td>
-                   <td style="font-size:12px;font-weight:600;color:#1d3fb8;letter-spacing:0.3px;white-space:nowrap;">${orgName}</td>
-                 </tr></table>
-               </td></tr></table>`
-            : `<div style="display:inline-block;margin-top:10px;padding:3px 10px;background-color:rgba(255,255,255,0.16);border-radius:6px;font-size:12px;font-weight:600;color:#ffe9a8;letter-spacing:0.5px;">${orgName}</div>`}
+          ${buildEmailHeaderHtml(params.orgName, params.orgLogoUrl)}
         </td>
       </tr>
       <tr>
@@ -765,6 +820,60 @@ function buildWelcomeEmailHtml(params: WelcomeEmailParams, frontendUrl: string):
       <tr>
         <td style="padding:16px 32px 28px;text-align:center;">
           <p style="margin:0;font-size:11px;color:#94a3b8;">Si no esperabas este correo, puedes ignorarlo.</p>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+function buildReactivationEmailHtml(params: WelcomeEmailParams, frontendUrl: string): string {
+  const copy = ROLE_COPY[params.role];
+  const name = escapeHtml(params.name);
+  const orgName = escapeHtml(params.orgName);
+  const loginUrl = `${frontendUrl.replace(/\/$/, '')}/ingresar`;
+
+  return `<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tu cuenta fue reactivada</title>
+  </head>
+  <body style="margin:0;padding:24px;background-color:#eef1f6;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background-color:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e2e8f0;">
+      <tr>
+        <td style="background-color:#1d3fb8;background-image:linear-gradient(135deg,#1d3fb8,#0b1a4d);padding:32px 32px 24px;text-align:center;">
+          ${buildEmailHeaderHtml(params.orgName, params.orgLogoUrl)}
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:32px;">
+          <h1 style="margin:0 0 16px;font-size:19px;color:#0f172a;">Hola de nuevo, ${name} 👋</h1>
+          <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#334155;">
+            Tu cuenta de ${copy.etiqueta.toLowerCase()} en <strong>${orgName}</strong> fue reactivada. Ya puedes volver a ingresar con normalidad.
+          </p>
+
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#fffbeb;border:1px solid #fde68a;border-radius:10px;margin-bottom:24px;">
+            <tr>
+              <td style="padding:12px 16px;font-size:13px;line-height:1.5;color:#78350f;">
+                🔑 Ingresa con tu cuenta de <strong>Google</strong> (${escapeHtml(params.to)}), o si prefieres, define una contraseña propia desde "Recuperar acceso" en la pantalla de acceso.
+              </td>
+            </tr>
+          </table>
+
+          <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
+            <tr>
+              <td style="border-radius:10px;background-color:#1d3fb8;">
+                <a href="${loginUrl}" style="display:inline-block;padding:12px 28px;font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;">Ingresar a CHASKI AI →</a>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:16px 32px 28px;text-align:center;">
+          <p style="margin:0;font-size:11px;color:#94a3b8;">Si no esperabas este correo, contacta al administrador de tu asociación.</p>
         </td>
       </tr>
     </table>

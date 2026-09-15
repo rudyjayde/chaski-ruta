@@ -158,6 +158,28 @@ export class PeopleService {
         reason: dto.reason,
       },
     });
+
+    // Reactivacion real (13 sept 2026, decidido con Jayde): para la persona
+    // es como si la registraran de nuevo -- avisa igual que el alta, con
+    // copy de "tu cuenta fue reactivada". Solo cuando de verdad viene de
+    // SUSPENDIDO -- nunca en el primer ACTIVO por login de Google (ese
+    // camino no pasa por aqui, ver AuthService.activateAndIssue).
+    if (dto.status === 'ACTIVO' && person.status === 'SUSPENDIDO') {
+      const org = await this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { name: true, logoUrl: true },
+      });
+      await this.mail.sendReactivationEmail({
+        to: person.email,
+        name: person.name,
+        // Nunca SUPERADMIN aqui: findOne() ya filtro por organizationId, y
+        // el Super Admin siempre tiene organizationId null (seed.ts).
+        role: person.role as 'ADMINISTRADOR' | 'SOCIO' | 'CONDUCTOR',
+        orgName: org?.name ?? 'tu asociación',
+        orgLogoUrl: org?.logoUrl,
+      });
+    }
+
     return updated;
   }
 
