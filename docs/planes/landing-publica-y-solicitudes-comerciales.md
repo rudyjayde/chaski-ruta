@@ -1,11 +1,18 @@
 # Landing pública y solicitudes comerciales
 
 **Fecha de esta versión:** 8 de septiembre de 2026. Complementa al
-`DOCUMENTO_MAESTRO_NEGOCIO_Y_PRODUCTO.md` §4. Hoy la landing está mayormente
-escrita directo en el código y sus formularios simulan el envío con estado
-local — nada de lo que describe este documento existe todavía en el
-backend. `PENDIENTE DE IMPLEMENTAR` en su totalidad salvo que se indique lo
-contrario.
+`DOCUMENTO_MAESTRO_NEGOCIO_Y_PRODUCTO.md` §4. **Corregido 15 de septiembre
+de 2026:** el formulario de solicitud comercial de la landing ya NO simula
+el envío — es real, conectado a `backend/src/commercial-requests`
+(`CommercialRequestsController`). El endpoint de creación es público a
+propósito (lo llena alguien que todavía no tiene cuenta), y Super Admin ya
+gestiona esas solicitudes de verdad: listado, detalle, triaje automático
+con IA (`ia-aplicada.md` §2.1), sugerencia de onboarding para pre-llenar el
+wizard de nueva asociación, y marcar como revisada. Lo que sigue sin
+construir es lo que ya se indica explícitamente más abajo en este
+documento (la landing como contenido editable en su estructura general sí
+sigue mayormente hardcodeada, salvo el contenido que ya administra Super
+Admin → Landing pública).
 
 ## 1. Objetivo de la landing
 

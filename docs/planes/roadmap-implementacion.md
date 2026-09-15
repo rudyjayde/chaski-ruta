@@ -165,11 +165,15 @@ suficientes.
 Ayuda a poblar terminales/rutas al dar de alta una asociación, a partir de
 los datos de su Solicitud comercial. Depende de 1.1.
 
-### 2.4 Propuestas de mejora de Plan PRO (`plan-pro.md` §11)
-Mantenimiento predictivo, puntaje de conducción, sugerencia de
-reubicación, reportes de eficiencia — los cuatro dependen de tener
-telemetría PRO real ya integrada (ver Nivel 3, "Integración real con
-Traccar").
+### 2.4 Propuestas de mejora de Plan PRO (`plan-pro.md` §11) — `CONSTRUIDO (actualizado 15 de septiembre de 2026)`
+Mantenimiento predictivo, sugerencia de reubicación y reportes de
+eficiencia ya están construidos en `backend/src/fleet-reports`, sobre la
+telemetría real de Traccar. El puntaje de conducción quedó a propósito
+parcial (solo conteo real de frenadas bruscas, sin ranking todavía — falta
+suficiente historial acumulado para no inventar el criterio, ver
+`plan-pro.md` §11.2). Estos reportes ahora también exigen Plan PRO
+verificado en el servidor, no solo ocultos en el menú (ver `plan-pro.md`
+§10, corrección del 15 de septiembre).
 
 ### 2.5 Formulario administrable (constructor dinámico de preguntas)
 La versión con preguntas configurables por el Super Admin, versionado de
@@ -183,15 +187,16 @@ borrador/previsualización/publicación/historial. Ver
 
 ## Nivel 3 — Alto (arquitectura nueva o depende de escala/integraciones externas)
 
-### 3.1 Detección automática de accidentes — `PRIORIDAD 1 entre los proyectos grandes`
-Análisis de telemetría PRO en tiempo real (patrón de desaceleración +
-impacto + inmovilidad), alerta automática al administrador. Depende de
-tener la integración real con Traccar (no existe todavía — hoy PRO es
-prototipo de UI). Ver `ia-aplicada.md` §3.1.
+### 3.1 Detección automática de accidentes — `CONSTRUIDO (actualizado 15 de septiembre de 2026)`
+Análisis de telemetría PRO en tiempo real (patrón de velocidad + inmovilidad
+sostenida), alerta automática al administrador. Ya no depende de nada —
+`backend/src/safety/accident-detection.service.ts` corre cada 5 minutos
+contra viajes activos con GPS real de Traccar. Ver `plan-pro.md` §12.
 
-### 3.2 Integración real con Traccar (PRO y GPS Vehicular)
-Requisito técnico previo para 2.4 y 3.1 — hoy no hay conexión real, es la
-brecha más grande de Plan PRO (`plan-pro.md` §10).
+### 3.2 Integración real con Traccar (PRO y GPS Vehicular) — `CONSTRUIDO (actualizado 15 de septiembre de 2026)`
+Ya no es la brecha más grande de Plan PRO — conexión real y verificada en
+vivo contra hardware Teltonika (`backend/src/gps/gps.service.ts`). Ver
+`plan-pro.md` §2.
 
 ### 3.3 Expediente legal/seguros automático ante incidente
 Depende de 1.2 (manifiesto/GPS confiables) y 3.2.
