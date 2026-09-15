@@ -536,27 +536,30 @@ function PersonDetail({ person, onClose, onLink, onStatusChanged }: { person: Pe
     }
   };
 
-  const toggleStatus = async () => {
-    const next = person.status === 'SUSPENDIDO' ? 'ACTIVO' : 'SUSPENDIDO';
-    if (next === 'SUSPENDIDO') {
-      const reason = window.prompt('Motivo de la suspensión (obligatorio):');
-      if (!reason || !reason.trim()) return;
-      setBusy(true);
-      setError('');
-      try {
-        await updatePersonStatus(person.id, next, reason.trim());
-        onStatusChanged(`${person.name} quedó suspendido.`);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'No se pudo actualizar el estado.');
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
+  const [showSuspendModal, setShowSuspendModal] = useState(false);
+  const [suspendReason, setSuspendReason] = useState('');
+
+  const confirmSuspend = async () => {
+    if (!suspendReason.trim()) return;
     setBusy(true);
     setError('');
     try {
-      await updatePersonStatus(person.id, next);
+      await updatePersonStatus(person.id, 'SUSPENDIDO', suspendReason.trim());
+      setShowSuspendModal(false);
+      setSuspendReason('');
+      onStatusChanged(`${person.name} quedó suspendido.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo actualizar el estado.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reactivate = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await updatePersonStatus(person.id, 'ACTIVO');
       onStatusChanged(`${person.name} quedó activo.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo actualizar el estado.');
@@ -588,11 +591,37 @@ function PersonDetail({ person, onClose, onLink, onStatusChanged }: { person: Pe
           </div>
         )}
         {person.status !== 'PENDIENTE' && (
-          <button onClick={toggleStatus} disabled={busy} className={`w-full h-9 rounded-lg text-sm font-medium border disabled:opacity-50 ${person.status === 'SUSPENDIDO' ? 'border-ok text-ok hover:bg-ok/5' : 'border-danger text-danger hover:bg-danger/5'}`}>
+          <button
+            onClick={() => (person.status === 'SUSPENDIDO' ? reactivate() : setShowSuspendModal(true))}
+            disabled={busy}
+            className={`w-full h-9 rounded-lg text-sm font-medium border disabled:opacity-50 ${person.status === 'SUSPENDIDO' ? 'border-ok text-ok hover:bg-ok/5' : 'border-danger text-danger hover:bg-danger/5'}`}
+          >
             {busy ? 'Guardando…' : person.status === 'SUSPENDIDO' ? 'Reactivar cuenta' : 'Suspender cuenta'}
           </button>
         )}
       </div>
+
+      {showSuspendModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4" role="dialog" aria-modal="true" aria-label="Suspender cuenta">
+          <div className="bg-surface rounded-lg shadow-xl w-full max-w-sm p-6">
+            <h3 className="text-sm font-semibold text-t1 mb-1">Suspender a {person.name}</h3>
+            <p className="text-xs text-t2 mb-4">Su historial queda intacto. Se requiere motivo.</p>
+            <textarea
+              value={suspendReason}
+              onChange={e => setSuspendReason(e.target.value)}
+              placeholder="Motivo de la suspensión…"
+              className="w-full min-h-20 px-3 py-2 border border-border rounded-lg text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            {error && <p className="text-xs text-danger mb-3">{error}</p>}
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => { setShowSuspendModal(false); setSuspendReason(''); setError(''); }} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-hover">Cancelar</button>
+              <button onClick={confirmSuspend} disabled={!suspendReason.trim() || busy} className="px-4 py-2 text-sm bg-danger text-white rounded-lg hover:bg-danger/80 disabled:opacity-50">
+                {busy ? 'Suspendiendo…' : 'Suspender'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

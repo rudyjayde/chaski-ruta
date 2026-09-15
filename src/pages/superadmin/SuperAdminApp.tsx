@@ -657,8 +657,9 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
 
   // Decision 13 sept 2026 (Jayde): agregar un administrador NUNCA suspende a
   // los demas -- una asociacion puede tener varios administradores activos a
-  // la vez. Dar de baja a uno es una accion aparte (handleRemoveAdmin), y
-  // exige motivo, igual que en Personas (PeoplePage.tsx toggleStatus).
+  // la vez. Dar de baja a uno es una accion aparte (confirmRemoveAdmin), con
+  // un modal propio que exige motivo -- mismo patron que Personas
+  // (PeoplePage.tsx) y Vehiculos (FleetPage.tsx showDeactivate).
   const handleAddAdmin = async () => {
     if (!swapName.trim() || !swapEmail.trim()) return;
     setSwapError('');
@@ -686,15 +687,20 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
   };
 
   const [removingAdminId, setRemovingAdminId] = useState<string | null>(null);
-  const handleRemoveAdmin = async (admin: Person) => {
-    const reason = window.prompt(`Motivo para dar de baja a ${admin.name} como administrador (obligatorio):`);
-    if (!reason || !reason.trim()) return;
-    setRemovingAdminId(admin.id);
+  const [removeAdminTarget, setRemoveAdminTarget] = useState<Person | null>(null);
+  const [removeAdminReason, setRemoveAdminReason] = useState('');
+  const [removeAdminError, setRemoveAdminError] = useState('');
+  const confirmRemoveAdmin = async () => {
+    if (!removeAdminTarget || !removeAdminReason.trim()) return;
+    setRemovingAdminId(removeAdminTarget.id);
+    setRemoveAdminError('');
     try {
-      await updatePersonStatus(admin.id, 'SUSPENDIDO', reason.trim(), org.id);
+      await updatePersonStatus(removeAdminTarget.id, 'SUSPENDIDO', removeAdminReason.trim(), org.id);
+      setRemoveAdminTarget(null);
+      setRemoveAdminReason('');
       reloadAdmins();
     } catch (err) {
-      window.alert(err instanceof Error ? err.message : 'No se pudo dar de baja al administrador.');
+      setRemoveAdminError(err instanceof Error ? err.message : 'No se pudo dar de baja al administrador.');
     } finally {
       setRemovingAdminId(null);
     }
@@ -1243,7 +1249,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                           {a.phone && <p className="text-sm text-t2 mt-0.5">{a.phone}</p>}
                         </div>
                         <button
-                          onClick={() => handleRemoveAdmin(a)}
+                          onClick={() => { setRemoveAdminTarget(a); setRemoveAdminReason(''); setRemoveAdminError(''); }}
                           disabled={removingAdminId === a.id}
                           className="flex-shrink-0 px-3 py-1.5 text-sm font-medium text-danger border border-danger/30 rounded-lg hover:bg-danger/5 disabled:opacity-50"
                         >
@@ -1891,6 +1897,28 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           )}
         </div>
       </div>
+
+      {removeAdminTarget && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Eliminar administrador">
+          <div className="bg-surface rounded-lg shadow-xl w-full max-w-sm p-6">
+            <h3 className="text-sm font-semibold text-t1 mb-1">Dar de baja a {removeAdminTarget.name}</h3>
+            <p className="text-xs text-t2 mb-4">Su historial queda intacto. Se requiere motivo.</p>
+            <textarea
+              value={removeAdminReason}
+              onChange={e => setRemoveAdminReason(e.target.value)}
+              placeholder="Motivo de la baja…"
+              className="w-full min-h-20 px-3 py-2 border border-border rounded-lg text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            {removeAdminError && <p className="text-xs text-danger mb-3">{removeAdminError}</p>}
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => { setRemoveAdminTarget(null); setRemoveAdminReason(''); setRemoveAdminError(''); }} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-hover">Cancelar</button>
+              <button onClick={confirmRemoveAdmin} disabled={!removeAdminReason.trim() || removingAdminId === removeAdminTarget.id} className="px-4 py-2 text-sm bg-danger text-white rounded-lg hover:bg-danger/80 disabled:opacity-50">
+                {removingAdminId === removeAdminTarget.id ? 'Dando de baja…' : 'Dar de baja'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
