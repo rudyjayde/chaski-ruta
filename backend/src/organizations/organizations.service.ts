@@ -124,6 +124,7 @@ export class OrganizationsService {
       role: 'ADMINISTRADOR',
       orgName: dto.name,
       fromChaski: true,
+      orgLogoUrl: dto.logoUrl,
     });
 
     return org;

@@ -19,6 +19,10 @@ interface WelcomeEmailParams {
   // parte de CHASKI AI", no de la asociacion, porque la asociacion recien
   // se esta creando en ese instante.
   fromChaski?: boolean;
+  // Logo real de la asociacion (Cloudinary), subido desde Super Admin ->
+  // Asociaciones -> Organizacion. Si la asociacion todavia no tiene logo,
+  // se usa el nombre en texto como respaldo (ver buildWelcomeEmailHtml).
+  orgLogoUrl?: string | null;
 }
 
 const ROLE_COPY: Record<WelcomeEmailRole, { etiqueta: string; puntos: string[] }> = {
@@ -717,7 +721,14 @@ function buildWelcomeEmailHtml(params: WelcomeEmailParams, frontendUrl: string):
         <td style="background-color:#1d3fb8;background-image:linear-gradient(135deg,#1d3fb8,#0b1a4d);padding:32px 32px 24px;text-align:center;">
           <img src="${CHASKI_WORDMARK_URL}" alt="CHASKI AI" style="height:28px;width:auto;object-fit:contain;" />
           <div style="margin-top:6px;font-size:11px;font-weight:500;color:#c7d2ff;letter-spacing:0.2px;">${escapeHtml(CHASKI_TAGLINE)}</div>
-          <div style="display:inline-block;margin-top:10px;padding:3px 10px;background-color:rgba(255,255,255,0.16);border-radius:6px;font-size:12px;font-weight:600;color:#ffe9a8;letter-spacing:0.5px;">${orgName}</div>
+          ${params.orgLogoUrl
+            ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:12px auto 0;"><tr><td style="background-color:#ffffff;border-radius:999px;padding:6px 14px;">
+                 <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+                   <td style="padding-right:8px;"><img src="${escapeHtml(params.orgLogoUrl)}" alt="${orgName}" style="height:20px;width:auto;max-width:110px;object-fit:contain;display:block;" /></td>
+                   <td style="font-size:12px;font-weight:600;color:#1d3fb8;letter-spacing:0.3px;white-space:nowrap;">${orgName}</td>
+                 </tr></table>
+               </td></tr></table>`
+            : `<div style="display:inline-block;margin-top:10px;padding:3px 10px;background-color:rgba(255,255,255,0.16);border-radius:6px;font-size:12px;font-weight:600;color:#ffe9a8;letter-spacing:0.5px;">${orgName}</div>`}
         </td>
       </tr>
       <tr>

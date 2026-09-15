@@ -124,13 +124,14 @@ export class PeopleService {
     // si el correo falla (ver MailService.sendWelcomeEmail).
     const org = await this.prisma.organization.findUnique({
       where: { id: organizationId },
-      select: { name: true },
+      select: { name: true, logoUrl: true },
     });
     await this.mail.sendWelcomeEmail({
       to: person.email,
       name: person.name,
       role: dto.role,
       orgName: org?.name ?? 'tu asociación',
+      orgLogoUrl: org?.logoUrl,
     });
 
     return person;
