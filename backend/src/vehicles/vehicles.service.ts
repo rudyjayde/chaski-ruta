@@ -5,6 +5,7 @@ import { VEHICLE_TYPE_BY_MODEL } from './vehicle-catalog';
 import { ChangeDriverDto } from './dto/change-driver.dto';
 import { ChangePartnerDto } from './dto/change-partner.dto';
 import { DeactivateVehicleDto } from './dto/deactivate-vehicle.dto';
+import { RetireVehiclesDto } from './dto/retire-vehicles.dto';
 import { SetGpsDeviceDto } from './dto/set-gps-device.dto';
 import { SetGpsVehicularPlanDto } from './dto/set-gps-vehicular-plan.dto';
 import { SetMaintenanceDto } from './dto/set-maintenance.dto';
@@ -72,12 +73,23 @@ export class VehiclesService {
     // Avisos claros ANTES de escribir -- sin esto el codigo repetido solo
     // fallaba en la base de datos (unique organizationId+code) con un error
     // generico, sin decir que la unidad ya existia.
-    const sameCode = await this.prisma.vehicle.findFirst({ where: { organizationId, code }, select: { id: true } });
+    const company = await this.prisma.company.findUnique({ where: { id: dto.companyId }, select: { organizationId: true, status: true } });
+    if (!company || company.organizationId !== organizationId || company.status === 'ELIMINADA') {
+      throw new BadRequestException('La empresa elegida no existe en esta asociación.');
+    }
+
+    // Si el codigo o la placa pertenecen a una unidad dada de baja, no es un
+    // duplicado a rechazar sino una unidad que vuelve: se ofrece restaurarla.
+    const sameCode = await this.prisma.vehicle.findFirst({ where: { organizationId, code }, select: { id: true, status: true } });
+    if (sameCode?.status === 'BAJA') this.throwRetiredMatch(sameCode.id, `La unidad ${code} fue dada de baja antes.`);
     if (sameCode) throw new ConflictException(`La unidad ${code} ya está registrada en esta asociación.`);
     const samePlate = await this.prisma.vehicle.findFirst({
       where: { organizationId, plate: dto.plate },
-      select: { code: true },
+      select: { id: true, code: true, status: true },
     });
+    if (samePlate?.status === 'BAJA') {
+      this.throwRetiredMatch(samePlate.id, `La placa ${dto.plate} pertenece a la unidad ${samePlate.code}, que fue dada de baja.`);
+    }
     if (samePlate) throw new ConflictException(`La placa ${dto.plate} ya está registrada en la unidad ${samePlate.code}.`);
 
     try {
@@ -109,6 +121,105 @@ export class VehiclesService {
       }
       throw err;
     }
+  }
+
+  private throwRetiredMatch(vehicleId: string, message: string): never {
+    throw new ConflictException({ message, code: 'UNIDAD_DE_BAJA', vehicleId });
+  }
+
+  /**
+   * Da de baja la unidad: deja de operar y desaparece de las listas, pero nada
+   * se borra (viajes, manifiestos y auditoria siguen ligados a ella). Motivo
+   * obligatorio. No se puede si tiene un viaje en curso o esta en una cola.
+   */
+  async retire(organizationId: string, actor: JwtPayload, vehicleId: string, dto: DeactivateVehicleDto) {
+    const vehicle = await this.findOne(organizationId, vehicleId);
+    if (vehicle.status === 'BAJA') throw new BadRequestException('Esta unidad ya está dada de baja.');
+
+    const [activeTrip, activeQueue] = await Promise.all([
+      this.prisma.trip.findFirst({ where: { vehicleId, status: { in: ['PROGRAMADO', 'ACTIVO'] } }, select: { id: true } }),
+      this.prisma.queueEntry.findFirst({
+        where: { vehicleId, status: { notIn: ['SALIO', 'AUSENTE', 'RETIRADO'] } },
+        select: { id: true },
+      }),
+    ]);
+    if (activeTrip) {
+      throw new ConflictException(`La unidad ${vehicle.code} tiene un viaje en curso. Termínalo o cancélalo antes de darla de baja.`);
+    }
+    if (activeQueue) {
+      throw new ConflictException(`La unidad ${vehicle.code} está en una cola. Sácala de la cola antes de darla de baja.`);
+    }
+
+    const updated = await this.prisma.vehicle.update({
+      where: { id: vehicleId },
+      data: { status: 'BAJA', currentDriverId: null },
+      include: { company: true, partner: { select: PERSON_SAFE_SELECT }, currentDriver: { select: PERSON_SAFE_SELECT }, plateHistory: true },
+    });
+    await this.prisma.auditEntry.create({
+      data: {
+        organizationId,
+        actorId: actor.sub,
+        actorRole: actor.role,
+        action: 'BAJA_UNIDAD',
+        resource: `Unidad ${vehicle.code}`,
+        resourceId: vehicleId,
+        before: `${vehicle.status}${vehicle.currentDriver ? ` · conductor ${vehicle.currentDriver.name}` : ''}`,
+        after: 'BAJA',
+        reason: dto.reason,
+      },
+    });
+    return updated;
+  }
+
+  /**
+   * Da de baja varias unidades con un solo motivo. Cada una lleva sus mismas
+   * reglas y su propia entrada de auditoria; las que no se pueden (viaje en
+   * curso, en cola) se devuelven con la razon, sin frenar a las demas.
+   */
+  async retireMany(organizationId: string, actor: JwtPayload, dto: RetireVehiclesDto) {
+    const retired: string[] = [];
+    const failed: { code: string; message: string }[] = [];
+    for (const id of new Set(dto.ids)) {
+      const vehicle = await this.prisma.vehicle.findUnique({ where: { id }, select: { code: true, organizationId: true } });
+      if (!vehicle || vehicle.organizationId !== organizationId) {
+        failed.push({ code: id, message: 'Unidad no encontrada' });
+        continue;
+      }
+      try {
+        await this.retire(organizationId, actor, id, { reason: dto.reason });
+        retired.push(vehicle.code);
+      } catch (err) {
+        failed.push({ code: vehicle.code, message: err instanceof Error ? err.message : 'No se pudo dar de baja' });
+      }
+    }
+    return { retired, failed };
+  }
+
+  /** Restaura una unidad dada de baja (vuelve activa, sin conductor asignado). */
+  async restore(organizationId: string, actor: JwtPayload, vehicleId: string) {
+    const vehicle = await this.findOne(organizationId, vehicleId);
+    if (vehicle.status !== 'BAJA') throw new BadRequestException('Esta unidad no está dada de baja.');
+    if (vehicle.company.status === 'ELIMINADA') {
+      throw new ConflictException(`La empresa ${vehicle.company.name} está eliminada. Restáurala primero.`);
+    }
+    const updated = await this.prisma.vehicle.update({
+      where: { id: vehicleId },
+      data: { status: 'ACTIVO' },
+      include: { company: true, partner: { select: PERSON_SAFE_SELECT }, currentDriver: { select: PERSON_SAFE_SELECT }, plateHistory: true },
+    });
+    await this.prisma.auditEntry.create({
+      data: {
+        organizationId,
+        actorId: actor.sub,
+        actorRole: actor.role,
+        action: 'RESTAURAR_UNIDAD',
+        resource: `Unidad ${vehicle.code}`,
+        resourceId: vehicleId,
+        before: 'BAJA',
+        after: 'ACTIVO',
+      },
+    });
+    return updated;
   }
 
   /** Cambia el conductor asignado, con auditoria obligatoria (CAMBIO_CONDUCTOR). */
@@ -170,6 +281,7 @@ export class VehiclesService {
   /** Desactiva la unidad (el codigo permanece en el historial), con auditoria y motivo obligatorio. */
   async deactivate(organizationId: string, actor: JwtPayload, vehicleId: string, dto: DeactivateVehicleDto) {
     const vehicle = await this.findOne(organizationId, vehicleId);
+    if (vehicle.status === 'BAJA') throw new BadRequestException('Esta unidad está dada de baja; restáurala primero.');
     const updated = await this.prisma.vehicle.update({
       where: { id: vehicleId },
       data: { status: 'INACTIVO' },

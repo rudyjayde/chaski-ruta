@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@ne
 import { CompaniesService } from './companies.service';
 import { CreateCompanyDto } from './dto/create-company.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
+import { DeleteCompanyDto } from './dto/delete-company.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -44,5 +45,23 @@ export class CompaniesController {
     @Query('organizationId') organizationId?: string,
   ) {
     return this.companies.update(resolveOrgId(user, organizationId), user, id, dto);
+  }
+
+  // Eliminar = la empresa dejo de operar (motivo obligatorio). No borra datos.
+  @Post(':id/delete')
+  @Roles('SUPERADMIN')
+  remove(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: DeleteCompanyDto,
+    @Query('organizationId') organizationId?: string,
+  ) {
+    return this.companies.remove(resolveOrgId(user, organizationId), user, id, dto);
+  }
+
+  @Post(':id/restore')
+  @Roles('SUPERADMIN')
+  restore(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Query('organizationId') organizationId?: string) {
+    return this.companies.restore(resolveOrgId(user, organizationId), user, id);
   }
 }

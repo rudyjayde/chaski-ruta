@@ -47,6 +47,18 @@ function withActingOrg(path: string): string {
   return `${path}${sep}organizationId=${encodeURIComponent(actingOrgId)}`;
 }
 
+// Error del servidor con los datos extra que manda (por ejemplo `code` y
+// `companyId` cuando una empresa eliminada coincide con la que se quiere crear).
+export class ApiError extends Error {
+  code?: string;
+  data: Record<string, unknown>;
+  constructor(message: string, data: Record<string, unknown> = {}) {
+    super(message);
+    this.code = typeof data.code === 'string' ? data.code : undefined;
+    this.data = data;
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem(TOKEN_KEY);
   const res = await fetch(`${apiUrl()}${withActingOrg(path)}`, {
@@ -59,13 +71,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
   if (!res.ok) {
     let message = `Error ${res.status}`;
+    let data: Record<string, unknown> = {};
     try {
       const body = await res.json();
       if (body?.message) message = Array.isArray(body.message) ? body.message.join(', ') : body.message;
+      if (body && typeof body === 'object') data = body;
     } catch {
       // sin cuerpo JSON, se usa el mensaje generico
     }
-    throw new Error(message);
+    throw new ApiError(message, data);
   }
   if (res.status === 204) return undefined as T;
   // Un GET que devuelve null (ej. "todavia no hay corredor dibujado para
@@ -581,6 +595,22 @@ export async function createCompany(input: CreateCompanyInput, organizationId?: 
   return mapRawCompany(raw);
 }
 
+// Eliminar empresa (dejo de operar): se oculta en todos los paneles, no se
+// borra nada. Solo Super Admin; motivo obligatorio.
+export async function deleteCompany(id: string, reason: string, organizationId?: string): Promise<void> {
+  await request<RawCompany>(
+    organizationId ? `/companies/${id}/delete?organizationId=${encodeURIComponent(organizationId)}` : `/companies/${id}/delete`,
+    { method: 'POST', body: JSON.stringify({ reason }) },
+  );
+}
+
+export async function restoreCompany(id: string, organizationId?: string): Promise<void> {
+  await request<RawCompany>(
+    organizationId ? `/companies/${id}/restore?organizationId=${encodeURIComponent(organizationId)}` : `/companies/${id}/restore`,
+    { method: 'POST' },
+  );
+}
+
 export async function updateCompany(
   id: string,
   patch: Partial<CreateCompanyInput> & { status?: CompanyOption['status'] },
@@ -621,6 +651,32 @@ export async function changeVehiclePartner(vehicleId: string, partnerId: string,
     method: 'POST',
     body: JSON.stringify({ partnerId, reason }),
   });
+}
+
+// Dar de baja: la unidad ya no opera (vendida, error de registro). Nada se
+// borra y se puede restaurar. Motivo obligatorio.
+export async function retireVehicle(vehicleId: string, reason: string): Promise<void> {
+  await request<RawVehicle>(`/vehicles/${vehicleId}/retire`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export interface RetireVehiclesResult {
+  retired: string[];
+  failed: { code: string; message: string }[];
+}
+
+// Baja de varias unidades con un solo motivo; las que no se puedan vienen en `failed`.
+export async function retireVehicles(ids: string[], reason: string): Promise<RetireVehiclesResult> {
+  return request<RetireVehiclesResult>('/vehicles/retire-bulk', {
+    method: 'POST',
+    body: JSON.stringify({ ids, reason }),
+  });
+}
+
+export async function restoreVehicle(vehicleId: string): Promise<void> {
+  await request<RawVehicle>(`/vehicles/${vehicleId}/restore`, { method: 'POST' });
 }
 
 export async function deactivateVehicle(vehicleId: string, reason: string): Promise<void> {

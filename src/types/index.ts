@@ -164,7 +164,7 @@ export interface Unit {
   plate: string;
   model: string;
   year: number;
-  status: 'ACTIVO' | 'INACTIVO' | 'SUSPENDIDO';
+  status: 'ACTIVO' | 'INACTIVO' | 'SUSPENDIDO' | 'BAJA';
   currentDriverName: string;
   plateHistory: Array<{ plate: string; from: string; to?: string }>;
   route: RouteDir | 'AMBAS';

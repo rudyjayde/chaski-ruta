@@ -17,7 +17,7 @@ import {
   fetchPeople, createPerson, updatePersonStatus,
   fetchOperationalConfig, updateOperationalConfig,
   fetchRoutes, createRoute, deleteRoute,
-  fetchCompanies, createCompany, updateCompany,
+  fetchCompanies, createCompany, updateCompany, deleteCompany, restoreCompany, ApiError,
   fetchCommercialRequests, markCommercialRequestReviewed, fetchCommercialRequestTriage, updateLandingSection,
   fetchCommercialRequestOnboardingSuggestion,
   fetchComplaints, respondComplaint,
@@ -803,6 +803,13 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
     reloadCompanies();
   }, [reloadCompanies]);
 
+  const [deleteCompanyTarget, setDeleteCompanyTarget] = useState<CompanyOption | null>(null);
+  const [deleteCompanyReason, setDeleteCompanyReason] = useState('');
+  const [deleteCompanyError, setDeleteCompanyError] = useState('');
+  const [deletingCompany, setDeletingCompany] = useState(false);
+  const [restoreOffer, setRestoreOffer] = useState<{ id: string; name: string } | null>(null);
+  const [restoringCompany, setRestoringCompany] = useState(false);
+
   const handleAddCompany = async () => {
     if (!newCompanyName.trim()) return;
     setCompanyError('');
@@ -812,9 +819,46 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
       setNewCompanyName('');
       reloadCompanies();
     } catch (err) {
-      setCompanyError(err instanceof Error ? err.message : 'No se pudo agregar la empresa.');
+      // Una empresa eliminada que vuelve se restaura con su historial, no se crea de nuevo.
+      if (err instanceof ApiError && err.code === 'EMPRESA_ELIMINADA') {
+        setRestoreOffer({ id: String(err.data.companyId), name: String(err.data.companyName ?? newCompanyName.trim()) });
+      } else {
+        setCompanyError(err instanceof Error ? err.message : 'No se pudo agregar la empresa.');
+      }
     } finally {
       setCompanySaving(false);
+    }
+  };
+
+  const confirmRestoreCompany = async () => {
+    if (!restoreOffer) return;
+    setRestoringCompany(true);
+    try {
+      await restoreCompany(restoreOffer.id, org.id);
+      setRestoreOffer(null);
+      setNewCompanyName('');
+      reloadCompanies();
+    } catch (err) {
+      setRestoreOffer(null);
+      setCompanyError(err instanceof Error ? err.message : 'No se pudo restaurar la empresa.');
+    } finally {
+      setRestoringCompany(false);
+    }
+  };
+
+  const confirmDeleteCompany = async () => {
+    if (!deleteCompanyTarget || !deleteCompanyReason.trim()) return;
+    setDeletingCompany(true);
+    setDeleteCompanyError('');
+    try {
+      await deleteCompany(deleteCompanyTarget.id, deleteCompanyReason.trim(), org.id);
+      setDeleteCompanyTarget(null);
+      setDeleteCompanyReason('');
+      reloadCompanies();
+    } catch (err) {
+      setDeleteCompanyError(err instanceof Error ? err.message : 'No se pudo eliminar la empresa.');
+    } finally {
+      setDeletingCompany(false);
     }
   };
 
@@ -1543,12 +1587,20 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                           <p className="text-sm text-t1">{co.name}</p>
                           {co.ruc && <p className="text-xs text-t2">RUC {co.ruc}</p>}
                         </div>
-                        <button
-                          onClick={() => handleToggleCompanyStatus(co.id, co.status)}
-                          className={`text-[10px] px-2 py-1 rounded font-medium ${co.status === 'SUSPENDIDA' ? 'bg-danger/10 text-danger' : 'bg-ok/10 text-ok'}`}
-                        >
-                          {co.status === 'SUSPENDIDA' ? 'Suspendida — reactivar' : 'Activa — suspender'}
-                        </button>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <button
+                            onClick={() => handleToggleCompanyStatus(co.id, co.status)}
+                            className={`text-[10px] px-2 py-1 rounded font-medium ${co.status === 'SUSPENDIDA' ? 'bg-danger/10 text-danger' : 'bg-ok/10 text-ok'}`}
+                          >
+                            {co.status === 'SUSPENDIDA' ? 'Suspendida — reactivar' : 'Activa — suspender'}
+                          </button>
+                          <button
+                            onClick={() => { setDeleteCompanyTarget(co); setDeleteCompanyReason(''); setDeleteCompanyError(''); }}
+                            className="text-[10px] px-2 py-1 rounded font-medium border border-border text-t2 hover:border-danger/40 hover:text-danger"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1908,6 +1960,47 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           )}
         </div>
       </div>
+
+      {deleteCompanyTarget && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Eliminar empresa integrante">
+          <div className="bg-surface rounded-lg shadow-xl w-full max-w-sm p-6">
+            <h3 className="text-sm font-semibold text-t1 mb-1">Eliminar {deleteCompanyTarget.name}</h3>
+            <p className="text-xs text-t2 mb-4">
+              La empresa dejará de aparecer en el panel del administrador y en el tuyo. Sus datos e historial se conservan; si vuelve a operar, podrás restaurarla. Solo se puede eliminar si todas sus unidades ya están dadas de baja. Se requiere motivo.
+            </p>
+            <textarea
+              value={deleteCompanyReason}
+              onChange={e => setDeleteCompanyReason(e.target.value)}
+              placeholder="Motivo (ej. la empresa dejó de operar)…"
+              className="w-full min-h-20 px-3 py-2 border border-border rounded-lg text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            {deleteCompanyError && <p className="text-xs text-danger mb-3">{deleteCompanyError}</p>}
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => { setDeleteCompanyTarget(null); setDeleteCompanyReason(''); setDeleteCompanyError(''); }} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-hover">Cancelar</button>
+              <button onClick={confirmDeleteCompany} disabled={!deleteCompanyReason.trim() || deletingCompany} className="px-4 py-2 text-sm bg-danger text-white rounded-lg hover:bg-danger/80 disabled:opacity-50">
+                {deletingCompany ? 'Eliminando…' : 'Eliminar empresa'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {restoreOffer && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Restaurar empresa">
+          <div className="bg-surface rounded-lg shadow-xl w-full max-w-sm p-6">
+            <h3 className="text-sm font-semibold text-t1 mb-1">{restoreOffer.name} ya existió</h3>
+            <p className="text-xs text-t2 mb-4">
+              Esta empresa fue eliminada antes. Puedes restaurarla con todo su historial en vez de crearla de nuevo.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setRestoreOffer(null)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-hover">Cancelar</button>
+              <button onClick={confirmRestoreCompany} disabled={restoringCompany} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary-h disabled:opacity-50">
+                {restoringCompany ? 'Restaurando…' : 'Restaurar empresa'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {removeAdminTarget && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Eliminar administrador">

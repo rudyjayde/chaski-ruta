@@ -41,6 +41,7 @@ export default function CompaniesPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [showSuspended, setShowSuspended] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,11 +57,22 @@ export default function CompaniesPage() {
     return () => { cancelled = true; };
   }, []);
 
+  const suspendedCount = companies.filter(c => c.status === 'SUSPENDIDA').length;
+  const visible = showSuspended ? companies : companies.filter(c => c.status !== 'SUSPENDIDA');
+
   return (
     <div className="flex flex-col h-full">
-      <div className="px-6 py-4 border-b border-border bg-surface">
-        <h1 className="text-2xl font-bold text-t1">Empresas integrantes</h1>
-        <p className="text-sm text-t2 mt-0.5">{org?.name ?? 'Tu asociación'} · {companies.length} empresas</p>
+      <div className="px-6 py-4 border-b border-border bg-surface flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-t1">Empresas integrantes</h1>
+          <p className="text-sm text-t2 mt-0.5">{org?.name ?? 'Tu asociación'} · {visible.length} empresas</p>
+        </div>
+        {suspendedCount > 0 && (
+          <label className="flex items-center gap-2 text-xs text-t2 cursor-pointer select-none">
+            <input type="checkbox" checked={showSuspended} onChange={e => setShowSuspended(e.target.checked)} className="accent-primary" />
+            Mostrar suspendidas ({suspendedCount})
+          </label>
+        )}
       </div>
 
       {loading ? (
@@ -84,7 +96,7 @@ export default function CompaniesPage() {
               </tr>
             </thead>
             <tbody>
-              {companies.map(c => (
+              {visible.map(c => (
                 <tr
                   key={c.id}
                   className="border-b border-border last:border-0 hover:bg-hover cursor-pointer"

@@ -1,6 +1,7 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCompanyDto } from './dto/create-company.dto';
+import { DeleteCompanyDto } from './dto/delete-company.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
 import { JwtPayload } from '../auth/jwt.strategy';
 
@@ -8,14 +9,36 @@ import { JwtPayload } from '../auth/jwt.strategy';
 export class CompaniesService {
   constructor(private prisma: PrismaService) {}
 
+  // Las empresas eliminadas no aparecen en ningun panel (ni admin ni Super Admin).
   findAll(organizationId: string) {
     return this.prisma.company.findMany({
-      where: { organizationId },
+      where: { organizationId, status: { not: 'ELIMINADA' } },
       orderBy: { name: 'asc' },
     });
   }
 
   async create(organizationId: string, actor: JwtPayload, dto: CreateCompanyDto) {
+    // Una empresa que vuelve no se crea de nuevo: si el RUC o el nombre
+    // coinciden con una eliminada, se avisa para que el Super Admin la restaure
+    // con su historial.
+    const name = dto.name.trim();
+    const deleted = await this.prisma.company.findFirst({
+      where: {
+        organizationId,
+        status: 'ELIMINADA',
+        OR: [...(dto.ruc ? [{ ruc: dto.ruc }] : []), { name: { equals: name, mode: 'insensitive' as const } }],
+      },
+      select: { id: true, name: true },
+    });
+    if (deleted) {
+      throw new ConflictException({
+        message: `${deleted.name} fue eliminada antes.`,
+        code: 'EMPRESA_ELIMINADA',
+        companyId: deleted.id,
+        companyName: deleted.name,
+      });
+    }
+
     let company;
     try {
       company = await this.prisma.company.create({
@@ -48,12 +71,67 @@ export class CompaniesService {
     return company;
   }
 
-  private async findOwned(organizationId: string, id: string) {
+  private async findOwned(organizationId: string, id: string, includeDeleted = false) {
     const company = await this.prisma.company.findUnique({ where: { id } });
-    if (!company || company.organizationId !== organizationId) {
+    if (!company || company.organizationId !== organizationId || (!includeDeleted && company.status === 'ELIMINADA')) {
       throw new NotFoundException('Empresa no encontrada');
     }
     return company;
+  }
+
+  /**
+   * Elimina la empresa (deja de operar): se oculta de todos los paneles, nada
+   * se borra. Solo si todas sus unidades ya estan dadas de baja. Motivo
+   * obligatorio.
+   */
+  async remove(organizationId: string, actor: JwtPayload, id: string, dto: DeleteCompanyDto) {
+    const company = await this.findOwned(organizationId, id);
+    const vehicles = await this.prisma.vehicle.findMany({
+      where: { companyId: id, status: { not: 'BAJA' } },
+      select: { code: true },
+      orderBy: { code: 'asc' },
+    });
+    if (vehicles.length > 0) {
+      const codes = vehicles.slice(0, 5).map((v) => v.code).join(', ');
+      throw new ConflictException(
+        `${company.name} todavía tiene ${vehicles.length} unidad(es) sin dar de baja (${codes}${vehicles.length > 5 ? '…' : ''}). Dalas de baja primero.`,
+      );
+    }
+    const updated = await this.prisma.company.update({ where: { id }, data: { status: 'ELIMINADA' } });
+    await this.prisma.auditEntry.create({
+      data: {
+        organizationId,
+        actorId: actor.sub,
+        actorRole: actor.role,
+        action: 'ELIMINAR_EMPRESA',
+        resource: `Empresa ${company.name}`,
+        resourceId: id,
+        before: company.status,
+        after: 'ELIMINADA',
+        reason: dto.reason,
+      },
+    });
+    return updated;
+  }
+
+  /** Restaura una empresa eliminada con todo su historial; vuelve como ACTIVA. */
+  async restore(organizationId: string, actor: JwtPayload, id: string) {
+    const company = await this.findOwned(organizationId, id, true);
+    if (company.status !== 'ELIMINADA') throw new BadRequestException('Esta empresa no está eliminada.');
+    const updated = await this.prisma.company.update({ where: { id }, data: { status: 'ACTIVA' } });
+    await this.prisma.auditEntry.create({
+      data: {
+        organizationId,
+        actorId: actor.sub,
+        actorRole: actor.role,
+        action: 'RESTAURAR_EMPRESA',
+        resource: `Empresa ${company.name}`,
+        resourceId: id,
+        before: 'ELIMINADA',
+        after: 'ACTIVA',
+      },
+    });
+    return updated;
   }
 
   async update(organizationId: string, actor: JwtPayload, id: string, dto: UpdateCompanyDto) {

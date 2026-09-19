@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import {
   fetchVehicles, fetchCompanies, fetchPeople, fetchGpsDevices,
-  createVehicle, changeVehicleDriver, deactivateVehicle,
+  createVehicle, changeVehicleDriver, deactivateVehicle, retireVehicle, retireVehicles, restoreVehicle,
   type CompanyOption, type VehicleGpsStatus,
 } from '../../lib/operacion-api';
 import type { Person, Unit } from '../../types';
@@ -17,7 +17,12 @@ const UNIT_STATUS_STYLE: Record<string, string> = {
   ACTIVO: 'bg-ok/10 text-ok',
   INACTIVO: 'bg-t2/10 text-t2',
   SUSPENDIDO: 'bg-danger/10 text-danger',
+  BAJA: 'bg-border text-muted',
 };
+
+const UNIT_STATUS_LABEL: Record<string, string> = { BAJA: 'DE BAJA' };
+
+const RETIRE_REASONS = ['Vendida o fuera de servicio', 'Registrada por error o de prueba', 'Siniestro o pérdida total', 'Retiro de la empresa', 'Otro'];
 
 type DetailTab = 'resumen' | 'vehiculo' | 'conductores' | 'gps' | 'historial';
 
@@ -38,6 +43,11 @@ function UnitDetailPanel({ unit, people, gpsStatus, onClose, onChanged }: {
   const [deactivateReason, setDeactivateReason] = useState('');
   const [deactivating, setDeactivating] = useState(false);
   const [deactivateError, setDeactivateError] = useState('');
+  const [showRetire, setShowRetire] = useState(false);
+  const [retireReason, setRetireReason] = useState('');
+  const [retiring, setRetiring] = useState(false);
+  const [retireError, setRetireError] = useState('');
+  const [restoring, setRestoring] = useState(false);
   const [showChangeDriver, setShowChangeDriver] = useState(false);
   const [newDriverId, setNewDriverId] = useState('');
   const [changingDriver, setChangingDriver] = useState(false);
@@ -75,6 +85,36 @@ function UnitDetailPanel({ unit, people, gpsStatus, onClose, onChanged }: {
     }
   };
 
+  const handleRetire = async () => {
+    if (!retireReason) return;
+    setRetiring(true);
+    setRetireError('');
+    try {
+      await retireVehicle(unit.id, retireReason);
+      setShowRetire(false);
+      onChanged();
+      onClose();
+    } catch (err) {
+      setRetireError(err instanceof Error ? err.message : 'No se pudo dar de baja la unidad.');
+    } finally {
+      setRetiring(false);
+    }
+  };
+
+  const handleRestore = async () => {
+    setRestoring(true);
+    setRetireError('');
+    try {
+      await restoreVehicle(unit.id);
+      onChanged();
+      onClose();
+    } catch (err) {
+      setRetireError(err instanceof Error ? err.message : 'No se pudo restaurar la unidad.');
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   const handleChangeDriver = async () => {
     if (!newDriverId) return;
     setChangingDriver(true);
@@ -102,7 +142,7 @@ function UnitDetailPanel({ unit, people, gpsStatus, onClose, onChanged }: {
         </div>
         <div className="flex items-center gap-2">
           <span className={`text-[11px] px-2 py-0.5 rounded font-medium ${UNIT_STATUS_STYLE[unit.status]}`}>
-            {unit.status}
+            {UNIT_STATUS_LABEL[unit.status] ?? unit.status}
           </span>
           <button onClick={onClose} className="text-muted hover:text-t1 p-1" aria-label="Cerrar">
             <X size={16} />
@@ -139,7 +179,7 @@ function UnitDetailPanel({ unit, people, gpsStatus, onClose, onChanged }: {
               {[
                 { label: 'Empresa', value: unit.company },
                 { label: 'Socio titular', value: unit.partnerName || '—' },
-                { label: 'Conductor actual', value: unit.status === 'INACTIVO' ? '—' : (unit.currentDriverName || 'Sin conductor') },
+                { label: 'Conductor actual', value: unit.status === 'INACTIVO' || unit.status === 'BAJA' ? '—' : (unit.currentDriverName || 'Sin conductor') },
                 { label: 'Ruta', value: unit.route },
                 { label: 'Placa actual', value: unit.plate, mono: true },
                 { label: 'Modelo', value: unit.model },
@@ -151,19 +191,41 @@ function UnitDetailPanel({ unit, people, gpsStatus, onClose, onChanged }: {
                 </div>
               ))}
             </div>
-            {unit.status !== 'INACTIVO' && (
+            {unit.status === 'BAJA' ? (
               <div className="space-y-2 pt-2">
+                <p className="text-[11px] text-t2">Esta unidad está dada de baja: no aparece en la flota ni opera. Su historial se conserva.</p>
+                {retireError && <p className="text-xs text-danger">{retireError}</p>}
                 <button
-                  onClick={() => setShowChangeDriver(true)}
-                  className="w-full h-9 border border-border rounded-lg text-xs text-t1 hover:bg-hover flex items-center justify-center gap-2"
+                  onClick={handleRestore}
+                  disabled={restoring}
+                  className="w-full h-9 border border-ok/40 rounded-lg text-xs text-ok hover:bg-ok/5 flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  <Users size={13} /> Cambiar conductor
+                  <CheckCircle size={13} /> {restoring ? 'Restaurando…' : 'Restaurar unidad'}
                 </button>
+              </div>
+            ) : (
+              <div className="space-y-2 pt-2">
+                {unit.status !== 'INACTIVO' && (
+                  <>
+                    <button
+                      onClick={() => setShowChangeDriver(true)}
+                      className="w-full h-9 border border-border rounded-lg text-xs text-t1 hover:bg-hover flex items-center justify-center gap-2"
+                    >
+                      <Users size={13} /> Cambiar conductor
+                    </button>
+                    <button
+                      onClick={() => setShowDeactivate(true)}
+                      className="w-full h-9 border border-danger/40 rounded-lg text-xs text-danger hover:bg-danger/5 flex items-center justify-center gap-2"
+                    >
+                      <AlertTriangle size={13} /> Desactivar unidad
+                    </button>
+                  </>
+                )}
                 <button
-                  onClick={() => setShowDeactivate(true)}
-                  className="w-full h-9 border border-danger/40 rounded-lg text-xs text-danger hover:bg-danger/5 flex items-center justify-center gap-2"
+                  onClick={() => setShowRetire(true)}
+                  className="w-full h-9 border border-border rounded-lg text-xs text-t2 hover:bg-hover flex items-center justify-center gap-2"
                 >
-                  <AlertTriangle size={13} /> Desactivar unidad
+                  <X size={13} /> Dar de baja
                 </button>
               </div>
             )}
@@ -274,7 +336,7 @@ function UnitDetailPanel({ unit, people, gpsStatus, onClose, onChanged }: {
             <p className="text-xs text-t2 mb-4">El código permanece en el historial. Se requiere motivo.</p>
             <select value={deactivateReason} onChange={e => setDeactivateReason(e.target.value)} className="w-full h-9 px-3 border border-border rounded-lg text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-primary">
               <option value="">Seleccionar motivo…</option>
-              {['Vehículo dado de baja', 'Falla mecánica grave', 'Documentos vencidos', 'Sanción administrativa', 'Solicitud del socio', 'Otro'].map(r => (
+              {['Falla mecánica grave', 'Documentos vencidos', 'Sanción administrativa', 'Solicitud del socio', 'Otro'].map(r => (
                 <option key={r} value={r}>{r}</option>
               ))}
             </select>
@@ -283,6 +345,28 @@ function UnitDetailPanel({ unit, people, gpsStatus, onClose, onChanged }: {
               <button onClick={() => setShowDeactivate(false)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-hover">Cancelar</button>
               <button onClick={handleDeactivate} disabled={!deactivateReason || deactivating} className="px-4 py-2 text-sm bg-danger text-white rounded-lg hover:bg-danger/80 disabled:opacity-50">
                 {deactivating ? 'Desactivando…' : 'Desactivar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRetire && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Dar de baja unidad">
+          <div className="bg-surface rounded-lg shadow-xl w-full max-w-sm p-6">
+            <h3 className="text-sm font-semibold text-t1 mb-1">Dar de baja la unidad {unit.code}</h3>
+            <p className="text-xs text-t2 mb-4">
+              Deja de operar y desaparece de la flota. El historial de viajes se conserva y puedes restaurarla después. Se requiere motivo.
+            </p>
+            <select value={retireReason} onChange={e => setRetireReason(e.target.value)} className="w-full h-9 px-3 border border-border rounded-lg text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-primary">
+              <option value="">Seleccionar motivo…</option>
+              {RETIRE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+            {retireError && <p className="text-xs text-danger mb-3">{retireError}</p>}
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => { setShowRetire(false); setRetireError(''); }} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-hover">Cancelar</button>
+              <button onClick={handleRetire} disabled={!retireReason || retiring} className="px-4 py-2 text-sm bg-danger text-white rounded-lg hover:bg-danger/80 disabled:opacity-50">
+                {retiring ? 'Dando de baja…' : 'Dar de baja'}
               </button>
             </div>
           </div>
@@ -335,8 +419,32 @@ function RegisterWizard({ companies, units, onClose, onCreated }: { companies: C
   const codeTrimmed = form.code.trim();
   const unitWithCode = codeTrimmed ? units.find(u => u.code === codeTrimmed) : undefined;
   const unitWithPlate = isValidPlate(form.plate) ? units.find(u => u.plate === form.plate) : undefined;
-  const codeMessage = unitWithCode ? `La unidad ${codeTrimmed} ya está registrada (placa ${unitWithCode.plate}, ${unitWithCode.company}).` : '';
-  const plateMessage = unitWithPlate ? `La placa ${form.plate} ya está registrada en la unidad ${unitWithPlate.code}.` : '';
+  const retiredMatch = [unitWithCode, unitWithPlate].find(u => u?.status === 'BAJA');
+  const codeMessage = unitWithCode
+    ? unitWithCode.status === 'BAJA'
+      ? `La unidad ${codeTrimmed} fue dada de baja antes (placa ${unitWithCode.plate}, ${unitWithCode.company}).`
+      : `La unidad ${codeTrimmed} ya está registrada (placa ${unitWithCode.plate}, ${unitWithCode.company}).`
+    : '';
+  const plateMessage = unitWithPlate
+    ? unitWithPlate.status === 'BAJA'
+      ? `La placa ${form.plate} pertenece a la unidad ${unitWithPlate.code}, dada de baja antes.`
+      : `La placa ${form.plate} ya está registrada en la unidad ${unitWithPlate.code}.`
+    : '';
+  const [restoringRetired, setRestoringRetired] = useState(false);
+
+  const restoreRetired = async () => {
+    if (!retiredMatch) return;
+    setRestoringRetired(true);
+    setError('');
+    try {
+      await restoreVehicle(retiredMatch.id);
+      onCreated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo restaurar la unidad.');
+    } finally {
+      setRestoringRetired(false);
+    }
+  };
 
   const validateStep = (target: WizardStep): string => {
     if (target === 1) {
@@ -478,6 +586,20 @@ function RegisterWizard({ companies, units, onClose, onCreated }: { companies: C
             </div>
           )}
 
+          {retiredMatch && step !== 3 && (
+            <div className="p-3 bg-warn/5 border border-warn/30 rounded-lg text-xs text-t1">
+              <p className="font-medium">La unidad {retiredMatch.code} (placa {retiredMatch.plate}) fue dada de baja.</p>
+              <p className="text-t2 mt-1">Si es la misma unidad que vuelve, restáurala con su historial en vez de registrarla de nuevo.</p>
+              <button
+                onClick={restoreRetired}
+                disabled={restoringRetired}
+                className="mt-2 px-3 py-1.5 border border-ok text-ok rounded-lg text-xs font-medium hover:bg-ok/5 disabled:opacity-50"
+              >
+                {restoringRetired ? 'Restaurando…' : `Restaurar unidad ${retiredMatch.code}`}
+              </button>
+            </div>
+          )}
+
           {error && step !== 3 && <p className="text-xs text-danger">{error}</p>}
 
           {step === 3 && (
@@ -549,6 +671,12 @@ export default function FleetPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const { isPRO } = useAdminDemo();
+  const [checked, setChecked] = useState<string[]>([]);
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkReason, setBulkReason] = useState('');
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkError, setBulkError] = useState('');
+  const [bulkResult, setBulkResult] = useState<{ retired: string[]; failed: { code: string; message: string }[] } | null>(null);
 
   const reload = () => {
     setLoadError('');
@@ -573,18 +701,46 @@ export default function FleetPage() {
     const matchSearch = !q || u.code.includes(q) || u.plate.toLowerCase().includes(q) ||
       (u.currentDriverName?.toLowerCase().includes(q) ?? false) || u.partnerName.toLowerCase().includes(q);
     const matchCompany = !filterCompany || u.company === filterCompany;
-    const matchStatus = !filterStatus || u.status === filterStatus;
+    const matchStatus = filterStatus ? u.status === filterStatus : u.status !== 'BAJA';
     return matchSearch && matchCompany && matchStatus;
   });
 
   const deviceFor = (unit: Unit) => gpsDevices.find(d => d.vehicleId === unit.id);
+
+  // Solo cuentan las marcadas que siguen visibles con el filtro actual: asi
+  // nunca se da de baja algo que la persona ya no ve en pantalla.
+  const selectable = filtered.filter(u => u.status !== 'BAJA');
+  const checkedUnits = selectable.filter(u => checked.includes(u.id));
+  const allChecked = selectable.length > 0 && checkedUnits.length === selectable.length;
+  const toggleOne = (id: string) => setChecked(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  const toggleAll = () => setChecked(allChecked ? [] : selectable.map(u => u.id));
+
+  const closeBulk = () => { setShowBulk(false); setBulkReason(''); setBulkError(''); };
+
+  const confirmBulk = async () => {
+    if (!bulkReason || checkedUnits.length === 0) return;
+    setBulkBusy(true);
+    setBulkError('');
+    try {
+      const result = await retireVehicles(checkedUnits.map(u => u.id), bulkReason);
+      setBulkResult(result);
+      setChecked([]);
+      setSelected(null);
+      closeBulk();
+      reload();
+    } catch (err) {
+      setBulkError(err instanceof Error ? err.message : 'No se pudieron dar de baja las unidades.');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
       <div className="px-6 py-4 border-b border-border bg-surface flex items-center justify-between">
         <div>
           <h1 className="text-base font-semibold text-t1">Unidades y flota</h1>
-          <p className="text-xs text-t2 mt-0.5">{units.length} unidades registradas · Mostrando {filtered.length}</p>
+          <p className="text-xs text-t2 mt-0.5">{units.filter(u => u.status !== 'BAJA').length} unidades registradas · Mostrando {filtered.length}</p>
         </div>
         <button
           onClick={() => setShowWizard(true)}
@@ -611,13 +767,40 @@ export default function FleetPage() {
         </select>
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="h-9 px-3 border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary">
           <option value="">Todos los estados</option>
-          {['ACTIVO', 'INACTIVO', 'SUSPENDIDO'].map(s => <option key={s} value={s}>{s}</option>)}
+          {['ACTIVO', 'INACTIVO', 'SUSPENDIDO', 'BAJA'].map(s => <option key={s} value={s}>{UNIT_STATUS_LABEL[s] ?? s}</option>)}
         </select>
         <span className="text-xs text-t2 ml-auto">{filtered.length} unidades</span>
       </div>
 
       {loadError && (
         <div className="px-6 py-3 bg-danger/5 border-b border-danger/20 text-sm text-danger">{loadError}</div>
+      )}
+
+      {checkedUnits.length > 0 && (
+        <div className="px-6 py-2.5 bg-primary/5 border-b border-primary/20 flex items-center gap-3 text-sm">
+          <span className="text-t1 font-medium">{checkedUnits.length} {checkedUnits.length === 1 ? 'unidad seleccionada' : 'unidades seleccionadas'}</span>
+          <button onClick={() => setShowBulk(true)} className="px-3 py-1.5 bg-danger text-white rounded-lg text-xs font-medium hover:bg-danger/80">
+            Dar de baja
+          </button>
+          <button onClick={() => setChecked([])} className="px-3 py-1.5 border border-border rounded-lg text-xs text-t2 hover:bg-hover">
+            Quitar selección
+          </button>
+        </div>
+      )}
+
+      {bulkResult && (
+        <div className={`px-6 py-3 border-b text-sm flex items-start justify-between gap-4 ${bulkResult.failed.length ? 'bg-warn/5 border-warn/30' : 'bg-ok/5 border-ok/30'}`}>
+          <div className="space-y-1">
+            <p className="text-t1 font-medium">
+              {bulkResult.retired.length} {bulkResult.retired.length === 1 ? 'unidad dada de baja' : 'unidades dadas de baja'}
+              {bulkResult.failed.length > 0 && ` · ${bulkResult.failed.length} no se pudieron`}
+            </p>
+            {bulkResult.failed.map(f => (
+              <p key={f.code} className="text-xs text-t2">Unidad {f.code}: {f.message}</p>
+            ))}
+          </div>
+          <button onClick={() => setBulkResult(null)} className="text-muted hover:text-t1 p-1 flex-shrink-0" aria-label="Cerrar aviso"><X size={14} /></button>
+        </div>
       )}
 
       <div className="flex flex-1 overflow-hidden">
@@ -628,6 +811,16 @@ export default function FleetPage() {
           <table className="w-full text-xs" aria-label="Tabla de unidades">
             <thead className="sticky top-0">
               <tr className="border-b border-border bg-bg">
+                <th className="w-8 pl-4 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={allChecked}
+                    onChange={toggleAll}
+                    disabled={selectable.length === 0}
+                    aria-label="Seleccionar todas las unidades mostradas"
+                    className="accent-primary"
+                  />
+                </th>
                 <th className="text-left px-4 py-2.5 text-t2 font-medium">Cód.</th>
                 <th className="text-left px-4 py-2.5 text-t2 font-medium">Empresa</th>
                 <th className="text-left px-4 py-2.5 text-t2 font-medium">Socio</th>
@@ -650,6 +843,17 @@ export default function FleetPage() {
                   className={`border-b border-border last:border-0 hover:bg-hover cursor-pointer ${selected?.id === unit.id ? 'bg-hover' : ''}`}
                   onClick={() => setSelected(selected?.id === unit.id ? null : unit)}
                 >
+                  <td className="pl-4 py-3 w-8" onClick={e => e.stopPropagation()}>
+                    {unit.status !== 'BAJA' && (
+                      <input
+                        type="checkbox"
+                        checked={checked.includes(unit.id)}
+                        onChange={() => toggleOne(unit.id)}
+                        aria-label={`Seleccionar unidad ${unit.code}`}
+                        className="accent-primary"
+                      />
+                    )}
+                  </td>
                   <td className="px-4 py-3 font-bold text-t1">{unit.code}</td>
                   <td className="px-4 py-3 text-t2">{unit.company}</td>
                   <td className="px-4 py-3 text-t1 max-w-[120px] truncate">{unit.partnerName || '—'}</td>
@@ -670,7 +874,7 @@ export default function FleetPage() {
                   </td>
                   <td className="px-4 py-3">
                     <span className={`text-[11px] px-2 py-0.5 rounded font-medium ${UNIT_STATUS_STYLE[unit.status]}`}>
-                      {unit.status}
+                      {UNIT_STATUS_LABEL[unit.status] ?? unit.status}
                     </span>
                   </td>
                   <td className="px-4 py-3">
@@ -693,6 +897,35 @@ export default function FleetPage() {
           />
         )}
       </div>
+
+      {showBulk && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Dar de baja unidades seleccionadas">
+          <div className="bg-surface rounded-lg shadow-xl w-full max-w-md p-6">
+            <h3 className="text-sm font-semibold text-t1 mb-1">
+              Dar de baja {checkedUnits.length} {checkedUnits.length === 1 ? 'unidad' : 'unidades'}
+            </h3>
+            <p className="text-xs text-t2 mb-3">
+              Dejan de operar y desaparecen de la flota. El historial se conserva y puedes restaurarlas después. Las que tengan un viaje en curso o estén en una cola no se darán de baja y te avisaremos cuáles.
+            </p>
+            <div className="flex flex-wrap gap-1.5 mb-4 max-h-24 overflow-auto">
+              {checkedUnits.map(u => (
+                <span key={u.id} className="text-[11px] px-2 py-0.5 rounded bg-bg border border-border text-t1 font-mono">{u.code}</span>
+              ))}
+            </div>
+            <select value={bulkReason} onChange={e => setBulkReason(e.target.value)} className="w-full h-9 px-3 border border-border rounded-lg text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-primary">
+              <option value="">Seleccionar motivo…</option>
+              {RETIRE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+            {bulkError && <p className="text-xs text-danger mb-3">{bulkError}</p>}
+            <div className="flex gap-3 justify-end">
+              <button onClick={closeBulk} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-hover">Cancelar</button>
+              <button onClick={confirmBulk} disabled={!bulkReason || bulkBusy} className="px-4 py-2 text-sm bg-danger text-white rounded-lg hover:bg-danger/80 disabled:opacity-50">
+                {bulkBusy ? 'Dando de baja…' : 'Dar de baja'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showWizard && (
         <RegisterWizard

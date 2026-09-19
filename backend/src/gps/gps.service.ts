@@ -189,7 +189,7 @@ export class GpsService {
    */
   async getLivePositions(organizationId: string): Promise<LiveVehiclePosition[]> {
     const vehicles = await this.prisma.vehicle.findMany({
-      where: { organizationId, traccarDeviceId: { not: null } },
+      where: { organizationId, traccarDeviceId: { not: null }, status: { not: 'BAJA' } },
       include: { company: true },
     });
     if (vehicles.length === 0) return [];
@@ -312,7 +312,7 @@ export class GpsService {
    */
   async getDeviceStatuses(organizationId: string): Promise<VehicleGpsStatus[]> {
     const vehicles = await this.prisma.vehicle.findMany({
-      where: { organizationId },
+      where: { organizationId, status: { not: 'BAJA' } },
       include: { company: true },
       orderBy: { code: 'asc' },
     });

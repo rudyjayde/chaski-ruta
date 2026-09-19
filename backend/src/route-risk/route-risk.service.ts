@@ -82,7 +82,7 @@ export class RouteRiskService {
     days: number,
   ): Promise<{ points: RiskPoint[]; vehiclesAnalyzed: number; windowDays: number }> {
     const vehicles = await this.prisma.vehicle.findMany({
-      where: { organizationId, traccarDeviceId: { not: null } },
+      where: { organizationId, traccarDeviceId: { not: null }, status: { not: 'BAJA' } },
     });
     if (vehicles.length === 0) {
       return { points: [], vehiclesAnalyzed: 0, windowDays: days };

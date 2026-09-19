@@ -232,12 +232,18 @@ enum VehicleStatus {
   ACTIVO
   INACTIVO
   SUSPENDIDO
+  // "Dar de baja": la unidad ya no opera (vendida, error de registro). Nunca se
+  // borra: el historial de viajes queda y se puede restaurar.
+  BAJA
 }
 
 enum CompanyStatus {
   ACTIVA
   OBSERVADA
   SUSPENDIDA
+  // "Eliminar": la empresa dejo de operar. Se oculta de todos los paneles pero
+  // sus datos quedan; si vuelve, se restaura en vez de crearla de nuevo.
+  ELIMINADA
 }
 
 enum QueueStatus {

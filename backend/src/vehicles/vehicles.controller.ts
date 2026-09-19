@@ -4,6 +4,7 @@ import { CreateVehicleDto } from './dto/create-vehicle.dto';
 import { ChangeDriverDto } from './dto/change-driver.dto';
 import { ChangePartnerDto } from './dto/change-partner.dto';
 import { DeactivateVehicleDto } from './dto/deactivate-vehicle.dto';
+import { RetireVehiclesDto } from './dto/retire-vehicles.dto';
 import { SetGpsDeviceDto } from './dto/set-gps-device.dto';
 import { SetGpsVehicularPlanDto } from './dto/set-gps-vehicular-plan.dto';
 import { SetMaintenanceDto } from './dto/set-maintenance.dto';
@@ -76,6 +77,34 @@ export class VehiclesController {
   ) {
     const orgId = resolveOrgId(user, organizationId);
     return this.vehicles.deactivate(orgId, user, id, dto);
+  }
+
+  // Dar de baja varias unidades a la vez (mismo motivo para todas).
+  @Post('retire-bulk')
+  @Roles('ADMINISTRADOR', 'SUPERADMIN')
+  retireMany(@CurrentUser() user: JwtPayload, @Body() dto: RetireVehiclesDto, @Query('organizationId') organizationId?: string) {
+    const orgId = resolveOrgId(user, organizationId);
+    return this.vehicles.retireMany(orgId, user, dto);
+  }
+
+  // Dar de baja: la unidad ya no opera (motivo obligatorio); se puede restaurar.
+  @Post(':id/retire')
+  @Roles('ADMINISTRADOR', 'SUPERADMIN')
+  retire(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: DeactivateVehicleDto,
+    @Query('organizationId') organizationId?: string,
+  ) {
+    const orgId = resolveOrgId(user, organizationId);
+    return this.vehicles.retire(orgId, user, id, dto);
+  }
+
+  @Post(':id/restore')
+  @Roles('ADMINISTRADOR', 'SUPERADMIN')
+  restore(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Query('organizationId') organizationId?: string) {
+    const orgId = resolveOrgId(user, organizationId);
+    return this.vehicles.restore(orgId, user, id);
   }
 
   // Vincula/desvincula el dispositivo GPS real (Traccar) de la unidad -- GPS PRO.

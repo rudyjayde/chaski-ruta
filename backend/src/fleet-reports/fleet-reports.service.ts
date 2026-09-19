@@ -182,7 +182,7 @@ export class FleetReportsService {
    */
   async getDrivingEventCounts(organizationId: string, days = DEFAULT_WINDOW_DAYS): Promise<DrivingEventsResult> {
     const vehicles = await this.prisma.vehicle.findMany({
-      where: { organizationId, traccarDeviceId: { not: null } },
+      where: { organizationId, traccarDeviceId: { not: null }, status: { not: 'BAJA' } },
     });
     if (vehicles.length === 0) return { windowDays: days, drivers: [] };
 

@@ -390,7 +390,7 @@ Regla obligatoria de aislamiento entre asociaciones (muy importante, nunca la ro
 
   private async toolResumenFlota(organizationId: string, estado?: string) {
     const vehicles = await this.prisma.vehicle.findMany({
-      where: { organizationId, ...(estado ? { status: estado as any } : {}) },
+      where: { organizationId, status: estado ? (estado as any) : { not: 'BAJA' } },
       include: { company: true },
       orderBy: { code: 'asc' },
     });
@@ -431,8 +431,8 @@ Regla obligatoria de aislamiento entre asociaciones (muy importante, nunca la ro
 
   private async toolResumenEmpresas(organizationId: string) {
     const companies = await this.prisma.company.findMany({
-      where: { organizationId },
-      include: { vehicles: true },
+      where: { organizationId, status: { not: 'ELIMINADA' } },
+      include: { vehicles: { where: { status: { not: 'BAJA' } } } },
       orderBy: { name: 'asc' },
     });
     return {
