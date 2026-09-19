@@ -439,12 +439,12 @@ export default function ManifestsPage() {
       )}
 
       <div className="border-b border-border bg-surface">
-        <div className="flex px-6">
+        <div className="flex px-4 md:px-6 overflow-x-auto">
           {TABS.map(t => (
             <button
               key={t.id}
               onClick={() => setTab(t.id as ManifestStatus | 'ALL')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${tab === t.id ? 'border-primary text-primary' : 'border-transparent text-t2 hover:text-t1'}`}
+              className={`px-4 py-3 whitespace-nowrap flex-shrink-0 text-sm font-medium border-b-2 transition-colors ${tab === t.id ? 'border-primary text-primary' : 'border-transparent text-t2 hover:text-t1'}`}
             >
               {t.label}
               <span className="ml-1.5 text-sm text-muted">

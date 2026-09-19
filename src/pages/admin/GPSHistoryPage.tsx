@@ -144,13 +144,13 @@ export default function GPSHistoryPage() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input type="search" placeholder="Unidad, placa o conductor…" value={search} onChange={e => setSearch(e.target.value)} className="h-9 pl-9 pr-3 border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary w-56" />
         </div>
-        <div className="flex items-center gap-2 text-sm text-t2">
+        <div className="flex flex-wrap items-center gap-2 text-sm text-t2">
           <span>Desde</span>
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
           <span>hasta</span>
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
         </div>
-        <select value={unitFilter} onChange={e => setUnitFilter(e.target.value)} className="h-9 px-3 border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary">
+        <select value={unitFilter} onChange={e => setUnitFilter(e.target.value)} className="h-9 px-3 max-w-full border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary">
           <option value="">Todas las unidades con GPS</option>
           {unitsWithGps.map(u => <option key={u.id} value={u.code}>{u.code} — {u.plate}</option>)}
         </select>

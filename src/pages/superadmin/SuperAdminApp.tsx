@@ -3794,7 +3794,7 @@ function SABroadcastNotice() {
           <select
             value={audience}
             onChange={e => setAudience(e.target.value as typeof audience)}
-            className="h-9 px-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            className="h-9 px-2 border border-border rounded text-sm max-w-full focus:outline-none focus:ring-2 focus:ring-primary"
           >
             <option value="AMBOS">Todos (socios, conductores y administrador)</option>
             <option value="SOCIOS">Solo socios y administrador</option>

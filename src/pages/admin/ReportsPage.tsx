@@ -183,7 +183,7 @@ export default function ReportsPage() {
 
       <div className="bg-surface border border-border rounded-lg p-5">
         <h2 className="text-base font-semibold text-t1 mb-4">Filtros</h2>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-3 mb-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 mb-5">
           <div>
             <label className="block text-sm font-medium text-t1 mb-1">Tipo de reporte</label>
             <select value={reportType} onChange={e => { setReportType(e.target.value); setGenerated(false); }} className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary">
@@ -191,11 +191,11 @@ export default function ReportsPage() {
             </select>
           </div>
           <div className="flex gap-3">
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <label className="block text-sm font-medium text-t1 mb-1">Desde</label>
               <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setGenerated(false); }} className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
             </div>
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <label className="block text-sm font-medium text-t1 mb-1">Hasta</label>
               <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setGenerated(false); }} className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
             </div>
