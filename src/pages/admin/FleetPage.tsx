@@ -671,6 +671,7 @@ export default function FleetPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const { isPRO } = useAdminDemo();
+  const [selectMode, setSelectMode] = useState(false);
   const [checked, setChecked] = useState<string[]>([]);
   const [showBulk, setShowBulk] = useState(false);
   const [bulkReason, setBulkReason] = useState('');
@@ -716,6 +717,7 @@ export default function FleetPage() {
   const toggleAll = () => setChecked(allChecked ? [] : selectable.map(u => u.id));
 
   const closeBulk = () => { setShowBulk(false); setBulkReason(''); setBulkError(''); };
+  const exitSelectMode = () => { setSelectMode(false); setChecked([]); };
 
   const confirmBulk = async () => {
     if (!bulkReason || checkedUnits.length === 0) return;
@@ -724,7 +726,7 @@ export default function FleetPage() {
     try {
       const result = await retireVehicles(checkedUnits.map(u => u.id), bulkReason);
       setBulkResult(result);
-      setChecked([]);
+      exitSelectMode();
       setSelected(null);
       closeBulk();
       reload();
@@ -742,12 +744,22 @@ export default function FleetPage() {
           <h1 className="text-base font-semibold text-t1">Unidades y flota</h1>
           <p className="text-xs text-t2 mt-0.5">{units.filter(u => u.status !== 'BAJA').length} unidades registradas · Mostrando {filtered.length}</p>
         </div>
-        <button
-          onClick={() => setShowWizard(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors"
-        >
-          <Plus size={15} /> Registrar unidad
-        </button>
+        <div className="flex items-center gap-2">
+          {!selectMode && (
+            <button
+              onClick={() => { setSelected(null); setSelectMode(true); }}
+              className="px-4 py-2 border border-border rounded-lg text-sm text-t1 hover:bg-hover transition-colors"
+            >
+              Dar de baja unidades
+            </button>
+          )}
+          <button
+            onClick={() => setShowWizard(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors"
+          >
+            <Plus size={15} /> Registrar unidad
+          </button>
+        </div>
       </div>
 
       <div className="px-6 py-3 border-b border-border bg-surface flex items-center gap-3 flex-wrap">
@@ -776,14 +788,29 @@ export default function FleetPage() {
         <div className="px-6 py-3 bg-danger/5 border-b border-danger/20 text-sm text-danger">{loadError}</div>
       )}
 
-      {checkedUnits.length > 0 && (
-        <div className="px-6 py-2.5 bg-primary/5 border-b border-primary/20 flex items-center gap-3 text-sm">
-          <span className="text-t1 font-medium">{checkedUnits.length} {checkedUnits.length === 1 ? 'unidad seleccionada' : 'unidades seleccionadas'}</span>
-          <button onClick={() => setShowBulk(true)} className="px-3 py-1.5 bg-danger text-white rounded-lg text-xs font-medium hover:bg-danger/80">
-            Dar de baja
+      {selectMode && (
+        <div className="px-6 py-2.5 bg-primary/5 border-b border-primary/20 flex items-center gap-3 flex-wrap text-sm">
+          <span className="text-t1 font-medium">
+            {checkedUnits.length === 0
+              ? 'Marca las unidades que quieres dar de baja'
+              : `${checkedUnits.length} ${checkedUnits.length === 1 ? 'unidad seleccionada' : 'unidades seleccionadas'}`}
+          </span>
+          <button
+            onClick={toggleAll}
+            disabled={selectable.length === 0}
+            className="px-3 py-1.5 border border-border rounded-lg text-xs text-t1 hover:bg-hover disabled:opacity-50"
+          >
+            {allChecked ? 'Quitar todas' : `Seleccionar todas (${selectable.length})`}
           </button>
-          <button onClick={() => setChecked([])} className="px-3 py-1.5 border border-border rounded-lg text-xs text-t2 hover:bg-hover">
-            Quitar selección
+          <button
+            onClick={() => setShowBulk(true)}
+            disabled={checkedUnits.length === 0}
+            className="px-3 py-1.5 bg-danger text-white rounded-lg text-xs font-medium hover:bg-danger/80 disabled:opacity-40"
+          >
+            Dar de baja{checkedUnits.length > 0 ? ` (${checkedUnits.length})` : ''}
+          </button>
+          <button onClick={exitSelectMode} className="px-3 py-1.5 border border-border rounded-lg text-xs text-t2 hover:bg-hover ml-auto">
+            Cancelar
           </button>
         </div>
       )}
@@ -811,16 +838,18 @@ export default function FleetPage() {
           <table className="w-full text-xs" aria-label="Tabla de unidades">
             <thead className="sticky top-0">
               <tr className="border-b border-border bg-bg">
-                <th className="w-8 pl-4 py-2.5">
-                  <input
-                    type="checkbox"
-                    checked={allChecked}
-                    onChange={toggleAll}
-                    disabled={selectable.length === 0}
-                    aria-label="Seleccionar todas las unidades mostradas"
-                    className="accent-primary"
-                  />
-                </th>
+                {selectMode && (
+                  <th className="w-8 pl-4 py-2.5">
+                    <input
+                      type="checkbox"
+                      checked={allChecked}
+                      onChange={toggleAll}
+                      disabled={selectable.length === 0}
+                      aria-label="Seleccionar todas las unidades mostradas"
+                      className="accent-primary"
+                    />
+                  </th>
+                )}
                 <th className="text-left px-4 py-2.5 text-t2 font-medium">Cód.</th>
                 <th className="text-left px-4 py-2.5 text-t2 font-medium">Empresa</th>
                 <th className="text-left px-4 py-2.5 text-t2 font-medium">Socio</th>
@@ -841,19 +870,21 @@ export default function FleetPage() {
                 <tr
                   key={unit.id}
                   className={`border-b border-border last:border-0 hover:bg-hover cursor-pointer ${selected?.id === unit.id ? 'bg-hover' : ''}`}
-                  onClick={() => setSelected(selected?.id === unit.id ? null : unit)}
+                  onClick={() => (selectMode ? (unit.status !== 'BAJA' && toggleOne(unit.id)) : setSelected(selected?.id === unit.id ? null : unit))}
                 >
-                  <td className="pl-4 py-3 w-8" onClick={e => e.stopPropagation()}>
-                    {unit.status !== 'BAJA' && (
-                      <input
-                        type="checkbox"
-                        checked={checked.includes(unit.id)}
-                        onChange={() => toggleOne(unit.id)}
-                        aria-label={`Seleccionar unidad ${unit.code}`}
-                        className="accent-primary"
-                      />
-                    )}
-                  </td>
+                  {selectMode && (
+                    <td className="pl-4 py-3 w-8" onClick={e => e.stopPropagation()}>
+                      {unit.status !== 'BAJA' && (
+                        <input
+                          type="checkbox"
+                          checked={checked.includes(unit.id)}
+                          onChange={() => toggleOne(unit.id)}
+                          aria-label={`Seleccionar unidad ${unit.code}`}
+                          className="accent-primary"
+                        />
+                      )}
+                    </td>
+                  )}
                   <td className="px-4 py-3 font-bold text-t1">{unit.code}</td>
                   <td className="px-4 py-3 text-t2">{unit.company}</td>
                   <td className="px-4 py-3 text-t1 max-w-[120px] truncate">{unit.partnerName || '—'}</td>
