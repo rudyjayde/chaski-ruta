@@ -1,5 +1,5 @@
-import { IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
-import { IsOptionalDni, IsOptionalPhone } from '../../common/validators';
+import { IsDateString, IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsOptionalDni, IsOptionalLicense, IsOptionalPhone } from '../../common/validators';
 
 export class CreatePersonDto {
   @IsString()
@@ -30,4 +30,18 @@ export class CreatePersonDto {
   @IsOptional()
   @IsString()
   company?: string;
+
+  // Licencia de conducir -- solo para role CONDUCTOR (ver PeopleService.create).
+  @IsOptionalLicense()
+  @IsString()
+  license?: string;
+
+  @IsOptional()
+  @IsString()
+  licenseCategory?: string;
+
+  // Fecha de vencimiento, "AAAA-MM-DD".
+  @IsOptional()
+  @IsDateString()
+  licenseExpiry?: string;
 }

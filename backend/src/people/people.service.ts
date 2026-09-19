@@ -1,7 +1,8 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePersonDto } from './dto/create-person.dto';
 import { UpdatePersonStatusDto } from './dto/update-person-status.dto';
+import { UpdateLicenseDto } from './dto/update-license.dto';
 import { JwtPayload } from '../auth/jwt.strategy';
 import { MailService } from '../mail/mail.service';
 
@@ -33,9 +34,22 @@ export class PeopleService {
     code: true,
     company: true,
     linkedUnit: true,
+    license: true,
+    licenseCategory: true,
+    licenseExpiry: true,
     createdAt: true,
     updatedAt: true,
   } as const;
+
+  // La licencia es de una sola persona: mensaje claro en vez del error generico
+  // de la restriccion unica de la base de datos.
+  private async assertLicenseFree(license: string, exceptPersonId?: string) {
+    const owner = await this.prisma.person.findFirst({
+      where: { license, ...(exceptPersonId ? { id: { not: exceptPersonId } } : {}) },
+      select: { name: true },
+    });
+    if (owner) throw new ConflictException(`La licencia ${license} ya está registrada a nombre de ${owner.name}.`);
+  }
 
   findAll(organizationId: string) {
     return this.prisma.person.findMany({
@@ -81,6 +95,13 @@ export class PeopleService {
       );
     }
 
+    // La licencia de conducir solo existe para conductores.
+    const hasLicenseData = Boolean(dto.license || dto.licenseCategory || dto.licenseExpiry);
+    if (hasLicenseData && dto.role !== 'CONDUCTOR') {
+      throw new BadRequestException('La licencia de conducir solo aplica a conductores.');
+    }
+    if (dto.license) await this.assertLicenseFree(dto.license);
+
     const normalizedEmail = dto.email.toLowerCase();
     // La contraseña es por correo, no por fila (ver comentario de passwordHash
     // en schema.prisma): si este correo ya tiene otra cuenta (p. ej. Socio) con
@@ -101,6 +122,9 @@ export class PeopleService {
         role: dto.role,
         code: dto.code,
         company: dto.company,
+        license: dto.license || undefined,
+        licenseCategory: dto.licenseCategory?.trim() || undefined,
+        licenseExpiry: dto.licenseExpiry ? new Date(dto.licenseExpiry) : undefined,
         status: 'PENDIENTE',
         passwordHash: sibling?.passwordHash,
       },
@@ -180,6 +204,42 @@ export class PeopleService {
       });
     }
 
+    return updated;
+  }
+
+  /**
+   * Registra o corrige la licencia de un conductor que ya existe (19 sept
+   * 2026). Auditado; el numero de licencia NO se copia al texto de la
+   * auditoria (solo categoria y vencimiento) para no repartir el dato.
+   */
+  async updateLicense(organizationId: string, actor: JwtPayload, personId: string, dto: UpdateLicenseDto) {
+    const person = await this.findOne(organizationId, personId);
+    if (person.role !== 'CONDUCTOR') {
+      throw new BadRequestException('La licencia de conducir solo aplica a conductores.');
+    }
+    await this.assertLicenseFree(dto.license, personId);
+
+    const updated = await this.prisma.person.update({
+      where: { id: personId },
+      data: {
+        license: dto.license,
+        licenseCategory: dto.licenseCategory.trim(),
+        licenseExpiry: new Date(dto.licenseExpiry),
+      },
+      select: PeopleService.SAFE_SELECT,
+    });
+    await this.prisma.auditEntry.create({
+      data: {
+        organizationId,
+        actorId: actor.sub,
+        actorRole: actor.role,
+        action: 'ACTUALIZAR_LICENCIA',
+        resource: `Persona ${person.name}`,
+        resourceId: personId,
+        before: person.license ? `Licencia ${person.licenseCategory ?? ''}`.trim() : 'Sin licencia registrada',
+        after: `Licencia ${dto.licenseCategory.trim()}, vence ${dto.licenseExpiry.slice(0, 10)}`,
+      },
+    });
     return updated;
   }
 

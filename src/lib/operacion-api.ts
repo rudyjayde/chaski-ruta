@@ -683,6 +683,10 @@ export interface CreatePersonInput {
   phone?: string;
   code?: string;
   company?: string;
+  // Solo para CONDUCTOR: licencia "Q12345678", categoria y vencimiento "AAAA-MM-DD".
+  license?: string;
+  licenseCategory?: string;
+  licenseExpiry?: string;
 }
 
 export async function fetchPeople(organizationId?: string): Promise<Person[]> {
@@ -702,6 +706,18 @@ export async function createPerson(input: CreatePersonInput, organizationId?: st
   return request<Person>(
     organizationId ? `/people?organizationId=${encodeURIComponent(organizationId)}` : '/people',
     { method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
+// Registrar o corregir la licencia de un conductor que ya existe.
+export async function updatePersonLicense(
+  personId: string,
+  data: { license: string; licenseCategory: string; licenseExpiry: string },
+  organizationId?: string,
+): Promise<Person> {
+  return request<Person>(
+    organizationId ? `/people/${personId}/license?organizationId=${encodeURIComponent(organizationId)}` : `/people/${personId}/license`,
+    { method: 'POST', body: JSON.stringify(data) },
   );
 }
 

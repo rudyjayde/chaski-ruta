@@ -217,6 +217,11 @@ export interface Person {
   status: 'ACTIVO' | 'PENDIENTE' | 'SUSPENDIDO';
   linkedUnit?: string;
   boundDeviceId?: string | null;
+  // Licencia de conducir (solo conductores): "Q12345678", categoria y fecha
+  // de vencimiento (ISO, solo la parte de fecha importa).
+  license?: string | null;
+  licenseCategory?: string | null;
+  licenseExpiry?: string | null;
 }
 
 export interface AuditEntry {

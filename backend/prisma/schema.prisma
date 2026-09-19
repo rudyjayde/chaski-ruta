@@ -145,6 +145,14 @@ model Person {
   company    String? // nombre de la empresa miembro dentro de la asociacion
   linkedUnit String?
 
+  // Licencia de conducir (Jayde, 19 sept 2026): solo aplica a CONDUCTOR.
+  // `license` = 1 letra + 8 numeros (ej. Q12345678). @unique: una licencia es
+  // de una sola persona (varios null a la vez si estan permitidos en Postgres).
+  // Antes el formulario de Personas pedia estos datos pero nunca se guardaban.
+  license         String?   @unique
+  licenseCategory String?
+  licenseExpiry   DateTime? @db.Date
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

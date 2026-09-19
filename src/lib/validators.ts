@@ -22,6 +22,30 @@ export const sanitizePhone = (value: string) => {
 export const isValidDni = (value: string) => /^\d{8}$/.test(value);
 export const isValidPhone = (value: string) => /^\d{9}$/.test(value);
 
+// Licencia de conducir (Jayde, 19 sept 2026): 9 caracteres -- 1 letra (A-Z)
+// seguida de 8 numeros, ej. Q12345678. Mismo formato que el backend.
+export const LICENSE_ERROR = 'La licencia debe tener 9 caracteres: 1 letra seguida de 8 números (ej. Q12345678).';
+export const isValidLicense = (value: string) => /^[A-Z]\d{8}$/.test(value);
+
+// Para el onChange: mayusculas; el primer caracter tiene que ser una letra
+// (los numeros del principio se descartan) y despues solo entran 8 numeros.
+export const sanitizeLicense = (value: string) => {
+  const raw = value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const letter = raw.match(/[A-Z]/);
+  if (!letter) return '';
+  const digits = raw.slice(raw.indexOf(letter[0]) + 1).replace(/\D/g, '').slice(0, 8);
+  return letter[0] + digits;
+};
+
+// "Q12345678" -> "Q******78" (mismo criterio que el DNI enmascarado en Personas).
+export const maskLicense = (value?: string | null) => (value ? `${value[0]}${'*'.repeat(6)}${value.slice(-2)}` : '');
+
+// El vencimiento es una fecha sin hora: se muestra en UTC para que no
+// retroceda un dia por la zona horaria de Peru (UTC-5).
+export const formatLicenseExpiry = (value?: string | null) =>
+  value ? new Date(value).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '';
+export const licenseExpiryInputValue = (value?: string | null) => (value ? value.slice(0, 10) : '');
+
 // Placa (Jayde, 19 sept 2026): 3 caracteres (letras o numeros) + guion + 3
 // numeros, ej. Z0A-001. Mismo formato que backend/src/common/validators.ts.
 export const PLATE_ERROR = 'La placa debe tener 3 letras o números, un guion y 3 números (ej. Z0A-001).';

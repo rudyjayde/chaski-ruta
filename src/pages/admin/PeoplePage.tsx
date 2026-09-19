@@ -14,11 +14,12 @@ import { useAuth } from '../../contexts/AuthContext';
 import {
   fetchPeople, createPerson, type CreatePersonInput,
   fetchVehicles, fetchCompanies, type CompanyOption,
-  changeVehiclePartner, changeVehicleDriver, updatePersonStatus, resetPersonDevice,
+  changeVehiclePartner, changeVehicleDriver, updatePersonStatus, updatePersonLicense, resetPersonDevice,
 } from '../../lib/operacion-api';
 import {
-  DNI_ERROR, PHONE_ERROR, dniInputProps, phoneInputProps, sanitizeDni, sanitizePhone,
-  isValidDni, isValidPhone, isValidOptionalDni, isValidOptionalPhone,
+  DNI_ERROR, PHONE_ERROR, LICENSE_ERROR, dniInputProps, phoneInputProps, sanitizeDni, sanitizePhone, sanitizeLicense,
+  isValidDni, isValidPhone, isValidLicense, isValidOptionalDni, isValidOptionalPhone,
+  maskLicense, formatLicenseExpiry, licenseExpiryInputValue,
 } from '../../lib/validators';
 
 type PersonTab = 'conductores' | 'socios' | 'administradores' | 'pendientes';
@@ -124,6 +125,9 @@ function RegisterSocioModal({
     if (form.drivesOwn && (!form.driverUnit || !form.license || !form.licenseCategory || !form.licenseExpiry)) {
       return setError('Selecciona la unidad que manejará y completa los datos de su licencia.');
     }
+    if (form.drivesOwn && !isValidLicense(form.license)) {
+      return setError(LICENSE_ERROR);
+    }
 
     setSaving(true);
     setError('');
@@ -146,6 +150,9 @@ function RegisterSocioModal({
           phone: form.phone,
           company: form.company,
           code: form.driverUnit,
+          license: form.license,
+          licenseCategory: form.licenseCategory.trim(),
+          licenseExpiry: form.licenseExpiry,
         });
       }
 
@@ -294,7 +301,7 @@ function RegisterSocioModal({
                     </select>
                   </Field>
                 </div>
-                <Field label="Número de licencia" required><input className={inputClass} value={form.license} onChange={e => set('license', e.target.value.toUpperCase())} /></Field>
+                <Field label="Número de licencia" required><input className={`${inputClass} font-mono`} placeholder="Q12345678" autoComplete="off" value={form.license} onChange={e => set('license', sanitizeLicense(e.target.value))} /></Field>
                 <Field label="Categoría" required><input className={inputClass} placeholder="Ej. A-IIb" value={form.licenseCategory} onChange={e => set('licenseCategory', e.target.value)} /></Field>
                 <div className="col-span-2"><Field label="Vencimiento de licencia" required><input type="date" className={inputClass} value={form.licenseExpiry} onChange={e => set('licenseExpiry', e.target.value)} /></Field></div>
               </div>
@@ -366,6 +373,9 @@ function RegisterDriverModal({
     if (!selectedUnit || !form.license || !form.licenseCategory || !form.licenseExpiry) {
       return setError('Selecciona la unidad y completa todos los datos de la licencia.');
     }
+    if (!isValidLicense(form.license)) {
+      return setError(LICENSE_ERROR);
+    }
     if (existingConductor) {
       return setError('Esta persona ya tiene el rol de conductor. Usa Vincular o cambiar unidad desde su perfil.');
     }
@@ -381,6 +391,9 @@ function RegisterDriverModal({
         phone: form.phone,
         company: selectedUnit.company,
         code: selectedUnit.code,
+        license: form.license,
+        licenseCategory: form.licenseCategory.trim(),
+        licenseExpiry: form.licenseExpiry,
       });
       await changeVehicleDriver(selectedUnit.id, conductor.id, 'Alta inicial de conductor');
       onCreated(`${form.name} quedó asignado a la unidad ${selectedUnit.code} y su correo quedó autorizado.`);
@@ -422,7 +435,7 @@ function RegisterDriverModal({
           <fieldset>
             <legend className="text-base font-semibold text-t1 mb-3">Licencia de conducir</legend>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Número de licencia" required><input className={inputClass} value={form.license} onChange={e => set('license', e.target.value.toUpperCase())} /></Field>
+              <Field label="Número de licencia" required><input className={`${inputClass} font-mono`} placeholder="Q12345678" autoComplete="off" value={form.license} onChange={e => set('license', sanitizeLicense(e.target.value))} /></Field>
               <Field label="Categoría" required><input className={inputClass} placeholder="Ej. A-IIb" value={form.licenseCategory} onChange={e => set('licenseCategory', e.target.value)} /></Field>
               <div className="col-span-2"><Field label="Vencimiento" required><input type="date" className={inputClass} value={form.licenseExpiry} onChange={e => set('licenseExpiry', e.target.value)} /></Field></div>
             </div>
@@ -515,8 +528,52 @@ function LinkUnitModal({
   );
 }
 
+// Registrar o corregir la licencia de un conductor que ya existe.
+function LicenseModal({ person, onClose, onSaved }: { person: Person; onClose: () => void; onSaved: (message: string) => void }) {
+  const [license, setLicense] = useState(person.license ?? '');
+  const [category, setCategory] = useState(person.licenseCategory ?? '');
+  const [expiry, setExpiry] = useState(licenseExpiryInputValue(person.licenseExpiry));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const save = async () => {
+    if (!isValidLicense(license)) return setError(LICENSE_ERROR);
+    if (!category.trim() || !expiry) return setError('Completa la categoría y la fecha de vencimiento.');
+    setSaving(true);
+    setError('');
+    try {
+      await updatePersonLicense(person.id, { license, licenseCategory: category.trim(), licenseExpiry: expiry });
+      onSaved(`Licencia de ${person.name} guardada.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo guardar la licencia.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4" role="dialog" aria-modal="true" aria-label="Licencia de conducir">
+      <div className="bg-surface rounded-lg shadow-xl w-full max-w-sm p-6">
+        <h3 className="text-sm font-semibold text-t1 mb-1">Licencia de {person.name}</h3>
+        <p className="text-xs text-t2 mb-4">1 letra seguida de 8 números, por ejemplo Q12345678.</p>
+        <div className="space-y-3">
+          <Field label="Número de licencia" required><input className={`${inputClass} font-mono`} placeholder="Q12345678" autoComplete="off" value={license} onChange={e => { setLicense(sanitizeLicense(e.target.value)); setError(''); }} /></Field>
+          <Field label="Categoría" required><input className={inputClass} placeholder="Ej. A-IIb" value={category} onChange={e => { setCategory(e.target.value); setError(''); }} /></Field>
+          <Field label="Vencimiento" required><input type="date" className={inputClass} value={expiry} onChange={e => { setExpiry(e.target.value); setError(''); }} /></Field>
+        </div>
+        {error && <p className="text-xs text-danger mt-3">{error}</p>}
+        <div className="flex gap-3 justify-end mt-5">
+          <button onClick={onClose} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-hover">Cancelar</button>
+          <button onClick={save} disabled={saving} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary-h disabled:opacity-50">{saving ? 'Guardando…' : 'Guardar licencia'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PersonDetail({ person, onClose, onLink, onStatusChanged }: { person: Person; onClose: () => void; onLink: () => void; onStatusChanged: (message: string) => void }) {
   const { org } = useAdminDemo();
+  const [showLicense, setShowLicense] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [resettingDevice, setResettingDevice] = useState(false);
@@ -581,6 +638,22 @@ function PersonDetail({ person, onClose, onLink, onStatusChanged }: { person: Pe
         <div className="border border-border rounded-lg divide-y divide-border">
           {[{ label: 'DNI', value: maskDni(person.dni) }, { label: 'Correo', value: person.email }, { label: 'Teléfono', value: person.phone || 'No registrado' }, { label: 'Unidad', value: person.linkedUnit || person.code || 'Sin vincular' }].map(row => <div key={row.label} className="flex justify-between gap-3 px-3 py-2"><span className="text-t2">{row.label}</span><span className="text-t1 font-medium truncate max-w-[170px]">{row.value}</span></div>)}
         </div>
+        {person.role === 'CONDUCTOR' && (
+          <div className="border border-border rounded-lg p-3 space-y-2">
+            <p className="text-t2">Licencia de conducir</p>
+            {person.license ? (
+              <p className="text-t1 font-medium">
+                <span className="font-mono">{maskLicense(person.license)}</span>
+                {' · '}{person.licenseCategory || 'Sin categoría'}{' · vence '}{formatLicenseExpiry(person.licenseExpiry) || '—'}
+              </p>
+            ) : (
+              <p className="text-warn font-medium">No registrada</p>
+            )}
+            <button onClick={() => setShowLicense(true)} className="w-full h-9 border border-border text-t2 rounded-lg text-sm font-medium hover:bg-hover">
+              {person.license ? 'Actualizar licencia' : 'Registrar licencia'}
+            </button>
+          </div>
+        )}
         {(person.role === 'SOCIO' || person.role === 'CONDUCTOR') && person.status !== 'PENDIENTE' && (
           <button onClick={onLink} className="w-full h-9 bg-primary text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2"><Link2 size={13} />{person.role === 'SOCIO' ? 'Vincular o cambiar vehículo' : 'Asignar o cambiar unidad'}</button>
         )}
@@ -604,6 +677,14 @@ function PersonDetail({ person, onClose, onLink, onStatusChanged }: { person: Pe
           </button>
         )}
       </div>
+
+      {showLicense && (
+        <LicenseModal
+          person={person}
+          onClose={() => setShowLicense(false)}
+          onSaved={(message) => { setShowLicense(false); onStatusChanged(message); }}
+        />
+      )}
 
       {showSuspendModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4" role="dialog" aria-modal="true" aria-label="Suspender cuenta">

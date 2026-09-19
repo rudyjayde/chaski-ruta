@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/co
 import { PeopleService } from './people.service';
 import { CreatePersonDto } from './dto/create-person.dto';
 import { UpdatePersonStatusDto } from './dto/update-person-status.dto';
+import { UpdateLicenseDto } from './dto/update-license.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -60,6 +61,19 @@ export class PeopleController {
   ) {
     const orgId = resolveOrgId(user, organizationId);
     return this.people.updateStatus(orgId, user, id, dto);
+  }
+
+  // Registrar/corregir la licencia de un conductor (solo Administrador/Super
+  // Admin, como todo este controlador).
+  @Post(':id/license')
+  updateLicense(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: UpdateLicenseDto,
+    @Query('organizationId') organizationId?: string,
+  ) {
+    const orgId = resolveOrgId(user, organizationId);
+    return this.people.updateLicense(orgId, user, id, dto);
   }
 
   // Excepcion 2 (plan-operacion.md §3.2): liberar la vinculacion cuenta-

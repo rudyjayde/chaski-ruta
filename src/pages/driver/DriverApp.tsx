@@ -22,15 +22,25 @@ import {
 } from '../../lib/operacion-api';
 import { getOperationalPosition, getOperationalState, getVehiclesAhead, getQueueDisplayOrder } from '../../lib/queue-ui';
 import { localDateStr } from '../../lib/dates';
+import { formatLicenseExpiry } from '../../lib/validators';
+
+// Estado real de la licencia segun su vencimiento (antes decia "Vigente" y
+// "Vence en 585 dias" fijo, sin mirar ningun dato). Los dias se cuentan contra
+// la fecha de hoy en Peru (localDateStr), no la de UTC.
+function licenseStatusInfo(expiry?: string | null) {
+  if (!expiry) return { label: 'No registrada', cls: 'bg-warn/10 text-warn', note: 'Pide a tu administrador que la registre' };
+  const days = Math.round((Date.parse(expiry.slice(0, 10)) - Date.parse(localDateStr())) / 86400000);
+  const plural = (n: number) => `${n} ${n === 1 ? 'día' : 'días'}`;
+  if (days < 0) return { label: 'Vencida', cls: 'bg-danger/10 text-danger', note: `Venció hace ${plural(-days)}` };
+  if (days <= 30) return { label: 'Por vencer', cls: 'bg-warn/10 text-warn', note: `Vence en ${plural(days)}` };
+  return { label: 'Vigente', cls: 'bg-ok/10 text-ok', note: `Vence en ${plural(days)}` };
+}
 
 type Section = 'inicio' | 'cola' | 'manifiesto' | 'viajes' | 'gps' | 'avisos' | 'perfil';
 
 
 type DriverPerson = Person & {
   roles?: Person['role'][];
-  license?: string;
-  licenseCategory?: string;
-  licenseExpiry?: string;
 };
 
 type DriverUnit = Unit & {
@@ -2292,9 +2302,9 @@ function DriverProfile() {
             </div>
             <div className="divide-y divide-border">
               {[
-                ['Categoría', profile?.licenseCategory || 'A-IIb'],
-                ['Número', profile?.license || 'L-071234567'],
-                ['Fecha de vencimiento', profile?.licenseExpiry || '14 mar 2028'],
+                ['Categoría', profile?.licenseCategory || 'No registrada'],
+                ['Número', profile?.license || 'No registrada'],
+                ['Fecha de vencimiento', formatLicenseExpiry(profile?.licenseExpiry) || 'No registrada'],
               ].map(([label, value]) => (
                 <div key={label} className="flex items-center justify-between px-4 py-3">
                   <span className="text-xs text-t2 w-44 flex-shrink-0">{label}</span>
@@ -2302,10 +2312,15 @@ function DriverProfile() {
                 </div>
               ))}
             </div>
-            <div className="px-4 py-2.5 border-t border-border flex items-center justify-between">
-              <span className="text-xs bg-ok/10 text-ok px-2 py-0.5 rounded font-medium">Vigente</span>
-              <span className="text-xs text-muted">Vence en 585 días</span>
-            </div>
+            {(() => {
+              const status = licenseStatusInfo(profile?.licenseExpiry);
+              return (
+                <div className="px-4 py-2.5 border-t border-border flex items-center justify-between gap-3">
+                  <span className={`text-xs px-2 py-0.5 rounded font-medium ${status.cls}`}>{status.label}</span>
+                  <span className="text-xs text-muted text-right">{status.note}</span>
+                </div>
+              );
+            })()}
           </div>
 
           <div className="bg-surface border border-border rounded-lg overflow-hidden">
