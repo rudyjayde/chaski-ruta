@@ -1,6 +1,7 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateVehicleDto } from './dto/create-vehicle.dto';
+import { VEHICLE_TYPE_BY_MODEL } from './vehicle-catalog';
 import { ChangeDriverDto } from './dto/change-driver.dto';
 import { ChangePartnerDto } from './dto/change-partner.dto';
 import { DeactivateVehicleDto } from './dto/deactivate-vehicle.dto';
@@ -62,26 +63,52 @@ export class VehiclesService {
   }
 
   async create(organizationId: string, dto: CreateVehicleDto) {
-    return this.prisma.$transaction(async (tx) => {
-      const vehicle = await tx.vehicle.create({
-        data: {
-          organizationId,
-          code: dto.code,
-          companyId: dto.companyId,
-          vehicleType: dto.vehicleType,
-          plate: dto.plate,
-          model: dto.model,
-          year: dto.year,
-          routeAssignment: dto.routeAssignment ?? 'AMBAS',
-          partnerId: dto.partnerId,
-          currentDriverId: dto.currentDriverId,
-        },
-      });
-      await tx.vehiclePlateHistory.create({
-        data: { vehicleId: vehicle.id, plate: dto.plate, fromDate: new Date() },
-      });
-      return vehicle;
+    const code = dto.code.trim();
+    if (!code) throw new BadRequestException('El código de unidad no puede estar vacío.');
+    if (VEHICLE_TYPE_BY_MODEL[dto.model] !== dto.vehicleType) {
+      throw new BadRequestException('El tipo de vehículo no corresponde a la marca y modelo elegidos.');
+    }
+
+    // Avisos claros ANTES de escribir -- sin esto el codigo repetido solo
+    // fallaba en la base de datos (unique organizationId+code) con un error
+    // generico, sin decir que la unidad ya existia.
+    const sameCode = await this.prisma.vehicle.findFirst({ where: { organizationId, code }, select: { id: true } });
+    if (sameCode) throw new ConflictException(`La unidad ${code} ya está registrada en esta asociación.`);
+    const samePlate = await this.prisma.vehicle.findFirst({
+      where: { organizationId, plate: dto.plate },
+      select: { code: true },
     });
+    if (samePlate) throw new ConflictException(`La placa ${dto.plate} ya está registrada en la unidad ${samePlate.code}.`);
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const vehicle = await tx.vehicle.create({
+          data: {
+            organizationId,
+            code,
+            companyId: dto.companyId,
+            vehicleType: dto.vehicleType,
+            plate: dto.plate,
+            model: dto.model,
+            year: dto.year,
+            routeAssignment: dto.routeAssignment ?? 'AMBAS',
+            partnerId: dto.partnerId,
+            currentDriverId: dto.currentDriverId,
+          },
+        });
+        await tx.vehiclePlateHistory.create({
+          data: { vehicleId: vehicle.id, plate: dto.plate, fromDate: new Date() },
+        });
+        return vehicle;
+      });
+    } catch (err) {
+      // Dos altas simultaneas con el mismo codigo: la segunda pasa el chequeo
+      // de arriba pero la base de datos igual la rechaza (P2002).
+      if (typeof err === 'object' && err !== null && (err as { code?: string }).code === 'P2002') {
+        throw new ConflictException(`La unidad ${code} ya está registrada en esta asociación.`);
+      }
+      throw err;
+    }
   }
 
   /** Cambia el conductor asignado, con auditoria obligatoria (CAMBIO_CONDUCTOR). */

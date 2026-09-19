@@ -1,4 +1,6 @@
 import { IsIn, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
+import { IsPlate } from '../../common/validators';
+import { VEHICLE_MODELS } from '../vehicle-catalog';
 
 export class CreateVehicleDto {
   @IsString()
@@ -12,15 +14,16 @@ export class CreateVehicleDto {
   vehicleType: 'SPRINTER' | 'HIACE' | 'MASTER';
 
   @IsString()
-  @MinLength(3)
+  @IsPlate()
   plate: string;
 
-  @IsString()
+  // Marca + modelo del catalogo (ver vehicle-catalog.ts), ej. "Toyota Hiace".
+  @IsIn(VEHICLE_MODELS, { message: `La marca/modelo debe ser una de: ${VEHICLE_MODELS.join(', ')}` })
   model: string;
 
-  @IsInt()
-  @Min(1990)
-  @Max(2100)
+  @IsInt({ message: 'El año debe ser un número de 4 dígitos' })
+  @Min(1990, { message: 'El año debe ser 1990 o posterior' })
+  @Max(2100, { message: 'El año no es válido' })
   year: number;
 
   @IsOptional()

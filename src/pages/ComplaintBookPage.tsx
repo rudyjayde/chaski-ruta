@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { ArrowLeft, CheckCircle, Loader2 } from 'lucide-react';
 import { submitComplaint } from '../lib/complaint-book-api';
+import { PHONE_ERROR, phoneInputProps, sanitizePhone, isValidOptionalPhone } from '../lib/validators';
 
 interface Props {
   onBack: () => void;
@@ -24,6 +25,10 @@ export default function ComplaintBookPage({ onBack }: Props) {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!isValidOptionalPhone(form.consumerPhone)) {
+      setError(PHONE_ERROR);
+      return;
+    }
     setSending(true);
     setError(null);
     try {
@@ -95,7 +100,7 @@ export default function ComplaintBookPage({ onBack }: Props) {
               </div>
               <div>
                 <label className={labelCls}>Teléfono</label>
-                <input value={form.consumerPhone} onChange={e => set('consumerPhone', e.target.value)} className={inputCls} />
+                <input {...phoneInputProps} value={form.consumerPhone} onChange={e => set('consumerPhone', sanitizePhone(e.target.value))} className={inputCls} />
               </div>
               <div>
                 <label className={labelCls}>Correo *</label>

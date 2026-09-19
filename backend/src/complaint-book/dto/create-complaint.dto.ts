@@ -1,4 +1,5 @@
 import { IsBoolean, IsEmail, IsIn, IsNumber, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsOptionalPhone } from '../../common/validators';
 
 // Enviado desde la landing publica (pagina /libro-de-reclamaciones), sin
 // autenticacion -- cualquier persona puede reclamar, tenga o no cuenta en la
@@ -23,7 +24,7 @@ export class CreateComplaintDto {
   @IsEmail()
   consumerEmail: string;
 
-  @IsOptional()
+  @IsOptionalPhone()
   @IsString()
   consumerPhone?: string;
 

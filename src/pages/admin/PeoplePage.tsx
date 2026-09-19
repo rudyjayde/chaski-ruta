@@ -16,6 +16,10 @@ import {
   fetchVehicles, fetchCompanies, type CompanyOption,
   changeVehiclePartner, changeVehicleDriver, updatePersonStatus, resetPersonDevice,
 } from '../../lib/operacion-api';
+import {
+  DNI_ERROR, PHONE_ERROR, dniInputProps, phoneInputProps, sanitizeDni, sanitizePhone,
+  isValidDni, isValidPhone, isValidOptionalDni, isValidOptionalPhone,
+} from '../../lib/validators';
 
 type PersonTab = 'conductores' | 'socios' | 'administradores' | 'pendientes';
 
@@ -111,7 +115,7 @@ function RegisterSocioModal({
 
   const save = async () => {
     const email = form.email.trim().toLowerCase();
-    if (!form.name.trim() || !/^\d{8}$/.test(form.dni) || !email || !/^\d{9}$/.test(form.phone) || !form.company) {
+    if (!form.name.trim() || !isValidDni(form.dni) || !email || !isValidPhone(form.phone) || !form.company) {
       return setError('Completa los datos del socio. El DNI debe tener 8 dígitos y el teléfono 9.');
     }
     if (people.some(person => person.email.toLowerCase() === email && person.role === 'SOCIO')) {
@@ -183,9 +187,9 @@ function RegisterSocioModal({
             <legend className="text-base font-semibold text-t1 mb-3">Datos personales y acceso</legend>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Nombre completo" required><input className={inputClass} value={form.name} onChange={e => set('name', e.target.value)} /></Field>
-              <Field label="DNI" required><input className={inputClass} maxLength={8} value={form.dni} onChange={e => set('dni', e.target.value.replace(/\D/g, ''))} /></Field>
+              <Field label="DNI" required><input className={inputClass} {...dniInputProps} value={form.dni} onChange={e => set('dni', sanitizeDni(e.target.value))} /></Field>
               <Field label="Correo de acceso" required><input inputMode="email" className={inputClass} value={form.email} onChange={e => set('email', e.target.value)} /></Field>
-              <Field label="Teléfono" required><input className={inputClass} maxLength={9} value={form.phone} onChange={e => set('phone', e.target.value.replace(/\D/g, ''))} /></Field>
+              <Field label="Teléfono" required><input className={inputClass} {...phoneInputProps} value={form.phone} onChange={e => set('phone', sanitizePhone(e.target.value))} /></Field>
               <div className="col-span-2">
                 <Field label="Empresa integrante" required>
                   <select className={inputClass} value={form.company} onChange={e => { set('company', e.target.value); set('vehicleCodes', []); set('driverUnit', ''); setVehicleSearch(''); }}>
@@ -356,7 +360,7 @@ function RegisterDriverModal({
 
   const save = async () => {
     const email = form.email.trim().toLowerCase();
-    if (!form.name.trim() || !/^\d{8}$/.test(form.dni) || !email || !/^\d{9}$/.test(form.phone)) {
+    if (!form.name.trim() || !isValidDni(form.dni) || !email || !isValidPhone(form.phone)) {
       return setError('Completa los datos del conductor. El DNI debe tener 8 dígitos y el teléfono 9.');
     }
     if (!selectedUnit || !form.license || !form.licenseCategory || !form.licenseExpiry) {
@@ -403,9 +407,9 @@ function RegisterDriverModal({
             <legend className="text-base font-semibold text-t1 mb-3">Datos personales y acceso</legend>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Nombre completo" required><input className={inputClass} value={form.name} onChange={e => set('name', e.target.value)} /></Field>
-              <Field label="DNI" required><input className={inputClass} maxLength={8} value={form.dni} onChange={e => set('dni', e.target.value.replace(/\D/g, ''))} /></Field>
+              <Field label="DNI" required><input className={inputClass} {...dniInputProps} value={form.dni} onChange={e => set('dni', sanitizeDni(e.target.value))} /></Field>
               <Field label="Correo autorizado" required><input inputMode="email" className={inputClass} value={form.email} onChange={e => set('email', e.target.value)} /></Field>
-              <Field label="Teléfono" required><input className={inputClass} maxLength={9} value={form.phone} onChange={e => set('phone', e.target.value.replace(/\D/g, ''))} /></Field>
+              <Field label="Teléfono" required><input className={inputClass} {...phoneInputProps} value={form.phone} onChange={e => set('phone', sanitizePhone(e.target.value))} /></Field>
             </div>
           </fieldset>
 
@@ -658,6 +662,14 @@ function CreatePersonModal({
       setError('Completa al menos el nombre y el correo.');
       return;
     }
+    if (!isValidOptionalDni(form.dni?.trim() ?? '')) {
+      setError(DNI_ERROR);
+      return;
+    }
+    if (!isValidOptionalPhone(form.phone?.trim() ?? '')) {
+      setError(PHONE_ERROR);
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -699,8 +711,8 @@ function CreatePersonModal({
             </Field>
           )}
           <div className="grid grid-cols-2 gap-4">
-            <Field label="DNI"><input className={inputClass} maxLength={8} value={form.dni} onChange={e => set('dni', e.target.value.replace(/\D/g, ''))} /></Field>
-            <Field label="Teléfono"><input className={inputClass} maxLength={9} value={form.phone} onChange={e => set('phone', e.target.value.replace(/\D/g, ''))} /></Field>
+            <Field label="DNI"><input className={inputClass} {...dniInputProps} value={form.dni} onChange={e => set('dni', sanitizeDni(e.target.value))} /></Field>
+            <Field label="Teléfono"><input className={inputClass} {...phoneInputProps} value={form.phone} onChange={e => set('phone', sanitizePhone(e.target.value))} /></Field>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Código de unidad"><input className={inputClass} value={form.code} onChange={e => set('code', e.target.value)} /></Field>

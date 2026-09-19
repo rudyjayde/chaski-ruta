@@ -1,4 +1,5 @@
 import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsOptionalPhone } from '../../common/validators';
 
 // Corresponde al Paso 1 del wizard "Nueva asociacion" del Super Admin
 // (ver SuperAdminApp.tsx WIZARD_STEPS en el frontend).
@@ -36,7 +37,7 @@ export class CreateOrganizationDto {
   @IsString()
   legalRepName?: string;
 
-  @IsOptional()
+  @IsOptionalPhone()
   @IsString()
   contactPhone?: string;
 

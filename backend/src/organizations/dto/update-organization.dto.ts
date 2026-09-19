@@ -1,4 +1,5 @@
 import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
+import { IsOptionalPhone } from '../../common/validators';
 
 export class UpdateOrganizationDto {
   // Renovacion de directiva/marca (p. ej. la asociacion cambia de nombre
@@ -28,7 +29,7 @@ export class UpdateOrganizationDto {
   @IsString()
   legalRepName?: string;
 
-  @IsOptional()
+  @IsOptionalPhone()
   @IsString()
   contactPhone?: string;
 

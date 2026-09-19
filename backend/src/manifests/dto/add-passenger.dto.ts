@@ -1,4 +1,5 @@
-import { IsEmail, IsIn, IsInt, IsNumber, IsOptional, IsString, Matches, Min, MinLength } from 'class-validator';
+import { IsEmail, IsIn, IsInt, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
+import { IsDni } from '../../common/validators';
 
 export class AddPassengerDto {
   @IsString()
@@ -7,7 +8,7 @@ export class AddPassengerDto {
 
   // Regla global: DNI peruano = exactamente 8 dígitos numéricos, sin letras ni guiones.
   @IsString()
-  @Matches(/^\d{8}$/, { message: 'El DNI debe tener exactamente 8 dígitos numéricos' })
+  @IsDni()
   dni: string;
 
   @IsInt()

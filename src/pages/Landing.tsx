@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { submitCommercialRequest } from '../lib/commercial-requests-api';
+import { PHONE_ERROR, PLATE_ERROR, phoneInputProps, sanitizePhone, sanitizePlate, isValidPhone, isValidPlate } from '../lib/validators';
 import { AccountPanelContent } from './VisitorAccountPage';
 import { useAuth } from '../contexts/AuthContext';
 import { getVisitorToken, fetchVisitorMe, clearVisitorToken } from '../lib/visitor-auth-api';
@@ -160,6 +161,14 @@ function GPSVehicleCard({ plan }: { plan: LandingPlan }) {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (!isValidPhone(form.phone)) {
+      setError(PHONE_ERROR);
+      return;
+    }
+    if (!isValidPlate(form.plate)) {
+      setError(PLATE_ERROR);
+      return;
+    }
     setSending(true);
     setError(null);
     try {
@@ -243,7 +252,7 @@ function GPSVehicleCard({ plan }: { plan: LandingPlan }) {
                       className="mt-1 w-full h-9 px-3 border border-border rounded-lg text-sm font-normal focus:outline-none focus:ring-2 focus:ring-primary" />
                   </label>
                   <label className="text-xs font-medium text-t1">Teléfono *
-                    <input required value={form.phone} onChange={e => setField('phone', e.target.value)} placeholder="9XXXXXXXX"
+                    <input required {...phoneInputProps} value={form.phone} onChange={e => setField('phone', sanitizePhone(e.target.value))} placeholder="9XXXXXXXX"
                       className="mt-1 w-full h-9 px-3 border border-border rounded-lg text-sm font-normal focus:outline-none focus:ring-2 focus:ring-primary" />
                   </label>
                   <label className="col-span-2 text-xs font-medium text-t1">Asociación *
@@ -258,7 +267,7 @@ function GPSVehicleCard({ plan }: { plan: LandingPlan }) {
                       className="mt-1 w-full h-9 px-3 border border-border rounded-lg text-sm font-normal focus:outline-none focus:ring-2 focus:ring-primary" />
                   </label>
                   <label className="text-xs font-medium text-t1">Placa actual *
-                    <input required value={form.plate} onChange={e => setField('plate', e.target.value)} placeholder="Ej. Z5C-444"
+                    <input required autoComplete="off" value={form.plate} onChange={e => setField('plate', sanitizePlate(e.target.value, form.plate))} placeholder="Ej. Z5C-444"
                       className="mt-1 w-full h-9 px-3 border border-border rounded-lg text-sm font-normal focus:outline-none focus:ring-2 focus:ring-primary" />
                   </label>
                   <label className="col-span-2 text-xs font-medium text-t1">Unidades a cotizar
@@ -309,6 +318,10 @@ function PlanSection({ scrollTo, plans }: { scrollTo: (id: string) => void; plan
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!activeModal) return;
+    if (!isValidPhone(form.phone)) {
+      setError(PHONE_ERROR);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -447,7 +460,7 @@ function PlanSection({ scrollTo, plans }: { scrollTo: (id: string) => void; plan
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-t1 mb-1">Teléfono *</label>
-                    <input required value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="9XXXXXXXX"
+                    <input required {...phoneInputProps} value={form.phone} onChange={e => set('phone', sanitizePhone(e.target.value))} placeholder="9XXXXXXXX"
                       className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
                   </div>
                   <div className={activeModal === 'PRO' ? '' : 'col-span-2'}>

@@ -1,4 +1,5 @@
 import { IsEmail, IsIn, IsObject, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsOptionalPhone } from '../../common/validators';
 
 // Enviado desde la landing publica, sin autenticacion (docs/planes/
 // landing-publica-y-solicitudes-comerciales.md §3-§5). `answers` guarda el
@@ -15,7 +16,7 @@ export class CreateCommercialRequestDto {
   @IsEmail()
   contactEmail: string;
 
-  @IsOptional()
+  @IsOptionalPhone()
   @IsString()
   contactPhone?: string;
 

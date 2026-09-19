@@ -10,6 +10,8 @@ import {
 } from '../../lib/operacion-api';
 import type { Person, Unit } from '../../types';
 import { useAdminDemo } from './AdminApp';
+import { PLATE_ERROR, YEAR_ERROR, isValidPlate, isValidYear, sanitizePlate, sanitizeYear, yearMax, YEAR_MIN } from '../../lib/validators';
+import { VEHICLE_BRANDS, findVehicleBrand } from '../../lib/vehicle-catalog';
 
 const UNIT_STATUS_STYLE: Record<string, string> = {
   ACTIVO: 'bg-ok/10 text-ok',
@@ -314,35 +316,64 @@ type WizardStep = 1 | 2 | 3;
 
 const STEP_LABELS = ['Código y empresa', 'Vehículo', 'Confirmación'];
 
-function RegisterWizard({ companies, onClose, onCreated }: { companies: CompanyOption[]; onClose: () => void; onCreated: () => void }) {
+function RegisterWizard({ companies, units, onClose, onCreated }: { companies: CompanyOption[]; units: Unit[]; onClose: () => void; onCreated: () => void }) {
   const [step, setStep] = useState<WizardStep>(1);
   const [form, setForm] = useState({
     code: '', companyId: '',
-    plate: '', brand: '', model: '', year: '',
+    plate: '', brand: '', year: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
 
-  const set = (k: string, v: string) => setForm(prev => ({ ...prev, [k]: v }));
+  const set = (k: string, v: string) => { setForm(prev => ({ ...prev, [k]: v })); setError(''); };
 
-  const handleNext = () => { if (step < 3) setStep((step + 1) as WizardStep); };
-  const handlePrev = () => { if (step > 1) setStep((step - 1) as WizardStep); };
+  // El modelo no se escribe: sale de la marca elegida (una marca = un modelo).
+  const brandInfo = findVehicleBrand(form.brand);
+
+  // Avisos en vivo -- la unidad/placa repetida se ve apenas se escribe, no al final.
+  const codeTrimmed = form.code.trim();
+  const unitWithCode = codeTrimmed ? units.find(u => u.code === codeTrimmed) : undefined;
+  const unitWithPlate = isValidPlate(form.plate) ? units.find(u => u.plate === form.plate) : undefined;
+  const codeMessage = unitWithCode ? `La unidad ${codeTrimmed} ya está registrada (placa ${unitWithCode.plate}, ${unitWithCode.company}).` : '';
+  const plateMessage = unitWithPlate ? `La placa ${form.plate} ya está registrada en la unidad ${unitWithPlate.code}.` : '';
+
+  const validateStep = (target: WizardStep): string => {
+    if (target === 1) {
+      if (!codeTrimmed) return 'Escribe el código de la unidad.';
+      if (codeMessage) return codeMessage;
+      if (!form.companyId) return 'Selecciona la empresa integrante.';
+    }
+    if (target === 2) {
+      if (!isValidPlate(form.plate)) return PLATE_ERROR;
+      if (plateMessage) return plateMessage;
+      if (!brandInfo) return 'Selecciona la marca.';
+      if (!isValidYear(form.year)) return YEAR_ERROR();
+    }
+    return '';
+  };
+
+  const handleNext = () => {
+    const message = validateStep(step);
+    if (message) { setError(message); return; }
+    setError('');
+    if (step < 3) setStep((step + 1) as WizardStep);
+  };
+  const handlePrev = () => { setError(''); if (step > 1) setStep((step - 1) as WizardStep); };
 
   const saveRegistration = async () => {
-    const normalizedPlate = form.plate.trim().toUpperCase();
-    if (!form.code || !form.companyId || !normalizedPlate) return;
-    const vehicleType: Unit['vehicleType'] = form.model.toLowerCase().includes('hiace') ? 'HIACE' : form.model.toLowerCase().includes('master') ? 'MASTER' : 'SPRINTER';
+    const message = validateStep(1) || validateStep(2);
+    if (message || !brandInfo) { setError(message); return; }
     setSaving(true);
     setError('');
     try {
       await createVehicle({
-        code: form.code,
+        code: codeTrimmed,
         companyId: form.companyId,
-        vehicleType,
-        plate: normalizedPlate,
-        model: [form.brand, form.model].filter(Boolean).join(' ') || form.model,
-        year: Number(form.year) || new Date().getFullYear(),
+        vehicleType: brandInfo.type,
+        plate: form.plate,
+        model: `${brandInfo.brand} ${brandInfo.model}`,
+        year: Number(form.year),
         routeAssignment: 'AMBAS',
       });
       setSaved(true);
@@ -391,8 +422,10 @@ function RegisterWizard({ companies, onClose, onCreated }: { companies: CompanyO
             <>
               <div>
                 <label className="block text-xs font-medium text-t1 mb-1">Código de unidad <span className="text-danger">*</span></label>
-                <input value={form.code} onChange={e => set('code', e.target.value)} placeholder="Ej. 061" className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-                <p className="text-[11px] text-muted mt-1">El código pertenece a la unidad dentro de la asociación y no cambia con la placa.</p>
+                <input value={form.code} onChange={e => set('code', e.target.value)} placeholder="Ej. 061" className={`w-full h-9 px-3 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary ${codeMessage ? 'border-danger' : 'border-border'}`} />
+                {codeMessage
+                  ? <p className="text-[11px] text-danger mt-1">{codeMessage}</p>
+                  : <p className="text-[11px] text-muted mt-1">El código pertenece a la unidad dentro de la asociación y no cambia con la placa.</p>}
               </div>
               <div>
                 <label className="block text-xs font-medium text-t1 mb-1">Empresa integrante <span className="text-danger">*</span></label>
@@ -406,24 +439,46 @@ function RegisterWizard({ companies, onClose, onCreated }: { companies: CompanyO
 
           {step === 2 && (
             <div className="grid grid-cols-2 gap-4">
-              {[
-                { key: 'plate', label: 'Placa', placeholder: 'Z0A-001', required: true, mono: true },
-                { key: 'brand', label: 'Marca', placeholder: 'Mercedes Benz' },
-                { key: 'model', label: 'Modelo', placeholder: 'Sprinter 519' },
-                { key: 'year', label: 'Año', placeholder: '2024' },
-              ].map(f => (
-                <div key={f.key}>
-                  <label className="block text-xs font-medium text-t1 mb-1">{f.label} {f.required && <span className="text-danger">*</span>}</label>
-                  <input
-                    value={(form as Record<string, string>)[f.key]}
-                    onChange={e => set(f.key, f.mono ? e.target.value.toUpperCase() : e.target.value)}
-                    placeholder={f.placeholder}
-                    className={`w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary ${f.mono ? 'font-mono' : ''}`}
-                  />
-                </div>
-              ))}
+              <div>
+                <label className="block text-xs font-medium text-t1 mb-1">Placa <span className="text-danger">*</span></label>
+                <input
+                  value={form.plate}
+                  onChange={e => set('plate', sanitizePlate(e.target.value, form.plate))}
+                  placeholder="Z0A-001"
+                  autoComplete="off"
+                  className={`w-full h-9 px-3 border rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary ${plateMessage ? 'border-danger' : 'border-border'}`}
+                />
+                {plateMessage
+                  ? <p className="text-[11px] text-danger mt-1">{plateMessage}</p>
+                  : <p className="text-[11px] text-muted mt-1">3 letras o números y luego 3 números. El guion se pone solo.</p>}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-t1 mb-1">Marca <span className="text-danger">*</span></label>
+                <select value={form.brand} onChange={e => set('brand', e.target.value)} className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+                  <option value="">Seleccionar marca…</option>
+                  {VEHICLE_BRANDS.map(b => <option key={b.brand} value={b.brand}>{b.brand}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-t1 mb-1">Modelo</label>
+                <input value={brandInfo?.model ?? ''} readOnly tabIndex={-1} placeholder="Se completa al elegir la marca" className="w-full h-9 px-3 border border-border rounded-lg text-sm bg-bg text-t2" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-t1 mb-1">Año <span className="text-danger">*</span></label>
+                <input
+                  value={form.year}
+                  onChange={e => set('year', sanitizeYear(e.target.value))}
+                  inputMode="numeric"
+                  placeholder="2024"
+                  autoComplete="off"
+                  className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                <p className="text-[11px] text-muted mt-1">4 números, entre {YEAR_MIN} y {yearMax()}.</p>
+              </div>
             </div>
           )}
+
+          {error && step !== 3 && <p className="text-xs text-danger">{error}</p>}
 
           {step === 3 && (
             <div className="space-y-4">
@@ -442,7 +497,7 @@ function RegisterWizard({ companies, onClose, onCreated }: { companies: CompanyO
                   { label: 'Código', value: form.code || '—' },
                   { label: 'Empresa', value: companies.find(c => c.id === form.companyId)?.name || '—' },
                   { label: 'Placa', value: form.plate || '—', mono: true },
-                  { label: 'Modelo', value: [form.brand, form.model, form.year].filter(Boolean).join(' ') || '—' },
+                  { label: 'Modelo', value: [brandInfo?.brand, brandInfo?.model, form.year].filter(Boolean).join(' ') || '—' },
                 ].map(row => (
                   <div key={row.label} className="flex justify-between px-3 py-2">
                     <span className="text-t2">{row.label}</span>
@@ -642,6 +697,7 @@ export default function FleetPage() {
       {showWizard && (
         <RegisterWizard
           companies={companies}
+          units={units}
           onClose={() => setShowWizard(false)}
           onCreated={() => { setShowWizard(false); reload(); }}
         />

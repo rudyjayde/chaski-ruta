@@ -1,4 +1,5 @@
 import { IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsOptionalDni, IsOptionalPhone } from '../../common/validators';
 
 export class CreatePersonDto {
   @IsString()
@@ -12,11 +13,11 @@ export class CreatePersonDto {
   // SUPERADMIN nunca se crea desde aqui — es exclusivo de CHASKI AI (seed.ts).
   role: 'ADMINISTRADOR' | 'SOCIO' | 'CONDUCTOR';
 
-  @IsOptional()
+  @IsOptionalDni()
   @IsString()
   dni?: string;
 
-  @IsOptional()
+  @IsOptionalPhone()
   @IsString()
   phone?: string;
 

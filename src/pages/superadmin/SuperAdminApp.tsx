@@ -33,6 +33,7 @@ import {
 } from '../../lib/operacion-api';
 import { fetchLandingContent, type LandingContentData, type LandingFleetItem, type LandingFleetShowcase } from '../../lib/landing-content-api';
 import type { Person, Unit } from '../../types';
+import { PHONE_ERROR, phoneInputProps, sanitizePhone, isValidOptionalPhone } from '../../lib/validators';
 
 // Redimensiona la imagen ANTES de convertirla a data URI -- una foto real de
 // varios MB facilmente supera el limite del body del backend (y se ve exactamente
@@ -615,6 +616,10 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
       setInfoError('Nombre y RUC no pueden quedar vacíos.');
       return;
     }
+    if (!isValidOptionalPhone(infoForm.contactPhone.trim())) {
+      setInfoError(PHONE_ERROR);
+      return;
+    }
     setInfoSaving(true);
     setInfoError('');
     try {
@@ -662,6 +667,10 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
   // (PeoplePage.tsx) y Vehiculos (FleetPage.tsx showDeactivate).
   const handleAddAdmin = async () => {
     if (!swapName.trim() || !swapEmail.trim()) return;
+    if (!isValidOptionalPhone(swapPhone.trim())) {
+      setSwapError(PHONE_ERROR);
+      return;
+    }
     setSwapError('');
     setSwapBusy(true);
     try {
@@ -1190,7 +1199,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                   {editingInfo ? (
                     <input
                       value={infoForm[f.key]}
-                      onChange={e => setInfoForm(v => ({ ...v, [f.key]: e.target.value }))}
+                      onChange={e => setInfoForm(v => ({ ...v, [f.key]: f.key === 'contactPhone' ? sanitizePhone(e.target.value) : e.target.value }))}
+                      {...(f.key === 'contactPhone' ? phoneInputProps : {})}
                       placeholder={f.placeholder}
                       className={`w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary ${f.mono ? 'font-mono' : ''}`}
                     />
@@ -1291,7 +1301,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                     <label className="block text-sm font-medium text-t1 mb-1">Teléfono</label>
                     <input
                       value={swapPhone}
-                      onChange={e => setSwapPhone(e.target.value)}
+                      onChange={e => setSwapPhone(sanitizePhone(e.target.value))}
+                      {...phoneInputProps}
                       placeholder="9XXXXXXXX"
                       className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                     />
@@ -2301,6 +2312,14 @@ function NewOrgWizard({
   const isLast = step === WIZARD_STEPS.length - 1;
 
   const handleNext = async () => {
+    if ((step === 0 || isLast) && !isValidOptionalPhone(form.phone.trim())) {
+      setSaveError(`Teléfono de la asociación: ${PHONE_ERROR}`);
+      return;
+    }
+    if ((step === 1 || isLast) && !isValidOptionalPhone(form.adminPhone.trim())) {
+      setSaveError(`Teléfono del administrador: ${PHONE_ERROR}`);
+      return;
+    }
     if (isLast) {
       if (!form.name.trim() || !form.ruc.trim() || !form.adminName.trim() || !form.adminEmail.trim()) {
         setSaveError('Completa nombre, RUC y los datos del administrador antes de crear la asociación.');
@@ -2339,6 +2358,7 @@ function NewOrgWizard({
       }
       return;
     }
+    setSaveError('');
     setStep(s => s + 1);
   };
 
@@ -2430,7 +2450,8 @@ function NewOrgWizard({
             ].map(f => (
               <div key={f.key}>
                 <label className="block text-sm font-medium text-t1 mb-1">{f.label}</label>
-                <input value={(form as unknown as Record<string, string>)[f.key]} onChange={e => set(f.key, e.target.value)}
+                <input value={(form as unknown as Record<string, string>)[f.key]} onChange={e => set(f.key, f.key === 'phone' ? sanitizePhone(e.target.value) : e.target.value)}
+                  {...(f.key === 'phone' ? phoneInputProps : {})}
                   placeholder={f.placeholder}
                   className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
               </div>
@@ -2518,7 +2539,8 @@ function NewOrgWizard({
             ].map(f => (
               <div key={f.key}>
                 <label className="block text-sm font-medium text-t1 mb-1">{f.label}</label>
-                <input type={f.type ?? 'text'} value={(form as unknown as Record<string, string>)[f.key]} onChange={e => set(f.key, e.target.value)}
+                <input type={f.type ?? 'text'} value={(form as unknown as Record<string, string>)[f.key]} onChange={e => set(f.key, f.key === 'adminPhone' ? sanitizePhone(e.target.value) : e.target.value)}
+                  {...(f.key === 'adminPhone' ? phoneInputProps : {})}
                   placeholder={f.placeholder}
                   className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
               </div>
