@@ -64,7 +64,7 @@ export default function GPSDevicesAdminPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-6 py-4 border-b border-border bg-surface flex items-center justify-between">
+      <div className="px-4 md:px-6 py-4 border-b border-border bg-surface flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <Cpu size={16} className="text-t2" />
@@ -99,7 +99,7 @@ export default function GPSDevicesAdminPage() {
           )}
 
           {/* Filters */}
-          <div className="px-6 py-3 border-b border-border bg-surface flex items-center gap-3">
+          <div className="px-4 md:px-6 py-3 border-b border-border bg-surface flex flex-wrap items-center gap-3">
             <div className="relative">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
               <input

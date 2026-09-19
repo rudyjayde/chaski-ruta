@@ -372,7 +372,7 @@ export default function QueuesPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-border bg-surface flex items-center justify-between">
+      <div className="px-4 md:px-6 py-4 border-b border-border bg-surface flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-t1">Colas</h1>
           <p className="text-sm text-t2 mt-0.5">{OPERATIONAL_DATE}</p>
@@ -478,7 +478,7 @@ export default function QueuesPage() {
 
         {/* Side panel */}
         {selected && (
-          <aside className="w-80 flex-shrink-0 overflow-auto p-4 bg-surface" aria-label="Detalle de entrada en cola">
+          <aside className="fixed inset-0 z-40 w-full md:static md:inset-auto md:z-auto md:w-80 md:flex-shrink-0 overflow-auto p-4 bg-surface" aria-label="Detalle de entrada en cola">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-semibold text-t1">Detalle — Código {selected.code}</h3>
               <button onClick={() => setSelected(null)} className="text-muted hover:text-t1" aria-label="Cerrar panel">

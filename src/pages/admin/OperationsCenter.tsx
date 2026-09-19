@@ -203,11 +203,11 @@ export default function OperationsCenter({ onNavigate }: Props) {
   };
 
   return (
-    <div className="p-6 lg:p-8 space-y-6">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <h1 className="text-2xl font-bold text-t1">Centro de Operaciones</h1>
-        <div className="flex flex-col items-end gap-1.5">
+        <div className="flex flex-col items-start sm:items-end gap-1.5">
           <div className="flex items-center gap-2 text-sm font-medium text-ok bg-ok/10 px-3.5 py-1.5 rounded-full">
             <CheckCircle size={14} />
             Jornada activa
@@ -250,7 +250,7 @@ export default function OperationsCenter({ onNavigate }: Props) {
       )}
 
       {/* Day totals */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
         {[
           { label: 'Pasajeros hoy', value: totalPassengers, icon: Users, color: 'text-primary', bg: 'bg-primary/10' },
           { label: 'Recaudación', value: `S/ ${totalRevenue.toLocaleString()}`, icon: TrendingUp, color: 'text-ok', bg: 'bg-ok/10' },
@@ -275,7 +275,7 @@ export default function OperationsCenter({ onNavigate }: Props) {
           <h2 className="text-base font-semibold text-t1">Distribución de flota</h2>
           <span className="text-sm text-muted">Mostrando {queueJP.length + queuePJ.length + activeTrips.length + FLEET_EN_RUTA_PJ.length + (activeRelocation?.units.length ?? 0)} de {totalUnits ?? '—'} unidades</span>
         </div>
-        <div className="grid grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-3">
           {[
             {
               label: `En ${terminalName('JULI', org)}`,
@@ -414,14 +414,14 @@ export default function OperationsCenter({ onNavigate }: Props) {
             Ver detalle <ArrowRight size={14} />
           </button>
         </div>
-        <div className="flex gap-4">
+        <div className="flex flex-col md:flex-row gap-4">
           <QueueSummary title={routeLabel('JULI_PUNO', org)} entries={queueJP} dir="jp" />
           <QueueSummary title={routeLabel('PUNO_JULI', org)} entries={queuePJ} dir="pj" />
         </div>
       </div>
 
       {/* Next departures + Alerts */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-surface border border-border rounded-lg overflow-hidden">
           <div className="px-5 py-3.5 border-b border-border flex items-center gap-2">
             <Clock size={15} className="text-t2" />

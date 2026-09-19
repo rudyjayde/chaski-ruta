@@ -348,7 +348,7 @@ function SAOrganizations({ onNew, onEnterAsAdmin }: { onNew: () => void; onEnter
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-6 py-4 border-b border-border bg-surface flex items-center justify-between">
+      <div className="px-4 md:px-6 py-4 border-b border-border bg-surface flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-t1">Asociaciones</h1>
           <p className="text-sm text-t2 mt-0.5">{orgs.length} registradas</p>
@@ -399,7 +399,7 @@ function SAOrganizations({ onNew, onEnterAsAdmin }: { onNew: () => void; onEnter
         </div>
 
         {selected && (
-          <aside className="w-80 flex-shrink-0 overflow-auto p-4 bg-surface" aria-label="Detalle asociación">
+          <aside className="fixed inset-0 z-40 w-full md:static md:inset-auto md:z-auto md:w-80 md:flex-shrink-0 overflow-auto p-4 bg-surface" aria-label="Detalle asociación">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-semibold text-t1">{selected.name}</h3>
               <button onClick={() => setSelectedId(null)} className="text-muted hover:text-t1" aria-label="Cerrar"><X size={16} /></button>
@@ -2139,7 +2139,7 @@ function SACommercialRequests({ onUseForNewOrg }: { onUseForNewOrg: (req: ApiCom
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-6 py-4 border-b border-border bg-surface flex items-center justify-between">
+      <div className="px-4 md:px-6 py-4 border-b border-border bg-surface flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-t1">Solicitudes comerciales</h1>
           <p className="text-sm text-t2 mt-0.5">Solicitudes recibidas desde la landing pública</p>
@@ -2195,7 +2195,7 @@ function SACommercialRequests({ onUseForNewOrg }: { onUseForNewOrg: (req: ApiCom
         </div>
 
         {selected && (
-          <aside className="w-80 flex-shrink-0 overflow-auto p-4 bg-surface" aria-label="Detalle solicitud">
+          <aside className="fixed inset-0 z-40 w-full md:static md:inset-auto md:z-auto md:w-80 md:flex-shrink-0 overflow-auto p-4 bg-surface" aria-label="Detalle solicitud">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-semibold text-t1">{selected.orgName || selected.contactName}</h3>
               <button onClick={() => setSelected(null)} className="text-muted hover:text-t1"><X size={16} /></button>
@@ -3417,7 +3417,7 @@ function SALandingContent() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-6 py-4 border-b border-border bg-surface flex items-center justify-between">
+      <div className="px-4 md:px-6 py-4 border-b border-border bg-surface flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-t1">Landing pública</h1>
           <p className="text-sm text-t2 mt-0.5">Contenido de la página pública de CHASKI AI — se guarda directo, sin vista previa.</p>
@@ -3596,7 +3596,7 @@ function SAComplaintBook() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-6 py-4 border-b border-border bg-surface flex items-center justify-between">
+      <div className="px-4 md:px-6 py-4 border-b border-border bg-surface flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-t1">Libro de Reclamaciones</h1>
           <p className="text-sm text-t2 mt-0.5">Reclamos y quejas recibidos desde la landing pública (/libro-de-reclamaciones)</p>
@@ -3649,7 +3649,7 @@ function SAComplaintBook() {
         </div>
 
         {selected && (
-          <aside className="w-96 flex-shrink-0 overflow-auto p-4 bg-surface" aria-label="Detalle del reclamo">
+          <aside className="fixed inset-0 z-40 w-full md:static md:inset-auto md:z-auto md:w-96 md:flex-shrink-0 overflow-auto p-4 bg-surface" aria-label="Detalle del reclamo">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-semibold text-t1">{selected.number}</h3>
               <button onClick={() => setSelected(null)} className="text-muted hover:text-t1"><X size={16} /></button>

@@ -51,7 +51,7 @@ function TripDetail({ trip, unit, org, onClose }: { trip: Trip; unit: Unit | und
   }
 
   return (
-    <aside className="w-72 flex-shrink-0 bg-surface p-4 overflow-auto border-l border-border" aria-label="Detalle del recorrido">
+    <aside className="fixed inset-0 z-40 w-full md:static md:inset-auto md:z-auto md:w-72 md:flex-shrink-0 bg-surface p-4 overflow-auto border-l border-border" aria-label="Detalle del recorrido">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-base font-semibold text-t1">Recorrido GPS — Unidad {trip.code}</h3>
         <button onClick={onClose} className="text-muted hover:text-t1 text-sm">✕</button>
@@ -139,7 +139,7 @@ export default function GPSHistoryPage() {
         </div>
       </div>
 
-      <div className="px-6 py-3 border-b border-border bg-surface flex items-center gap-3 flex-wrap">
+      <div className="px-4 md:px-6 py-3 border-b border-border bg-surface flex items-center gap-3 flex-wrap">
         <div className="relative">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input type="search" placeholder="Unidad, placa o conductor…" value={search} onChange={e => setSearch(e.target.value)} className="h-9 pl-9 pr-3 border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary w-56" />

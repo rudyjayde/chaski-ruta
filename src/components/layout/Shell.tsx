@@ -1,5 +1,5 @@
 import { useState, useEffect, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, Bell, RefreshCw, LogOut, ChevronDown, User, Sun, Moon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Bell, RefreshCw, LogOut, ChevronDown, User, Sun, Moon, Menu, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchMyOrganization, fetchNoticesUnreadCount, markNoticesRead } from '../../lib/operacion-api';
@@ -55,6 +55,21 @@ export default function Shell({ navItems, activeSection, onNavigate, children, i
   const { user, logout } = useAuth();
   const handleLogout = onLogout ?? logout;
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  // Celular (< 768 px): el menu es un cajon que se abre con el boton de arriba.
+  // Tablet (< 1024 px): el menu arranca compacto (solo iconos). Escritorio: igual que siempre.
+  const [viewportWidth, setViewportWidth] = useState(() => (typeof window === 'undefined' ? 1280 : window.innerWidth));
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const isMobile = viewportWidth < 768;
+  const isTablet = viewportWidth < 1024;
+  useEffect(() => { setCollapsed(isTablet); }, [isTablet]);
+  useEffect(() => { if (!isMobile) setMobileNavOpen(false); }, [isMobile]);
+  const compact = collapsed && !isMobile;
   const [accountOpen, setAccountOpen] = useState(false);
   const [showAccountModal, setShowAccountModal] = useState(false);
 
@@ -133,31 +148,37 @@ export default function Shell({ navItems, activeSection, onNavigate, children, i
   return (
     <div className="flex h-full bg-bg">
       {/* Sidebar */}
+      {isMobile && mobileNavOpen && (
+        <div className="fixed inset-0 z-30 bg-black/40" onClick={() => setMobileNavOpen(false)} aria-hidden="true" />
+      )}
       <aside
-        className="flex flex-col bg-surface border-r border-border flex-shrink-0 transition-all duration-200"
-        style={{ width: collapsed ? 72 : 248 }}
+        className={`flex flex-col bg-surface border-r border-border flex-shrink-0 transition-all duration-200 ${
+          isMobile ? `fixed inset-y-0 left-0 z-40 shadow-xl ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}` : ''
+        }`}
+        style={{ width: isMobile ? 280 : compact ? 72 : 248 }}
         aria-label="Navegación principal"
+        aria-hidden={isMobile && !mobileNavOpen}
       >
         {/* Logo */}
-        <div className={`h-16 flex items-center border-b border-border px-4 ${collapsed ? 'justify-center' : 'justify-between'}`}>
-          {!collapsed && (
+        <div className={`h-16 flex items-center border-b border-border px-4 ${compact ? 'justify-center' : 'justify-between'}`}>
+          {!compact && (
             <div className="min-w-0 flex-1">
               {logoSrc ? <BrandLogo src={logoSrc} alt={orgDisplay} /> : <span className="font-semibold text-sm text-t1">{orgDisplay}</span>}
               {isSuperAdmin && <p className="text-xs text-t2 leading-tight mt-0.5">Intelligent Platforms for Modern Operations</p>}
             </div>
           )}
-          {collapsed && (
+          {compact && (
             <div className="w-7 h-7 bg-primary rounded flex items-center justify-center">
               <span className="text-white font-bold text-xs">{orgDisplay.charAt(0) || 'A'}</span>
             </div>
           )}
           <button
-            onClick={() => setCollapsed(v => !v)}
-            className={`text-muted hover:text-t1 ${collapsed ? 'mt-0' : ''}`}
-            aria-label={collapsed ? 'Expandir menú' : 'Colapsar menú'}
-            title={collapsed ? 'Expandir menú' : 'Colapsar menú'}
+            onClick={() => (isMobile ? setMobileNavOpen(false) : setCollapsed(v => !v))}
+            className={`text-muted hover:text-t1 ${compact ? 'mt-0' : ''} ${isMobile ? 'p-1.5' : ''}`}
+            aria-label={isMobile ? 'Cerrar menú' : compact ? 'Expandir menú' : 'Colapsar menú'}
+            title={isMobile ? 'Cerrar menú' : compact ? 'Expandir menú' : 'Colapsar menú'}
           >
-            {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+            {isMobile ? <X size={20} /> : compact ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
           </button>
         </div>
 
@@ -169,8 +190,8 @@ export default function Shell({ navItems, activeSection, onNavigate, children, i
             return (
               <button
                 key={item.id}
-                onClick={() => onNavigate(item.id)}
-                title={collapsed ? item.label : undefined}
+                onClick={() => { onNavigate(item.id); setMobileNavOpen(false); }}
+                title={compact ? item.label : undefined}
                 className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors relative ${
                   active
                     ? 'bg-selected text-primary font-medium'
@@ -179,7 +200,7 @@ export default function Shell({ navItems, activeSection, onNavigate, children, i
               >
                 {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-primary rounded-r" />}
                 <Icon size={18} className="flex-shrink-0" />
-                {!collapsed && (
+                {!compact && (
                   <>
                     <span className="flex-1 text-left truncate">{item.label}</span>
                     {item.badge ? (
@@ -201,22 +222,27 @@ export default function Shell({ navItems, activeSection, onNavigate, children, i
       {/* Main */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Topbar */}
-        <header className="h-16 bg-surface border-b border-border flex items-center px-6 gap-4 flex-shrink-0">
+        <header className="h-16 bg-surface border-b border-border flex items-center px-3 sm:px-6 gap-2 sm:gap-4 flex-shrink-0">
+          {isMobile && (
+            <button onClick={() => setMobileNavOpen(true)} className="text-t2 hover:text-t1 p-1.5 -ml-1 flex-shrink-0" aria-label="Abrir menú" aria-expanded={mobileNavOpen}>
+              <Menu size={22} />
+            </button>
+          )}
           <div className="flex-1 flex items-center gap-3 min-w-0">
             {logoSrc ? <BrandLogo src={logoSrc} alt={orgDisplay} compact /> : <span className="text-sm font-medium text-t1 truncate">{orgDisplay}</span>}
-            <span className="text-border">·</span>
-            <span className="text-sm text-t2">{roleLabel[user?.role ?? '']}</span>
+            <span className="text-border hidden sm:inline">·</span>
+            <span className="text-sm text-t2 hidden sm:inline whitespace-nowrap">{roleLabel[user?.role ?? '']}</span>
             {planLabel && (
               <>
-                <span className="text-border">·</span>
-                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${planLabel === 'Plan PRO' ? 'bg-ok/10 text-ok' : planLabel === 'Plan GPS Vehicular' ? 'bg-primary/10 text-primary' : 'bg-t2/10 text-t2'}`}>
+                <span className="text-border hidden sm:inline">·</span>
+                <span className={`hidden sm:inline-block whitespace-nowrap text-xs font-semibold px-2 py-0.5 rounded-full ${planLabel === 'Plan PRO' ? 'bg-ok/10 text-ok' : planLabel === 'Plan GPS Vehicular' ? 'bg-primary/10 text-primary' : 'bg-t2/10 text-t2'}`}>
                   {planLabel}
                 </span>
               </>
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
             {/* Sync indicator */}
             <div className="hidden sm:flex items-center gap-1.5 text-sm text-ok bg-ok/10 px-2.5 py-1 rounded-full">
               <RefreshCw size={13} />
@@ -249,6 +275,7 @@ export default function Shell({ navItems, activeSection, onNavigate, children, i
                   <div className="px-3 py-2 border-b border-border">
                     <p className="text-sm font-medium text-t1 truncate">{user?.name}</p>
                     <p className="text-xs text-t2 truncate">{user?.email}</p>
+                    <p className="text-xs text-muted truncate mt-0.5">{roleLabel[user?.role ?? '']}{planLabel ? ` · ${planLabel}` : ''}</p>
                   </div>
                   <button
                     className="w-full flex items-center gap-2 px-3 py-2 text-sm text-t2 hover:bg-hover"

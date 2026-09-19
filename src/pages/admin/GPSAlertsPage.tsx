@@ -87,7 +87,7 @@ export default function GPSAlertsPage({ organizationId }: { organizationId?: str
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-6 py-4 border-b border-border bg-surface flex items-center justify-between">
+      <div className="px-4 md:px-6 py-4 border-b border-border bg-surface flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <Bell size={16} className="text-t2" />
@@ -181,7 +181,7 @@ export default function GPSAlertsPage({ organizationId }: { organizationId?: str
         </div>
 
         {selected && (
-          <aside className="w-80 flex-shrink-0 bg-surface p-4 overflow-auto" aria-label="Detalle de alerta">
+          <aside className="fixed inset-0 z-40 w-full md:static md:inset-auto md:z-auto md:w-80 md:flex-shrink-0 bg-surface p-4 overflow-auto" aria-label="Detalle de alerta">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-base font-semibold text-t1">Detalle de alerta</h3>
               <button onClick={() => setSelected(null)} className="text-muted hover:text-t1 p-1" aria-label="Cerrar"><X size={16} /></button>

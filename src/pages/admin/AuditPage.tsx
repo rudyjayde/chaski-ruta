@@ -47,7 +47,7 @@ export default function AuditPage() {
         </div>
       </div>
 
-      <div className="px-6 py-3 border-b border-border bg-surface flex items-center gap-3 flex-wrap">
+      <div className="px-4 md:px-6 py-3 border-b border-border bg-surface flex items-center gap-3 flex-wrap">
         <div className="relative w-64">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input

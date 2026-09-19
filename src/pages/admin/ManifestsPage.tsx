@@ -429,7 +429,7 @@ export default function ManifestsPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-6 py-4 border-b border-border bg-surface">
+      <div className="px-4 md:px-6 py-4 border-b border-border bg-surface">
         <h1 className="text-2xl font-bold text-t1">Ventas y manifiestos</h1>
         <p className="text-sm text-t2 mt-0.5">Jornada {new Date().toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' })}</p>
       </div>

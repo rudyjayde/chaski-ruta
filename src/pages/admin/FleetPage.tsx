@@ -134,7 +134,7 @@ function UnitDetailPanel({ unit, people, gpsStatus, onClose, onChanged }: {
   };
 
   return (
-    <aside className="w-96 flex-shrink-0 border-l border-border flex flex-col bg-surface" aria-label="Detalle de unidad">
+    <aside className="fixed inset-0 z-40 w-full md:static md:inset-auto md:z-auto md:w-96 md:flex-shrink-0 border-l border-border flex flex-col bg-surface" aria-label="Detalle de unidad">
       <div className="px-4 py-3 border-b border-border flex items-center justify-between">
         <div>
           <p className="text-xs text-t2">Código</p>
@@ -739,7 +739,7 @@ export default function FleetPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-6 py-4 border-b border-border bg-surface flex items-center justify-between">
+      <div className="px-4 md:px-6 py-4 border-b border-border bg-surface flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-base font-semibold text-t1">Unidades y flota</h1>
           <p className="text-xs text-t2 mt-0.5">{units.filter(u => u.status !== 'BAJA').length} unidades registradas · Mostrando {filtered.length}</p>
@@ -762,7 +762,7 @@ export default function FleetPage() {
         </div>
       </div>
 
-      <div className="px-6 py-3 border-b border-border bg-surface flex items-center gap-3 flex-wrap">
+      <div className="px-4 md:px-6 py-3 border-b border-border bg-surface flex items-center gap-3 flex-wrap">
         <div className="relative">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input

@@ -786,8 +786,8 @@ export default function Landing({ onNavigateToLogin, navigate }: Props) {
       `}</style>
       {/* Header */}
       <header className="sticky top-0 z-50 bg-surface border-b border-border">
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <WordmarkImg height={24} />
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+          <WordmarkImg height={24} className="max-w-[46vw] sm:max-w-none" />
           {/* Menu + "Iniciar sesion" agrupados juntos a la derecha (igual que
               el mockup) -- antes el menu vivia pegado al logo y "Iniciar
               sesion" quedaba solo, lejos a la derecha, con un hueco enorme
@@ -811,7 +811,8 @@ export default function Landing({ onNavigateToLogin, navigate }: Props) {
                 onClick={() => navigate(user.role === 'superadmin' ? '/app' : '/portal')}
                 className="px-3 py-1.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors whitespace-nowrap flex-shrink-0"
               >
-                Ingresar a la plataforma
+                <span className="hidden sm:inline">Ingresar a la plataforma</span>
+                <span className="sm:hidden">Ingresar</span>
               </button>
             )}
             {(user || visitorName) && (

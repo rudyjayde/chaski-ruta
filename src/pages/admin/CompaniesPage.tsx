@@ -124,7 +124,7 @@ export default function CompaniesPage() {
         </div>
 
         {selected && (
-          <aside className="w-72 flex-shrink-0 overflow-auto p-4 bg-surface" aria-label="Detalle empresa">
+          <aside className="fixed inset-0 z-40 w-full md:static md:inset-auto md:z-auto md:w-72 md:flex-shrink-0 overflow-auto p-4 bg-surface" aria-label="Detalle empresa">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-semibold text-t1">{selected.name}</h3>
               <button onClick={() => setSelected(null)} className="text-muted hover:text-t1" aria-label="Cerrar"><X size={16} /></button>

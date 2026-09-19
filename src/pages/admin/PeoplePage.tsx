@@ -653,7 +653,7 @@ function PersonDetail({ person, onClose, onLink, onStatusChanged }: { person: Pe
   };
 
   return (
-    <aside className="w-80 flex-shrink-0 border-l border-border bg-surface flex flex-col" aria-label="Detalle de persona">
+    <aside className="fixed inset-0 z-40 w-full md:static md:inset-auto md:z-auto md:w-80 md:flex-shrink-0 border-l border-border bg-surface flex flex-col" aria-label="Detalle de persona">
       <div className="px-4 py-3 border-b border-border flex items-center justify-between"><h3 className="text-base font-semibold text-t1">Detalle</h3><button onClick={onClose} aria-label="Cerrar"><X size={16} /></button></div>
       <div className="flex-1 overflow-auto p-4 space-y-3 text-sm">
         <div className="text-center py-3"><div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-lg mx-auto mb-2">{person.name[0]}</div><p className="text-sm font-semibold text-t1">{person.name}</p><p className="text-t2 mt-0.5">{person.role} · {person.company ?? org?.name ?? 'Sin dato'}</p><span className={`inline-block mt-1 text-[11px] px-2 py-0.5 rounded font-medium ${STATUS_STYLE[person.status]}`}>{person.status}</span></div>
@@ -927,7 +927,7 @@ export default function PeoplePage() {
 
       <div className="border-b border-border bg-surface"><div className="flex px-6">{tabs.map(t => <button key={t.id} onClick={() => { setTab(t.id); setSelected(null); }} className={`px-4 py-3 text-sm font-medium border-b-2 ${tab === t.id ? 'border-primary text-primary' : 'border-transparent text-t2 hover:text-t1'}`}>{t.label}<span className="ml-2 text-sm text-muted">({counts[t.id]})</span></button>)}</div></div>
 
-      <div className="px-6 py-3 border-b border-border bg-surface flex items-center gap-3">
+      <div className="px-4 md:px-6 py-3 border-b border-border bg-surface flex flex-wrap items-center gap-3">
         <div className="relative"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" /><input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Nombre, correo o código..." className="w-72 h-9 pl-9 pr-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" /></div>
         <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)} className="h-9 px-3 border border-border rounded-lg text-sm"><option value="">Todas las empresas</option>{companies.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</select>
         <label className="flex items-center gap-2 text-sm text-t2 select-none"><input type="checkbox" checked={showSuspended} onChange={e => setShowSuspended(e.target.checked)} /> Mostrar dados de baja</label>
