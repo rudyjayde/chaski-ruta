@@ -90,7 +90,7 @@ Este es también el único caso en que el administrador coloca manualmente a una
 Aplica a **todo formulario del sistema que registre a una persona** (pasajero de manifiesto hoy; socio/conductor cuando Personas se conecte al backend real más adelante) — no es un ajuste de una sola pantalla:
 
 - **Nombre en dos campos separados:** "Nombres" y "Apellidos", nunca un solo campo de texto libre. Se guarda combinado, pero se captura por separado por formalidad/estética.
-- **DNI:** exactamente 8 dígitos numéricos, sin letras ni guiones — validado tanto en el formulario (solo acepta dígitos, máximo 8) como en el backend (rechaza cualquier otro formato). Ya aplicado en `AddPassengerDto` (backend) y en el formulario de "Agregar pasajero" del manifiesto (admin). Falta aplicarlo cuando Personas/Socios se conecte al backend real.
+- **DNI:** exactamente 8 dígitos numéricos, sin letras ni guiones — validado tanto en el formulario (solo acepta dígitos, máximo 8) como en el backend (rechaza cualquier otro formato). Aplicado en todos los formularios que registran personas (pasajero, socio, conductor, Mi cuenta). **Actualización 19 sept 2026:** el pasajero puede tener también **carné de extranjería o pasaporte** (se elige el tipo de documento; cada tipo tiene su formato) y el asiento debe estar dentro de la capacidad de la unidad. Detalle completo de todas las reglas de datos en `reglas-de-datos-y-validaciones.md`.
 
 ### 3.9 Reubicaciones
 

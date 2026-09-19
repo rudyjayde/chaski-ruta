@@ -27,6 +27,13 @@ Ningún rol se puede eliminar de verdad — solo se suspende ("dar de baja").
 El historial de esa persona (viajes, manifiestos, auditoría) queda intacto
 para siempre, tanto para reportes del Administrador como del Super Admin.
 
+### Cómo entra cada persona, y "Mi cuenta"
+
+- **Solo por invitación:** un correo que un administrador no registró antes no entra por ninguna vía.
+- **Dos formas de entrar** (actualizado 19 sept 2026): con Google, o con su correo y una contraseña propia. El correo de bienvenida trae el botón **"Crear mi contraseña"** (enlace de un solo uso, vale 7 días); sirve con cualquier correo, no solo Gmail. Las cuentas anteriores a ese cambio usan "Recuperar acceso" una vez.
+- **Mi cuenta** (menú de arriba a la derecha, en los cuatro paneles): la persona corrige su nombre, DNI y celular (y, si es conductor, su licencia con fecha de emisión y vencimiento). **El correo, el rol y la asociación no se pueden cambiar.** Cada cambio queda en Auditoría con el DNI enmascarado. Desde ahí también puede pedir el enlace para crear o cambiar su contraseña.
+- **Celular y tablet:** los cuatro paneles se adaptan a pantallas pequeñas — el menú es un cajón que se abre con el botón de las tres rayas, y los paneles de detalle ocupan toda la pantalla. En escritorio no cambia nada.
+
 ## 2. Administrador
 
 Panel de escritorio de la gerencia. Ve y controla **toda** la operación de
@@ -34,7 +41,7 @@ su asociación.
 
 ### Disponible siempre (Plan Operación, base de todo)
 
-- **Inicio / Operación** — resumen del día en vivo.
+- **Inicio / Operación** — resumen del día en vivo, y la tarjeta **"Licencias de conducir por revisar"** (conductores con licencia vencida o por vencer, y cuántos no tienen ninguna registrada).
 - **Colas** — colas digitales por dirección (Juli→Puno / Puno→Juli), estados
   LLAMANDO / RAMPA / EXTERIOR.
 - **Ventas y manifiestos** — registro de pasajeros, mapa de asientos, medios
@@ -45,14 +52,20 @@ su asociación.
 - **Inscripción retrasada** — resolver el caso de un conductor bloqueado por
   un predecesor que no se anotó (llamar al predecesor o autorizar igual).
 - **Unidades y flota** — alta de vehículos, cambio de conductor/socio
-  asignado, dar de baja, mantenimiento. Por defecto solo se ven las unidades
-  activas (filtro para ver las dadas de baja).
-- **Empresas integrantes** — solo ver (crear o suspender una empresa es
-  exclusivo de Super Admin).
+  asignado, mantenimiento. Por defecto solo se ven las unidades activas.
+  - **Desactivar** (temporal, ej. taller): la unidad sigue registrada y se reactiva.
+  - **Dar de baja** (ya no opera, se vendió o fue un error): desaparece de la flota y de todas las pantallas; el historial de viajes se conserva y se puede **restaurar**. Motivo obligatorio y queda en Auditoría. No se puede si tiene un viaje en curso o está en una cola. Se puede hacer de a una o **varias a la vez** ("Dar de baja unidades" → marcar → un solo motivo). Si se intenta registrar un código o placa de una unidad dada de baja, el sistema ofrece restaurarla.
+- **Empresas integrantes** — solo ver (crear, suspender o eliminar una
+  empresa es exclusivo de Super Admin). Las suspendidas quedan ocultas por
+  defecto ("Mostrar suspendidas"); las eliminadas no aparecen.
 - **Personas** — alta de socios y conductores (con reason obligatorio al dar
   de baja), reset de vinculación cuenta-dispositivo. **No puede** dar de alta
   a otro Administrador — eso es exclusivo de Super Admin (el administrador
-  le pasa los datos por fuera y Super Admin lo registra).
+  le pasa los datos por fuera y Super Admin lo registra). El conductor lleva
+  su licencia con **fecha de emisión y vencimiento** y un estado (Vigente /
+  Por vencer / Vencida) con columna y filtro "Requieren atención" — solo
+  alerta, no bloquea. Dos personas no pueden tener el mismo DNI en la misma
+  asociación. Ver `reglas-de-datos-y-validaciones.md`.
 - **Avisos** — redactar y enviar avisos dentro de la plataforma (a
   conductores, socios o ambos). Disponible en Operación y PRO por igual.
 - **Reportes** — producción por unidad/empresa/jornada, ausencias,

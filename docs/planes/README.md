@@ -22,9 +22,10 @@ Esta carpeta organiza la documentación de negocio y producto por plan comercial
 - `plataformas-web-y-app-nativa.md` — la separación entre landing pública, plataforma web y aplicación nativa (Flutter, decidido, pendiente de construir al final del roadmap), usuarios por plataforma y backend compartido.
 - `landing-publica-y-solicitudes-comerciales.md` — la landing administrable, el formulario comercial dinámico, y el flujo de una Solicitud comercial hasta convertirse en asociación real.
 - `ia-aplicada.md` — funciones de IA transversales al negocio y las 4 propuestas de diferenciación estratégica (empezando por detección automática de accidentes).
+- `reglas-de-datos-y-validaciones.md` — todas las reglas de qué datos acepta el sistema (DNI, celular, RUC, licencia con fechas, documentos de pasajero y reclamante, placa, contraseña, largos, rangos, anti-spam) y dónde vive cada una.
 - `arquitectura-tecnica.md` — el "cómo se construye": stack (React 19 + Vite 8 + NestJS/Prisma/PostgreSQL; app nativa en Flutter, sin Capacitor), dominio y correo, plan de despliegue, y el orden de prioridad para construir el backend real y, al final, la app nativa.
 - `FLUJO_NEGOCIO_ACTUAL.md` — el resumen único y legible del flujo de negocio corregido, con lo que ya está construido y lo que falta ajustar en el código.
 
-Última actualización: 8 de septiembre de 2026, sobre la conversación de producto con Jayde (CHASKI AI): separación web/app nativa, landing administrable, formularios comerciales, IA aplicada al negocio.
+Última actualización: 19 de septiembre de 2026 — dar de baja y eliminar, Mi cuenta, acceso con contraseña propia, reglas de datos, alertas de licencia, anti-spam y diseño responsive (ver `arquitectura-tecnica.md` §6 y `reglas-de-datos-y-validaciones.md`). Antes: 8 de septiembre de 2026, separación web/app nativa, landing administrable, formularios comerciales, IA aplicada al negocio.
 
 Puntos que el documento maestro marca explícitamente como pendientes y que **no deben inventarse** en ninguno de estos archivos (precios, SLA, fórmulas de compensación, etc.) están listados en la sección 13 del documento maestro y se referencian donde corresponde.

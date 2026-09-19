@@ -140,6 +140,18 @@ Cloud Run con los mismos parámetros que el primer despliegue manual.
 **Cómo verlo:** [console.cloud.google.com/cloud-build/builds](https://console.cloud.google.com/cloud-build/builds?project=chaski-ruta)
 — cada build corresponde a un push real, con su log completo si algo falla.
 
+### Cómo se aplica un cambio de base de datos a producción
+
+Cloud Build **no** aplica migraciones de Prisma: solo construye y despliega
+el servidor. Cuando un cambio trae una migración nueva, el orden es:
+
+1. **Migración primero** (`npx prisma migrate deploy` contra la base de producción, por el Cloud SQL Auth Proxy con el usuario de aplicación). Las migraciones que solo **agregan** (valores de lista, columnas con valor por defecto) son compatibles con el servidor anterior. Una que cambie un índice deja una ventana corta (unos minutos) en la que el servidor viejo no puede guardar ese dato; en el caso del perfil de pasajeros el error se registra y no afecta la operación.
+2. **Después el servidor** (`git push`: Cloud Build lo construye y lo despliega solo, alrededor de 2 a 3 minutos).
+3. **Al final la web** (`vercel --prod` desde una copia limpia, sin `backend/` ni archivos `.env`).
+
+Nunca se sube al servidor código que use un valor o columna que la base de
+producción todavía no tiene: las consultas fallarían.
+
 ## 7. Dominio y correo
 
 - **Dominio** (`chaskiai.com.pe`): comprado en Punto.pe, a nombre de

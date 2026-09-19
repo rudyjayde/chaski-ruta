@@ -17,7 +17,7 @@ Decisiones tomadas en conversación de producto (agosto 2026). Este documento es
 
 - **Dominio:** `ChaskiAI.com.pe`, registrado en Punto.pe a nombre de Import Star Peruvian EIRL (RUC de otro negocio del fundador — no hace falta que el nombre del dominio coincida con el titular legal).
 - **Correo:** Google Workspace sobre ese dominio, para el equipo de CHASKI AI y para que las invitaciones/notificaciones salgan de una dirección profesional (ej. `notificaciones@chaskiai.com.pe`) en vez de un Gmail personal.
-- **Los clientes no reciben cuentas asignadas:** gerentes, socios y conductores siguen usando su Gmail gratuito existente — inician sesión con "Sign in with Google" (OAuth), sin contraseña que gestionar.
+- **Los clientes no reciben cuentas asignadas:** gerentes, socios y conductores siguen usando su Gmail gratuito existente — inician sesión con "Sign in with Google" (OAuth) **o** con su correo y una contraseña propia que ellos mismos crean desde el correo de bienvenida (actualizado 19 de septiembre de 2026). CHASKI AI nunca ve ni guarda una contraseña en claro (solo su cifrado).
 - **Envío masivo/transaccional de correos** (invitaciones, verificación de cuenta): Workspace por sí solo no está pensado para ese volumen — se necesita un servicio de correo transaccional aparte (SendGrid, Postmark, Amazon SES, Resend) autenticado sobre el mismo dominio.
 
 ## 3. Despliegue
@@ -58,3 +58,30 @@ No se construye todo junto — este es el orden acordado:
 - **Nuevo (15 de septiembre de 2026):** se auditó la separación real entre Plan Operación y PRO a nivel de servidor (no solo de interfaz). Se encontraron y cerraron dos endpoints (`route-geofence`, `fleet-reports`) que solo estaban protegidos por el frontend ocultando el menú — el servidor no verificaba el plan. Ahora los tres puntos exclusivos de PRO (asistente conversacional, corredor autorizado, reportes avanzados) usan la misma regla compartida (`assertProPlan()` en `backend/src/common/tenant.ts`).
 - **Nuevo (15 de septiembre de 2026):** endurecimiento de seguridad general — límite de peticiones por IP (`@nestjs/throttler`, más estricto en login/recuperar contraseña) y cabeceras HTTP estándar (Helmet). Ninguno existía antes de esta fecha.
 - **Nuevo (13-14 de septiembre de 2026):** "Salud técnica" (Super Admin) dejó de ser datos de ejemplo — corre un chequeo real cada 5 minutos contra base de datos, Traccar, Resend y Cloudinary, con historial y uptime real de 30 días (`backend/src/health-monitor`). Corrige la nota de `plan-pro.md` §10 que todavía la describe como "100% datos de ejemplo".
+
+## 6. Cambios del 19 de septiembre de 2026
+
+Todo lo de esta sección está desplegado en producción (servidor, base de datos y web) y probado.
+
+**Dar de baja y eliminar (nada se borra de verdad)**
+- `VehicleStatus.BAJA`: una unidad dada de baja sale de todas las pantallas (`fetchVehicles` la excluye por defecto; solo la pantalla de Unidades y flota la pide) y de los mapas/reportes GPS y del asistente. Endpoints: `POST /vehicles/:id/retire`, `POST /vehicles/retire-bulk` (varias, con un solo motivo; devuelve cuáles no se pudieron), `POST /vehicles/:id/restore`. Reglas: motivo obligatorio, no con viaje en curso ni en cola, le quita el conductor asignado.
+- `CompanyStatus.ELIMINADA`: solo Super Admin (`POST /companies/:id/delete`, `.../restore`); solo si todas sus unidades están dadas de baja. Si se vuelve a agregar por nombre o RUC, el servidor responde `EMPRESA_ELIMINADA` y la pantalla ofrece restaurarla en vez de duplicarla.
+
+**Cuenta propia**
+- `GET/PATCH /people/me`: cada persona corrige sus datos (nunca correo, rol ni asociación: el formulario no los acepta). El Super Admin (sin asociación) también puede leer su cuenta.
+- Invitación con contraseña: el correo de bienvenida trae un enlace de un solo uso (7 días). Es un token firmado con una **huella de la contraseña actual** (`pv`): al definirla, la huella cambia y el enlace deja de servir. Lo mismo aplica a "Recuperar acceso" (30 min).
+
+**Base de datos — migraciones nuevas (todas ya aplicadas en producción)**
+| Migración | Qué agrega |
+|---|---|
+| `20260919180000_person_license` | Licencia, categoría y vencimiento de la persona |
+| `20260919200000_baja_unidad_eliminar_empresa` | Estados `BAJA` y `ELIMINADA` |
+| `20260919230000_documentos_y_licencia` | `licenseIssuedAt`; tipo de documento del pasajero, del perfil de pasajero (y su índice único) y del reclamante |
+
+**Validación y seguridad**
+- Reglas centralizadas en `backend/src/common/validators.ts` (espejo en `src/lib/validators.ts`) y mensajes de error traducidos al español en `backend/src/common/validation-messages.ts`. Catálogo completo: `reglas-de-datos-y-validaciones.md`.
+- Formularios públicos: límite de 10 envíos por hora y campo trampa. Largos máximos en todos los textos.
+
+**Pantallas**
+- Diseño responsive: en celular (< 768 px) el menú lateral es un cajón; en tablet (< 1024 px) arranca compacto; los paneles de detalle son pantalla completa en celular; las pestañas se desplazan dentro de su fila.
+- Verificación hecha con Chrome emulando 390 px, 360 px y 820 px, recorriendo **todas** las pantallas de los cuatro paneles (incluidas las del Plan PRO) y midiendo que ninguna sea más ancha que la pantalla. Conviene repetirla al agregar una pantalla nueva.

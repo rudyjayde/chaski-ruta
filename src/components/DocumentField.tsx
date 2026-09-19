@@ -24,12 +24,12 @@ export default function DocumentField({
   const invalid = value.length > 0 && !isValidDocument(docType, value);
   return (
     <div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <select
           aria-label="Tipo de documento"
           value={docType}
           onChange={e => { const next = e.target.value as DocumentType; onDocType(next); onValue(sanitizeDocument(next, value)); }}
-          className={`${height} border border-border text-sm bg-surface flex-shrink-0`}
+          className={`${height} border border-border text-sm bg-surface max-w-full`}
         >
           {types.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
@@ -41,7 +41,7 @@ export default function DocumentField({
           inputMode={docType === 'DNI' || docType === 'RUC' ? 'numeric' : 'text'}
           autoComplete="off"
           placeholder={documentPlaceholder(docType)}
-          className={`${height} border text-sm w-full min-w-0 ${invalid ? 'border-danger' : 'border-border'}`}
+          className={`${height} border text-sm flex-1 min-w-[10rem] ${invalid ? 'border-danger' : 'border-border'}`}
         />
       </div>
       {invalid && <p className="text-[11px] text-danger mt-0.5">{documentError(docType)}</p>}
