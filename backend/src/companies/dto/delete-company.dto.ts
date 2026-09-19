@@ -1,5 +1,5 @@
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 
 export class DeleteCompanyDto {
-  @IsString() @IsNotEmpty() reason: string;
+  @IsString() @IsNotEmpty() @MaxLength(500) reason: string;
 }

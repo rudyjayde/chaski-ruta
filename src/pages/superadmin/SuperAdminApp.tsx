@@ -33,7 +33,7 @@ import {
 } from '../../lib/operacion-api';
 import { fetchLandingContent, type LandingContentData, type LandingFleetItem, type LandingFleetShowcase } from '../../lib/landing-content-api';
 import type { Person, Unit } from '../../types';
-import { PHONE_ERROR, phoneInputProps, sanitizePhone, isValidOptionalPhone } from '../../lib/validators';
+import { PHONE_ERROR, phoneInputProps, sanitizePhone, isValidOptionalPhone, RUC_ERROR, rucInputProps, sanitizeRuc, isValidRuc, IMEI_ERROR, sanitizeImei, isValidOptionalImei } from '../../lib/validators';
 
 // Redimensiona la imagen ANTES de convertirla a data URI -- una foto real de
 // varios MB facilmente supera el limite del body del backend (y se ve exactamente
@@ -620,6 +620,10 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
       setInfoError(PHONE_ERROR);
       return;
     }
+    if (infoForm.ruc.trim() !== org.ruc && !isValidRuc(infoForm.ruc.trim())) {
+      setInfoError(RUC_ERROR);
+      return;
+    }
     setInfoSaving(true);
     setInfoError('');
     try {
@@ -992,6 +996,14 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
   };
 
   const handleSaveImei = async (vehicleId: string) => {
+    if (!isValidOptionalImei(imeiDraft.trim())) {
+      setGpsSaveError(IMEI_ERROR);
+      return;
+    }
+    if (!isValidOptionalPhone(simNumberDraft.trim())) {
+      setGpsSaveError(`Número de la SIM: ${PHONE_ERROR}`);
+      return;
+    }
     setGpsSaving(true);
     setGpsSaveError('');
     try {
@@ -1243,8 +1255,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                   {editingInfo ? (
                     <input
                       value={infoForm[f.key]}
-                      onChange={e => setInfoForm(v => ({ ...v, [f.key]: f.key === 'contactPhone' ? sanitizePhone(e.target.value) : e.target.value }))}
-                      {...(f.key === 'contactPhone' ? phoneInputProps : {})}
+                      onChange={e => setInfoForm(v => ({ ...v, [f.key]: f.key === 'contactPhone' ? sanitizePhone(e.target.value) : f.key === 'ruc' ? sanitizeRuc(e.target.value) : e.target.value }))}
+                      {...(f.key === 'contactPhone' ? phoneInputProps : f.key === 'ruc' ? rucInputProps : {})}
                       placeholder={f.placeholder}
                       className={`w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary ${f.mono ? 'font-mono' : ''}`}
                     />
@@ -1493,7 +1505,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                     {editingOp ? (
                       <input
                         type="number"
-                        min={0}
+                        min={50}
+                        max={2000}
                         value={opForm.gpsRadiusMeters}
                         onChange={e => setOpForm(v => ({ ...v, gpsRadiusMeters: Number(e.target.value) }))}
                         className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
@@ -1507,7 +1520,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                     {editingOp ? (
                       <input
                         type="number"
-                        min={0}
+                        min={10}
+                        max={600}
                         value={opForm.minTripMinutesOutbound}
                         onChange={e => setOpForm(v => ({ ...v, minTripMinutesOutbound: Number(e.target.value) }))}
                         className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
@@ -1521,7 +1535,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                     {editingOp ? (
                       <input
                         type="number"
-                        min={0}
+                        min={10}
+                        max={600}
                         value={opForm.minTripMinutesReturn}
                         onChange={e => setOpForm(v => ({ ...v, minTripMinutesReturn: Number(e.target.value) }))}
                         className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
@@ -1715,8 +1730,9 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                             {editingVehicleId === v.id ? (
                               <input
                                 value={imeiDraft}
-                                onChange={e => setImeiDraft(e.target.value)}
-                                placeholder="IMEI del dispositivo Teltonika"
+                                onChange={e => setImeiDraft(sanitizeImei(e.target.value))}
+                                inputMode="numeric"
+                                placeholder="IMEI (15 números)"
                                 className="h-8 px-2 border border-border rounded text-sm font-mono w-44 focus:outline-none focus:ring-2 focus:ring-primary"
                               />
                             ) : v.traccarDeviceId ? (
@@ -1741,8 +1757,9 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                                 </select>
                                 <input
                                   value={simNumberDraft}
-                                  onChange={e => setSimNumberDraft(e.target.value)}
-                                  placeholder="Número SIM"
+                                  onChange={e => setSimNumberDraft(sanitizePhone(e.target.value))}
+                                  inputMode="numeric"
+                                  placeholder="SIM (9 números)"
                                   className="h-8 px-2 border border-border rounded text-sm w-28 focus:outline-none focus:ring-2 focus:ring-primary"
                                 />
                               </div>
@@ -2405,6 +2422,10 @@ function NewOrgWizard({
   const isLast = step === WIZARD_STEPS.length - 1;
 
   const handleNext = async () => {
+    if ((step === 0 || isLast) && form.ruc.trim() && !isValidRuc(form.ruc.trim())) {
+      setSaveError(RUC_ERROR);
+      return;
+    }
     if ((step === 0 || isLast) && !isValidOptionalPhone(form.phone.trim())) {
       setSaveError(`Teléfono de la asociación: ${PHONE_ERROR}`);
       return;
@@ -2543,8 +2564,8 @@ function NewOrgWizard({
             ].map(f => (
               <div key={f.key}>
                 <label className="block text-sm font-medium text-t1 mb-1">{f.label}</label>
-                <input value={(form as unknown as Record<string, string>)[f.key]} onChange={e => set(f.key, f.key === 'phone' ? sanitizePhone(e.target.value) : e.target.value)}
-                  {...(f.key === 'phone' ? phoneInputProps : {})}
+                <input value={(form as unknown as Record<string, string>)[f.key]} onChange={e => set(f.key, f.key === 'phone' ? sanitizePhone(e.target.value) : f.key === 'ruc' ? sanitizeRuc(e.target.value) : e.target.value)}
+                  {...(f.key === 'phone' ? phoneInputProps : f.key === 'ruc' ? rucInputProps : {})}
                   placeholder={f.placeholder}
                   className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
               </div>

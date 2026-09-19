@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { CommercialRequestsService } from './commercial-requests.service';
 import { CreateCommercialRequestDto } from './dto/create-commercial-request.dto';
 import { MarkReviewedDto } from './dto/mark-reviewed.dto';
@@ -15,6 +16,7 @@ export class CommercialRequestsController {
   // Publico a proposito -- lo llena un interesado que todavia no tiene
   // cuenta ni asociacion (ver Landing.tsx). Nunca lleva guards de auth.
   @Post()
+  @Throttle({ default: { limit: 10, ttl: 3_600_000 } })
   create(@Body() dto: CreateCommercialRequestDto) {
     return this.service.create(dto);
   }

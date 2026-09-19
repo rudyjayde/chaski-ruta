@@ -13,6 +13,8 @@ export interface CommercialRequestInput {
   orgName?: string;
   ruc?: string;
   answers: Record<string, unknown>;
+  // Campo trampa anti-robots: siempre vacio en una persona real.
+  website?: string;
 }
 
 function apiUrl(): string {

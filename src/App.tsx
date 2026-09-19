@@ -15,6 +15,7 @@ import VisitorAccountPage from './pages/VisitorAccountPage';
 import { setVisitorToken } from './lib/visitor-auth-api';
 import { verifyManifestPublic, type ManifestPublicVerification } from './lib/operacion-api';
 import { getActingOrgId, getActingOrgName, setActingOrg } from './lib/acting-org';
+import { passwordProblem, PASSWORD_HINT } from './lib/validators';
 
 function useRouter() {
   const [path, setPath] = useState(() => window.location.pathname);
@@ -318,8 +319,9 @@ function ResetPasswordPage({ navigate }: { navigate: (to: string) => void }) {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
-    if (password.length < 8) {
-      setError('La contraseña debe tener al menos 8 caracteres.');
+    const problem = passwordProblem(password);
+    if (problem) {
+      setError(problem);
       return;
     }
     if (password !== confirm) {
@@ -363,7 +365,8 @@ function ResetPasswordPage({ navigate }: { navigate: (to: string) => void }) {
         ) : (
           <form onSubmit={handleSubmit} noValidate>
             <div className="mb-4">
-              <label htmlFor="new-password" className="block text-sm font-medium text-t1 mb-1">Contraseña (mínimo 8 caracteres)</label>
+              <label htmlFor="new-password" className="block text-sm font-medium text-t1 mb-1">Contraseña</label>
+              <p className="text-[11px] text-muted mb-1">{PASSWORD_HINT}</p>
               <input
                 id="new-password"
                 type="password"

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { AnthropicService } from '../ai/anthropic.service';
@@ -52,6 +52,12 @@ export class CommercialRequestsService {
    * effort, nunca lanza).
    */
   async create(dto: CreateCommercialRequestDto) {
+    // Campo trampa anti-robots (ver CreateCommercialRequestDto.website).
+    if (dto.website?.trim()) return { id: 'descartado' };
+    // `answers` es un objeto libre: se limita su tamaño para que nadie guarde megas.
+    if (JSON.stringify(dto.answers ?? {}).length > 10_000) {
+      throw new BadRequestException('El formulario tiene demasiado contenido. Revisa las respuestas e intenta de nuevo.');
+    }
     const request = await this.prisma.commercialRequest.create({
       data: {
         solution: dto.solution,

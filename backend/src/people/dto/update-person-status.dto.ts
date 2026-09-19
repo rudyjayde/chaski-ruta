@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpdatePersonStatusDto {
   @IsIn(['ACTIVO', 'SUSPENDIDO'])
@@ -6,5 +6,6 @@ export class UpdatePersonStatusDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   reason?: string;
 }

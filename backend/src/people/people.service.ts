@@ -4,6 +4,7 @@ import { CreatePersonDto } from './dto/create-person.dto';
 import { UpdatePersonStatusDto } from './dto/update-person-status.dto';
 import { UpdateLicenseDto } from './dto/update-license.dto';
 import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
+import { licenseDatesProblem } from '../common/validators';
 import { JwtPayload } from '../auth/jwt.strategy';
 import { MailService } from '../mail/mail.service';
 import { AuthService } from '../auth/auth.service';
@@ -46,6 +47,7 @@ export class PeopleService {
     license: true,
     licenseCategory: true,
     licenseExpiry: true,
+    licenseIssuedAt: true,
     createdAt: true,
     updatedAt: true,
   } as const;
@@ -58,6 +60,17 @@ export class PeopleService {
       select: { name: true },
     });
     if (owner) throw new ConflictException(`La licencia ${license} ya está registrada a nombre de ${owner.name}.`);
+  }
+
+  // El DNI es de una sola persona dentro de la asociacion. El mismo correo con
+  // dos perfiles (Socio + Conductor) comparte DNI a proposito, por eso se
+  // excluyen las cuentas del mismo correo.
+  private async assertDniFree(organizationId: string | null, dni: string, email: string) {
+    const owner = await this.prisma.person.findFirst({
+      where: { organizationId, dni, NOT: { email } },
+      select: { name: true },
+    });
+    if (owner) throw new ConflictException(`El DNI ${dni} ya está registrado a nombre de ${owner.name}.`);
   }
 
   findAll(organizationId: string) {
@@ -95,23 +108,33 @@ export class PeopleService {
       );
     }
 
+    // El correo se compara SIEMPRE en minusculas: antes "Rosa@Gmail.com" no
+    // encontraba a "rosa@gmail.com", pasaba la revision y la base de datos lo
+    // rechazaba con un error generico.
+    const normalizedEmail = dto.email.trim().toLowerCase();
     const existing = await this.prisma.person.findFirst({
-      where: { email: dto.email, role: dto.role },
+      where: { email: normalizedEmail, role: dto.role },
     });
     if (existing) {
       throw new ConflictException(
-        `Ya existe una cuenta ${dto.role.toLowerCase()} con el correo ${dto.email}.`,
+        `Ya existe una cuenta ${dto.role.toLowerCase()} con el correo ${normalizedEmail}.`,
       );
     }
+    if (dto.dni) await this.assertDniFree(organizationId, dto.dni, normalizedEmail);
 
     // La licencia de conducir solo existe para conductores.
-    const hasLicenseData = Boolean(dto.license || dto.licenseCategory || dto.licenseExpiry);
+    const hasLicenseData = Boolean(dto.license || dto.licenseCategory || dto.licenseIssuedAt || dto.licenseExpiry);
     if (hasLicenseData && dto.role !== 'CONDUCTOR') {
       throw new BadRequestException('La licencia de conducir solo aplica a conductores.');
     }
-    if (dto.license) await this.assertLicenseFree(dto.license);
-
-    const normalizedEmail = dto.email.toLowerCase();
+    if (dto.license) {
+      if (!dto.licenseCategory?.trim() || !dto.licenseIssuedAt || !dto.licenseExpiry) {
+        throw new BadRequestException('Para registrar la licencia indica el número, la categoría, la fecha de emisión y el vencimiento.');
+      }
+      const problem = licenseDatesProblem(new Date(dto.licenseIssuedAt), new Date(dto.licenseExpiry));
+      if (problem) throw new BadRequestException(problem);
+      await this.assertLicenseFree(dto.license);
+    }
     // La contraseña es por correo, no por fila (ver comentario de passwordHash
     // en schema.prisma): si este correo ya tiene otra cuenta (p. ej. Socio) con
     // contraseña definida, esta nueva cuenta (p. ej. Conductor) la hereda de
@@ -133,6 +156,7 @@ export class PeopleService {
         company: dto.company,
         license: dto.license || undefined,
         licenseCategory: dto.licenseCategory?.trim() || undefined,
+        licenseIssuedAt: dto.licenseIssuedAt ? new Date(dto.licenseIssuedAt) : undefined,
         licenseExpiry: dto.licenseExpiry ? new Date(dto.licenseExpiry) : undefined,
         status: 'PENDIENTE',
         passwordHash: sibling?.passwordHash,
@@ -228,6 +252,8 @@ export class PeopleService {
     if (person.role !== 'CONDUCTOR') {
       throw new BadRequestException('La licencia de conducir solo aplica a conductores.');
     }
+    const problem = licenseDatesProblem(new Date(dto.licenseIssuedAt), new Date(dto.licenseExpiry));
+    if (problem) throw new BadRequestException(problem);
     await this.assertLicenseFree(dto.license, personId);
 
     const updated = await this.prisma.person.update({
@@ -235,6 +261,7 @@ export class PeopleService {
       data: {
         license: dto.license,
         licenseCategory: dto.licenseCategory.trim(),
+        licenseIssuedAt: new Date(dto.licenseIssuedAt),
         licenseExpiry: new Date(dto.licenseExpiry),
       },
       select: PeopleService.SAFE_SELECT,
@@ -248,7 +275,7 @@ export class PeopleService {
         resource: `Persona ${person.name}`,
         resourceId: personId,
         before: person.license ? `Licencia ${person.licenseCategory ?? ''}`.trim() : 'Sin licencia registrada',
-        after: `Licencia ${dto.licenseCategory.trim()}, vence ${dto.licenseExpiry.slice(0, 10)}`,
+        after: `Licencia ${dto.licenseCategory.trim()}, emitida ${dto.licenseIssuedAt.slice(0, 10)}, vence ${dto.licenseExpiry.slice(0, 10)}`,
       },
     });
     return updated;
@@ -281,6 +308,7 @@ export class PeopleService {
       changes.push(`Nombre: ${me.name} → ${name}`);
     }
     if (dto.dni && dto.dni !== me.dni) {
+      await this.assertDniFree(me.organizationId, dto.dni, me.email);
       shared.dni = dto.dni;
       changes.push(`DNI: ${maskId(me.dni)} → ${maskId(dto.dni)}`);
     }
@@ -289,23 +317,27 @@ export class PeopleService {
       changes.push(`Celular: ${me.phone ?? 'sin dato'} → ${dto.phone}`);
     }
 
-    const licenseData: { license?: string; licenseCategory?: string; licenseExpiry?: Date } = {};
-    const touchesLicense = Boolean(dto.license || dto.licenseCategory?.trim() || dto.licenseExpiry);
+    const licenseData: { license?: string; licenseCategory?: string; licenseIssuedAt?: Date; licenseExpiry?: Date } = {};
+    const touchesLicense = Boolean(dto.license || dto.licenseCategory?.trim() || dto.licenseIssuedAt || dto.licenseExpiry);
     if (touchesLicense) {
       if (me.role !== 'CONDUCTOR') throw new BadRequestException('La licencia de conducir solo aplica a conductores.');
       const category = dto.licenseCategory?.trim() || me.licenseCategory;
       const license = dto.license || me.license;
+      const issued = dto.licenseIssuedAt ? new Date(dto.licenseIssuedAt) : me.licenseIssuedAt;
       const expiry = dto.licenseExpiry ? new Date(dto.licenseExpiry) : me.licenseExpiry;
-      if (!license || !category || !expiry) {
-        throw new BadRequestException('Para registrar la licencia indica el número, la categoría y la fecha de vencimiento.');
+      if (!license || !category || !issued || !expiry) {
+        throw new BadRequestException('Para registrar la licencia indica el número, la categoría, la fecha de emisión y el vencimiento.');
       }
+      const problem = licenseDatesProblem(issued, expiry);
+      if (problem) throw new BadRequestException(problem);
       if (license !== me.license) await this.assertLicenseFree(license, me.id);
-      const expiryChanged = expiry.toISOString().slice(0, 10) !== me.licenseExpiry?.toISOString().slice(0, 10);
-      if (license !== me.license || category !== me.licenseCategory || expiryChanged) {
+      const day = (d?: Date | null) => d?.toISOString().slice(0, 10);
+      if (license !== me.license || category !== me.licenseCategory || day(issued) !== day(me.licenseIssuedAt) || day(expiry) !== day(me.licenseExpiry)) {
         licenseData.license = license;
         licenseData.licenseCategory = category;
+        licenseData.licenseIssuedAt = issued;
         licenseData.licenseExpiry = expiry;
-        changes.push(`Licencia: ${maskId(me.license)} → ${maskId(license)} (${category}, vence ${expiry.toISOString().slice(0, 10)})`);
+        changes.push(`Licencia: ${maskId(me.license)} → ${maskId(license)} (${category}, emitida ${day(issued)}, vence ${day(expiry)})`);
       }
     }
 

@@ -31,6 +31,10 @@ export class UpdateMyProfileDto {
   licenseCategory?: string;
 
   @IsOptional()
+  @IsDateString({}, { message: 'La fecha de emisión de la licencia no es válida' })
+  licenseIssuedAt?: string;
+
+  @IsOptional()
   @IsDateString({}, { message: 'La fecha de vencimiento de la licencia no es válida' })
   licenseExpiry?: string;
 }

@@ -6,6 +6,7 @@ import {
   MapPin, Car, FileCheck, Eye, RotateCcw, Upload, Trash2, Loader2, Megaphone, WifiOff,
 } from 'lucide-react';
 import Shell, { type NavItem } from '../../components/layout/Shell';
+import DocumentField from '../../components/DocumentField';
 import { useAuth } from '../../contexts/AuthContext';
 import SeatMap from '../../components/SeatMap';
 import GpsAlertBanner from '../../components/GpsAlertBanner';
@@ -22,7 +23,7 @@ import {
 } from '../../lib/operacion-api';
 import { getOperationalPosition, getOperationalState, getVehiclesAhead, getQueueDisplayOrder } from '../../lib/queue-ui';
 import { localDateStr } from '../../lib/dates';
-import { formatLicenseExpiry } from '../../lib/validators';
+import { formatLicenseExpiry, isValidDocument, type DocumentType } from '../../lib/validators';
 
 // Estado real de la licencia segun su vencimiento (antes decia "Vigente" y
 // "Vence en 585 dias" fijo, sin mirar ningun dato). Los dias se cuentan contra
@@ -1192,18 +1193,19 @@ function PassengerSeatForm({
   occupiedSeats: number[];
   defaultOrigin: string;
   defaultDestination: string;
-  onSubmit: (p: { name: string; dni: string; seat: number; fare: number; paymentMethod: PaymentMethod; origin: string; destination: string; email?: string }) => Promise<void> | void;
+  onSubmit: (p: { name: string; dni: string; documentType?: DocumentType; seat: number; fare: number; paymentMethod: PaymentMethod; origin: string; destination: string; email?: string }) => Promise<void> | void;
   submitting: boolean;
   submitLabel: string;
 }) {
   const [nombres, setNombres] = useState('');
   const [apellidos, setApellidos] = useState('');
   const [dni, setDni] = useState('');
+  const [docType, setDocType] = useState<DocumentType>('DNI');
   const [selectedSeat, setSelectedSeat] = useState<number | null>(null);
   const [fare, setFare] = useState('10');
   const [method, setMethod] = useState<PaymentMethod>('EFECTIVO');
   const [email, setEmail] = useState('');
-  const dniValid = /^\d{8}$/.test(dni);
+  const dniValid = isValidDocument(docType, dni);
   const emailValid = email === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
   const handleSubmit = async () => {
@@ -1212,6 +1214,7 @@ function PassengerSeatForm({
     await onSubmit({
       name: `${nombres.trim()} ${apellidos.trim()}`,
       dni,
+      documentType: docType,
       seat: selectedSeat,
       fare: fareNum,
       paymentMethod: method,
@@ -1219,7 +1222,7 @@ function PassengerSeatForm({
       destination: defaultDestination,
       email: email.trim() || undefined,
     });
-    setNombres(''); setApellidos(''); setDni(''); setSelectedSeat(null); setFare('10'); setMethod('EFECTIVO'); setEmail('');
+    setNombres(''); setApellidos(''); setDni(''); setDocType('DNI'); setSelectedSeat(null); setFare('10'); setMethod('EFECTIVO'); setEmail('');
   };
 
   return (
@@ -1238,15 +1241,7 @@ function PassengerSeatForm({
             <input placeholder="Nombres" value={nombres} onChange={e => setNombres(e.target.value)} className="h-9 px-3 border border-border rounded-lg text-sm" />
             <input placeholder="Apellidos" value={apellidos} onChange={e => setApellidos(e.target.value)} className="h-9 px-3 border border-border rounded-lg text-sm" />
             <div className="col-span-2">
-              <input
-                placeholder="DNI (8 dígitos)"
-                inputMode="numeric"
-                value={dni}
-                onChange={e => setDni(e.target.value.replace(/\D/g, '').slice(0, 8))}
-                maxLength={8}
-                className={`h-9 px-3 border rounded-lg text-sm w-full ${dni && !dniValid ? 'border-danger' : 'border-border'}`}
-              />
-              {dni.length > 0 && !dniValid && <p className="text-[11px] text-danger mt-1">El DNI debe tener 8 dígitos numéricos</p>}
+              <DocumentField docType={docType} value={dni} onDocType={setDocType} onValue={setDni} />
             </div>
             <input placeholder="Tarifa (S/)" type="number" min={0} value={fare} onChange={e => setFare(e.target.value)} className="h-9 px-3 border border-border rounded-lg text-sm" />
             <select value={method} onChange={e => setMethod(e.target.value as PaymentMethod)} className="h-9 px-3 border border-border rounded-lg text-sm">
@@ -1365,7 +1360,7 @@ function DriverManifest() {
     }
   };
 
-  const handleAddPassenger = async (p: { name: string; dni: string; seat: number; fare: number; paymentMethod: PaymentMethod; origin: string; destination: string; email?: string }) => {
+  const handleAddPassenger = async (p: { name: string; dni: string; documentType?: DocumentType; seat: number; fare: number; paymentMethod: PaymentMethod; origin: string; destination: string; email?: string }) => {
     if (!activeManifest) return;
     setAddingPassenger(true);
     setActionError('');
@@ -2304,6 +2299,7 @@ function DriverProfile() {
               {[
                 ['Categoría', profile?.licenseCategory || 'No registrada'],
                 ['Número', profile?.license || 'No registrada'],
+                ['Fecha de emisión', formatLicenseExpiry(profile?.licenseIssuedAt) || 'No registrada'],
                 ['Fecha de vencimiento', formatLicenseExpiry(profile?.licenseExpiry) || 'No registrada'],
               ].map(([label, value]) => (
                 <div key={label} className="flex items-center justify-between px-4 py-3">

@@ -1,4 +1,4 @@
-import { IsBoolean, IsISO8601, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsISO8601, IsOptional, IsString, MinLength, MaxLength } from 'class-validator';
 
 // Prender/apagar el Plan GPS Vehicular individual de una unidad -- Super
 // Admin lo usa cuando el socio paga (activo=true) o deja de pagar
@@ -14,6 +14,7 @@ export class SetGpsVehicularPlanDto {
   // reactivo el servicio de un socio puntual.
   @IsString()
   @MinLength(3)
+  @MaxLength(500)
   reason: string;
 
   // Fecha de referencia (ej. fin de los 10 dias de gracia) -- PURAMENTE

@@ -1,10 +1,11 @@
-import { IsIn, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
-import { IsPlate } from '../../common/validators';
+import { IsIn, IsInt, IsOptional, IsString, Max, Min, MinLength, MaxLength } from 'class-validator';
+import { IsPlate, IsVehicleYear } from '../../common/validators';
 import { VEHICLE_MODELS } from '../vehicle-catalog';
 
 export class CreateVehicleDto {
   @IsString()
   @MinLength(1)
+  @MaxLength(10)
   code: string;
 
   @IsString()
@@ -24,6 +25,7 @@ export class CreateVehicleDto {
   @IsInt({ message: 'El año debe ser un número de 4 dígitos' })
   @Min(1990, { message: 'El año debe ser 1990 o posterior' })
   @Max(2100, { message: 'El año no es válido' })
+  @IsVehicleYear()
   year: number;
 
   @IsOptional()

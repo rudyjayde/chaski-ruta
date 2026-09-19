@@ -1,5 +1,5 @@
-import { IsEmail, IsIn, IsObject, IsOptional, IsString, MinLength } from 'class-validator';
-import { IsOptionalPhone } from '../../common/validators';
+import { IsEmail, IsIn, IsObject, IsOptional, IsString, MinLength, MaxLength } from 'class-validator';
+import { IsOptionalPhone, IsOptionalRuc } from '../../common/validators';
 
 // Enviado desde la landing publica, sin autenticacion (docs/planes/
 // landing-publica-y-solicitudes-comerciales.md §3-§5). `answers` guarda el
@@ -11,9 +11,11 @@ export class CreateCommercialRequestDto {
 
   @IsString()
   @MinLength(2)
+  @MaxLength(120)
   contactName: string;
 
   @IsEmail()
+  @MaxLength(254)
   contactEmail: string;
 
   @IsOptionalPhone()
@@ -23,11 +25,12 @@ export class CreateCommercialRequestDto {
   // Nombre de la asociacion (Operacion/PRO). Vacio en GPS Vehicular individual.
   @IsOptional()
   @IsString()
+  @MaxLength(150)
   orgName?: string;
 
   // RUC de la asociacion, o DNI/RUC del socio en GPS Vehicular.
-  @IsOptional()
   @IsString()
+  @IsOptionalRuc()
   ruc?: string;
 
   // El resto del formulario (rutas, cantidad de unidades, comentarios, etc.)
@@ -36,4 +39,11 @@ export class CreateCommercialRequestDto {
   // (Nivel 2 del roadmap) empiece a variar las preguntas por asociacion.
   @IsObject()
   answers: Record<string, unknown>;
+
+  // Campo trampa anti-robots: las personas no lo ven ni lo llenan (la pantalla lo
+  // esconde); si llega con algo, el envio se descarta en silencio.
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  website?: string;
 }

@@ -1,15 +1,16 @@
-import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
-import { IsOptionalPhone } from '../../common/validators';
+import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, MinLength, MaxLength } from 'class-validator';
+import { IsOptionalPhone, IsRuc } from '../../common/validators';
 
 // Corresponde al Paso 1 del wizard "Nueva asociacion" del Super Admin
 // (ver SuperAdminApp.tsx WIZARD_STEPS en el frontend).
 export class CreateOrganizationDto {
   @IsString()
   @MinLength(2)
+  @MaxLength(150)
   name: string;
 
   @IsString()
-  @MinLength(11)
+  @IsRuc()
   ruc: string;
 
   @IsEmail()
@@ -17,6 +18,7 @@ export class CreateOrganizationDto {
 
   @IsString()
   @MinLength(2)
+  @MaxLength(120)
   adminName: string;
 
   @IsOptional()
@@ -31,10 +33,12 @@ export class CreateOrganizationDto {
   // guardaban (el DTO no los tenia). Ver comentario en schema.prisma.
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   city?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(120)
   legalRepName?: string;
 
   @IsOptionalPhone()
@@ -51,6 +55,7 @@ export class CreateOrganizationDto {
   // Logo (imagen como data URI o URL) capturado en el paso 0 del wizard.
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   logoUrl?: string;
 
   @IsOptional()

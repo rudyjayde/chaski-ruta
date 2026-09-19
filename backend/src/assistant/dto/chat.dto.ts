@@ -1,4 +1,4 @@
-import { IsArray, IsIn, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { IsArray, IsIn, IsOptional, IsString, ValidateNested, MaxLength, ArrayMaxSize } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class ChatTurnDto {
@@ -6,6 +6,7 @@ class ChatTurnDto {
   role: 'user' | 'assistant';
 
   @IsString()
+  @MaxLength(4000)
   content: string;
 }
 
@@ -15,11 +16,13 @@ class ChatTurnDto {
 // vehiculo que te pregunte antes?".
 export class ChatDto {
   @IsString()
+  @MaxLength(2000)
   message: string;
 
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ChatTurnDto)
+  @ArrayMaxSize(20)
   history?: ChatTurnDto[];
 }

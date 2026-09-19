@@ -5,6 +5,7 @@ export interface ComplaintInput {
   type: 'RECLAMO' | 'QUEJA';
   consumerName: string;
   consumerDocument: string;
+  consumerDocumentType?: 'DNI' | 'CE' | 'PASAPORTE' | 'RUC';
   consumerAddress?: string;
   consumerEmail: string;
   consumerPhone?: string;
@@ -14,6 +15,8 @@ export interface ComplaintInput {
   claimedAmount?: number;
   detail: string;
   consumerRequest: string;
+  // Campo trampa anti-robots: siempre vacio en una persona real.
+  website?: string;
 }
 
 function apiUrl(): string {

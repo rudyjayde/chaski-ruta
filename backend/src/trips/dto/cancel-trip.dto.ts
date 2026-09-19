@@ -1,4 +1,4 @@
-import { IsString, MinLength } from 'class-validator';
+import { IsString, MinLength, MaxLength } from 'class-validator';
 
 // "Anular viaje" (admin/superadmin) -- para un viaje PROGRAMADO que quedo
 // atascado (el conductor preparo/cerro el manifiesto pero nunca marco
@@ -9,5 +9,6 @@ import { IsString, MinLength } from 'class-validator';
 export class CancelTripDto {
   @IsString()
   @MinLength(3)
+  @MaxLength(500)
   reason: string;
 }

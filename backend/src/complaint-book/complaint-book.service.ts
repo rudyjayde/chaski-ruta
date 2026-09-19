@@ -18,6 +18,10 @@ export class ComplaintBookService {
    * reclamos con el mismo numero.
    */
   async create(dto: CreateComplaintDto) {
+    // Campo trampa anti-robots: si viene lleno, se descarta sin guardar y se
+    // responde como si hubiera funcionado para que el robot no aprenda.
+    if (dto.website?.trim()) return { number: 'RC-RECIBIDO', id: 'descartado' };
+
     const year = new Date().getFullYear();
     const prefix = `RC-${year}-`;
     const entry = await this.prisma.$transaction(async tx => {
@@ -29,6 +33,7 @@ export class ComplaintBookService {
           type: dto.type,
           consumerName: dto.consumerName,
           consumerDocument: dto.consumerDocument,
+          consumerDocumentType: dto.consumerDocumentType ?? 'DNI',
           consumerAddress: dto.consumerAddress,
           consumerEmail: dto.consumerEmail.toLowerCase(),
           consumerPhone: dto.consumerPhone,

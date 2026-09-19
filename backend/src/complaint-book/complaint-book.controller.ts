@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ComplaintBookService } from './complaint-book.service';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
 import { RespondComplaintDto } from './dto/respond-complaint.dto';
@@ -14,6 +15,7 @@ export class ComplaintBookController {
   // cualquier persona sin cuenta (docs: requisito legal INDECOPI). Nunca
   // lleva guards de auth.
   @Post()
+  @Throttle({ default: { limit: 10, ttl: 3_600_000 } })
   create(@Body() dto: CreateComplaintDto) {
     return this.service.create(dto);
   }

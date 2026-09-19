@@ -681,7 +681,7 @@ export default function FleetPage() {
 
   const reload = () => {
     setLoadError('');
-    Promise.all([fetchVehicles(), fetchCompanies(), fetchPeople(), fetchGpsDevices()])
+    Promise.all([fetchVehicles(undefined, undefined, true), fetchCompanies(), fetchPeople(), fetchGpsDevices()])
       .then(([u, c, p, d]) => { setUnits(u); setCompanies(c); setPeople(p); setGpsDevices(d); })
       .catch(err => setLoadError(err instanceof Error ? err.message : 'No se pudo cargar la flota.'))
       .finally(() => setLoading(false));
@@ -690,7 +690,7 @@ export default function FleetPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    Promise.all([fetchVehicles(), fetchCompanies(), fetchPeople(), fetchGpsDevices()])
+    Promise.all([fetchVehicles(undefined, undefined, true), fetchCompanies(), fetchPeople(), fetchGpsDevices()])
       .then(([u, c, p, d]) => { if (!cancelled) { setUnits(u); setCompanies(c); setPeople(p); setGpsDevices(d); } })
       .catch(err => { if (!cancelled) setLoadError(err instanceof Error ? err.message : 'No se pudo cargar la flota.'); })
       .finally(() => { if (!cancelled) setLoading(false); });

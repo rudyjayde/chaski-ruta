@@ -5,6 +5,7 @@ import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { JwtPayload } from '../auth/jwt.strategy';
 import { MailService } from '../mail/mail.service';
 import { AuthService } from '../auth/auth.service';
+import { hasValidRucCheckDigit, RUC_CHECK_MESSAGE } from '../common/validators';
 
 // Aplana operationalConfig.terminalOriginName/terminalDestinationName al nivel
 // raiz de la asociacion -- cada asociacion muestra SU PROPIO corredor, nunca el
@@ -141,6 +142,9 @@ export class OrganizationsService {
     // permite sin motivo, igual que cualquier otra excepcion del sistema.
     if (dto.plan !== undefined && dto.plan !== org.plan && !dto.reason?.trim()) {
       throw new BadRequestException('Indica un motivo para cambiar el plan (ej. referencia del pago acordado).');
+    }
+    if (dto.ruc !== undefined && dto.ruc !== org.ruc && !hasValidRucCheckDigit(dto.ruc)) {
+      throw new BadRequestException(RUC_CHECK_MESSAGE);
     }
     let updated;
     try {

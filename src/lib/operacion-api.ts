@@ -200,6 +200,7 @@ interface RawPassenger {
   id: string;
   name: string;
   dni: string;
+  documentType?: string | null;
   seat: number;
   fare: number;
   paymentMethod: PaymentMethod;
@@ -262,7 +263,7 @@ function mapQueueEntry(raw: RawQueueEntry): QueueEntry {
 }
 
 function mapPassenger(raw: RawPassenger): Passenger {
-  return { id: raw.id, name: raw.name, dni: raw.dni, seat: raw.seat, fare: raw.fare, paymentMethod: raw.paymentMethod, origin: raw.origin, destination: raw.destination, email: raw.email ?? undefined };
+  return { id: raw.id, name: raw.name, dni: raw.dni, documentType: (raw.documentType as Passenger['documentType']) ?? 'DNI', seat: raw.seat, fare: raw.fare, paymentMethod: raw.paymentMethod, origin: raw.origin, destination: raw.destination, email: raw.email ?? undefined };
 }
 
 function mapManifest(raw: RawManifest): Manifest {
@@ -493,13 +494,15 @@ export async function resolveTripIncident(tripId: string, resolution: 'ACTIVO' |
 // organizationId es solo para Super Admin viendo una asociacion puntual desde
 // su propio panel (nunca "actuando como" -- ver acting-org.ts) -- cualquier
 // otro rol lo ignora en el backend (resolveOrgId siempre usa el suyo propio).
-export async function fetchVehicles(route?: RouteDir, organizationId?: string): Promise<Unit[]> {
+// Las unidades dadas de baja solo se piden desde Unidades y flota (includeRetired);
+// en colas, reportes, GPS, conductor y socio nunca deben aparecer.
+export async function fetchVehicles(route?: RouteDir, organizationId?: string, includeRetired = false): Promise<Unit[]> {
   const params = new URLSearchParams();
   if (route) params.set('route', route);
   if (organizationId) params.set('organizationId', organizationId);
   const qs = params.toString();
   const raw = await request<RawVehicle[]>(`/vehicles${qs ? `?${qs}` : ''}`);
-  return raw.map((v) => ({
+  return raw.filter((v) => includeRetired || v.status !== 'BAJA').map((v) => ({
     id: v.id,
     code: v.code,
     company: v.company?.name ?? '',
@@ -742,6 +745,7 @@ export interface CreatePersonInput {
   // Solo para CONDUCTOR: licencia "Q12345678", categoria y vencimiento "AAAA-MM-DD".
   license?: string;
   licenseCategory?: string;
+  licenseIssuedAt?: string;
   licenseExpiry?: string;
 }
 
@@ -765,6 +769,7 @@ export interface UpdateMyProfileInput {
   phone?: string;
   license?: string;
   licenseCategory?: string;
+  licenseIssuedAt?: string;
   licenseExpiry?: string;
 }
 
@@ -782,7 +787,7 @@ export async function createPerson(input: CreatePersonInput, organizationId?: st
 // Registrar o corregir la licencia de un conductor que ya existe.
 export async function updatePersonLicense(
   personId: string,
-  data: { license: string; licenseCategory: string; licenseExpiry: string },
+  data: { license: string; licenseCategory: string; licenseIssuedAt: string; licenseExpiry: string },
   organizationId?: string,
 ): Promise<Person> {
   return request<Person>(

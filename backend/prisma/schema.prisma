@@ -46,14 +46,14 @@ enum PersonStatus {
 
 /// Una asociacion de transporte cliente de CHASKI AI (ej. ATIPCAR).
 model Organization {
-  id                   String    @id @default(cuid())
-  name                 String
-  ruc                  String    @unique
-  logoUrl              String?
-  status               OrgStatus @default(EN_CONFIGURACION)
-  plan                 OrgPlan   @default(OPERACION)
-  driverLiveMapEnabled Boolean   @default(false)
-  whatsappAssistantEnabled Boolean @default(false)
+  id                       String    @id @default(cuid())
+  name                     String
+  ruc                      String    @unique
+  logoUrl                  String?
+  status                   OrgStatus @default(EN_CONFIGURACION)
+  plan                     OrgPlan   @default(OPERACION)
+  driverLiveMapEnabled     Boolean   @default(false)
+  whatsappAssistantEnabled Boolean   @default(false)
 
   // Dias de gracia del Plan GPS Vehicular (13 sept 2026, decidido con
   // Jayde): al bajar esta asociacion de PRO a Operacion, las unidades con
@@ -79,21 +79,21 @@ model Organization {
   people       Person[]
   auditEntries AuditEntry[]
 
-  companies          Company[]
-  vehicles           Vehicle[]
-  operationalConfig  OperationalConfig?
-  routes             Route[]
-  queueEntries       QueueEntry[]
-  trips              Trip[]
-  manifests          Manifest[]
-  relocationOrders   RelocationOrder[]
+  companies                   Company[]
+  vehicles                    Vehicle[]
+  operationalConfig           OperationalConfig?
+  routes                      Route[]
+  queueEntries                QueueEntry[]
+  trips                       Trip[]
+  manifests                   Manifest[]
+  relocationOrders            RelocationOrder[]
   delayedRegistrationRequests DelayedRegistrationRequest[]
-  gpsAlerts          GpsAlert[]
-  notices            Notice[]
-  engineLockRequests EngineLockRequest[]
-  routeGeofence      RouteGeofence?
-  passengerProfiles  PassengerProfile[]
-  supportTickets     SupportTicket[]
+  gpsAlerts                   GpsAlert[]
+  notices                     Notice[]
+  engineLockRequests          EngineLockRequest[]
+  routeGeofence               RouteGeofence?
+  passengerProfiles           PassengerProfile[]
+  supportTickets              SupportTicket[]
 
   @@map("organizations")
 }
@@ -103,7 +103,7 @@ model Organization {
 /// Regla dura del sistema (doc maestro §10): toda consulta/mutacion de datos operativos debe filtrar
 /// por organizationId — se aplica desde el modulo de auth hacia adelante.
 model Person {
-  id             String   @id @default(cuid())
+  id             String        @id @default(cuid())
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
 
@@ -152,25 +152,27 @@ model Person {
   license         String?   @unique
   licenseCategory String?
   licenseExpiry   DateTime? @db.Date
+  // Fecha de emision de la licencia (para saber cuando toca revalidarla en el MTC).
+  licenseIssuedAt DateTime? @db.Date
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   auditEntriesAsActor AuditEntry[]
 
-  vehiclesAsPartner      Vehicle[]         @relation("VehiclePartner")
-  vehiclesAsCurrentDriver Vehicle[]        @relation("VehicleCurrentDriver")
-  queueEntriesAsDriver   QueueEntry[]      @relation("QueueEntryDriver")
-  tripsAsDriver          Trip[]            @relation("TripDriver")
-  manifestsAsDriver      Manifest[]        @relation("ManifestDriver")
-  manifestsAsOperator    Manifest[]        @relation("ManifestOperator")
-  relocationsConfirmed   RelocationOrder[] @relation("RelocationConfirmedBy")
+  vehiclesAsPartner            Vehicle[]                    @relation("VehiclePartner")
+  vehiclesAsCurrentDriver      Vehicle[]                    @relation("VehicleCurrentDriver")
+  queueEntriesAsDriver         QueueEntry[]                 @relation("QueueEntryDriver")
+  tripsAsDriver                Trip[]                       @relation("TripDriver")
+  manifestsAsDriver            Manifest[]                   @relation("ManifestDriver")
+  manifestsAsOperator          Manifest[]                   @relation("ManifestOperator")
+  relocationsConfirmed         RelocationOrder[]            @relation("RelocationConfirmedBy")
   delayedRegistrationsResolved DelayedRegistrationRequest[] @relation("DelayedRegistrationResolvedBy")
-  commercialRequestsReviewed CommercialRequest[] @relation("CommercialRequestReviewedBy")
-  landingContentUpdates      LandingContent[]    @relation("LandingContentUpdatedBy")
-  noticesAsAuthor            Notice[]            @relation("NoticeAuthor")
-  noticesAsTarget            Notice[]            @relation("NoticeTarget")
-  supportTicketsAsAuthor     SupportTicket[]     @relation("SupportTicketAuthor")
+  commercialRequestsReviewed   CommercialRequest[]          @relation("CommercialRequestReviewedBy")
+  landingContentUpdates        LandingContent[]             @relation("LandingContentUpdatedBy")
+  noticesAsAuthor              Notice[]                     @relation("NoticeAuthor")
+  noticesAsTarget              Notice[]                     @relation("NoticeTarget")
+  supportTicketsAsAuthor       SupportTicket[]              @relation("SupportTicketAuthor")
 
   @@unique([email, role])
   @@index([organizationId])
@@ -316,9 +318,9 @@ enum RelocationStatus {
 
 /// Empresa miembro de una asociación (ej. "Virgen de Fátima" dentro de ATIPCAR).
 model Company {
-  id             String        @id @default(cuid())
+  id             String       @id @default(cuid())
   organizationId String
-  organization   Organization  @relation(fields: [organizationId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
 
   name     String
   ruc      String?
@@ -344,7 +346,7 @@ model Vehicle {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
 
-  code    String // código de unidad, ej. "015" — único dentro de la asociación
+  code      String // código de unidad, ej. "015" — único dentro de la asociación
   companyId String
   company   Company @relation(fields: [companyId], references: [id])
 
@@ -391,7 +393,7 @@ model Vehicle {
   // Admin sepa a quien le toca cortar -- nada la lee automaticamente, no hay
   // cron que desactive nada solo, porque el cobro real es conversacional/
   // manual (no un gateway de pago integrado).
-  gpsVehicularActivo Boolean   @default(true)
+  gpsVehicularActivo  Boolean   @default(true)
   gpsVehicularVenceEn DateTime?
 
   // Mantenimiento predictivo (plan-pro.md §11.1, 12 sept 2026): el intervalo
@@ -411,15 +413,15 @@ model Vehicle {
   // ejecuto de verdad) vive en EngineLockRequest.
   engineLocked Boolean @default(false)
 
-  plateHistory  VehiclePlateHistory[]
-  queueEntries  QueueEntry[]
-  trips         Trip[]
-  manifests     Manifest[]
-  relocationUnits RelocationUnit[]
+  plateHistory                  VehiclePlateHistory[]
+  queueEntries                  QueueEntry[]
+  trips                         Trip[]
+  manifests                     Manifest[]
+  relocationUnits               RelocationUnit[]
   delayedRegistrationsRequested DelayedRegistrationRequest[] @relation("DelayedRegistrationRequesting")
   delayedRegistrationsBlocking  DelayedRegistrationRequest[] @relation("DelayedRegistrationBlockedBy")
-  gpsAlerts       GpsAlert[]
-  engineLockRequests EngineLockRequest[]
+  gpsAlerts                     GpsAlert[]
+  engineLockRequests            EngineLockRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -496,11 +498,11 @@ enum GpsAlertStatus {
 }
 
 model GpsAlert {
-  id             String         @id @default(cuid())
+  id             String       @id @default(cuid())
   organizationId String
-  organization   Organization   @relation(fields: [organizationId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
   vehicleId      String
-  vehicle        Vehicle        @relation(fields: [vehicleId], references: [id])
+  vehicle        Vehicle      @relation(fields: [vehicleId], references: [id])
 
   type        GpsAlertType
   status      GpsAlertStatus @default(NUEVA)
@@ -562,8 +564,8 @@ model EngineLockRequest {
 
   executedAt DateTime? // cuando de verdad se envio el comando engineStop
 
-  restoredById String? // Person.id del Super Admin que desbloqueo
-  restoredAt   DateTime?
+  restoredById  String? // Person.id del Super Admin que desbloqueo
+  restoredAt    DateTime?
   restoreReason String?
 
   cancelledById String?
@@ -597,11 +599,11 @@ enum NoticeAudience {
 /// "marketing". authorName queda denormalizado (igual que AuditEntry.actorRole)
 /// para no depender de un JOIN solo para mostrar quien lo escribio.
 model Notice {
-  id             String         @id @default(cuid())
+  id             String       @id @default(cuid())
   organizationId String
-  organization   Organization   @relation(fields: [organizationId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
   authorId       String
-  author         Person         @relation("NoticeAuthor", fields: [authorId], references: [id])
+  author         Person       @relation("NoticeAuthor", fields: [authorId], references: [id])
   authorName     String
 
   title    String
@@ -747,7 +749,7 @@ model QueueEntry {
   vehicle   Vehicle @relation(fields: [vehicleId], references: [id])
 
   driverId String
-  driver   Person  @relation("QueueEntryDriver", fields: [driverId], references: [id])
+  driver   Person @relation("QueueEntryDriver", fields: [driverId], references: [id])
 
   status   QueueStatus  @default(PREINSCRITO)
   evidence EvidenceType @default(SIN_EVIDENCIA)
@@ -789,7 +791,7 @@ model Trip {
   vehicle   Vehicle @relation(fields: [vehicleId], references: [id])
 
   driverId String
-  driver   Person  @relation("TripDriver", fields: [driverId], references: [id])
+  driver   Person @relation("TripDriver", fields: [driverId], references: [id])
 
   route  RouteDir
   status TripStatus @default(PROGRAMADO)
@@ -823,7 +825,7 @@ model Manifest {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
 
-  number String @unique // MAN-{año}-{secuencia}
+  number String         @unique // MAN-{año}-{secuencia}
   status ManifestStatus @default(BORRADOR)
   route  RouteDir
 
@@ -831,7 +833,7 @@ model Manifest {
   vehicle   Vehicle @relation(fields: [vehicleId], references: [id])
 
   driverId String
-  driver   Person  @relation("ManifestDriver", fields: [driverId], references: [id])
+  driver   Person @relation("ManifestDriver", fields: [driverId], references: [id])
 
   companyId String
   company   Company @relation(fields: [companyId], references: [id])
@@ -846,7 +848,7 @@ model Manifest {
   departureTime String
   arrivalTime   String?
   capacity      Int
-  version       Int     @default(1)
+  version       Int      @default(1)
 
   correctionReason String?
   pdfGenerated     Boolean @default(false)
@@ -872,7 +874,10 @@ model Passenger {
   manifest   Manifest @relation(fields: [manifestId], references: [id])
 
   name          String
+  // Numero del documento del pasajero; el tipo lo dice documentType (DNI, CE o
+  // PASAPORTE). La columna se llama dni por compatibilidad con lo ya guardado.
   dni           String
+  documentType  String        @default("DNI")
   seat          Int
   fare          Float
   paymentMethod PaymentMethod
@@ -901,9 +906,10 @@ model PassengerProfile {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
 
-  dni   String
-  name  String
-  email String?
+  dni          String
+  documentType String  @default("DNI")
+  name         String
+  email        String?
 
   tripCount  Int       @default(0)
   lastTripAt DateTime?
@@ -911,7 +917,7 @@ model PassengerProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([organizationId, dni])
+  @@unique([organizationId, documentType, dni])
   @@index([organizationId])
   @@map("passenger_profiles")
 }
@@ -922,13 +928,13 @@ model RelocationOrder {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
 
-  status       RelocationStatus @default(DETECTADO)
-  fromTerminal Terminal
-  toTerminal   Terminal
-  reason       String
-  windowLabel  String
-  compensation String
-  internalOrder String @unique
+  status        RelocationStatus @default(DETECTADO)
+  fromTerminal  Terminal
+  toTerminal    Terminal
+  reason        String
+  windowLabel   String
+  compensation  String
+  internalOrder String           @unique
 
   confirmedById String?
   confirmedBy   Person? @relation("RelocationConfirmedBy", fields: [confirmedById], references: [id])
@@ -990,11 +996,11 @@ model DelayedRegistrationRequest {
   blockedByVehicleId String?
   blockedByVehicle   Vehicle? @relation("DelayedRegistrationBlockedBy", fields: [blockedByVehicleId], references: [id])
 
-  status     DelayedRegistrationStatus     @default(PENDIENTE)
+  status     DelayedRegistrationStatus      @default(PENDIENTE)
   resolution DelayedRegistrationResolution?
 
   resolvedById String?
-  resolvedBy   Person? @relation("DelayedRegistrationResolvedBy", fields: [resolvedById], references: [id])
+  resolvedBy   Person?   @relation("DelayedRegistrationResolvedBy", fields: [resolvedById], references: [id])
   resolvedAt   DateTime?
   consumedAt   DateTime?
 
@@ -1130,11 +1136,13 @@ model ComplaintBookEntry {
   number String        @unique
   type   ComplaintType
 
-  consumerName     String
-  consumerDocument String // DNI/CE/Pasaporte
-  consumerAddress  String?
-  consumerEmail    String
-  consumerPhone    String?
+  consumerName         String
+  consumerDocument     String // numero del documento
+  // DNI | CE | PASAPORTE | RUC. Null en los reclamos anteriores a este campo.
+  consumerDocumentType String?
+  consumerAddress      String?
+  consumerEmail        String
+  consumerPhone        String?
 
   // Si el reclamante es menor de edad, la norma exige los datos del padre/
   // apoderado que reclama en su representacion.

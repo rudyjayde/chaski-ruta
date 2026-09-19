@@ -1,4 +1,4 @@
-import { IsInt, IsString, Min } from 'class-validator';
+import { IsInt, IsString, Min, Max } from 'class-validator';
 
 export class OpenManifestDto {
   @IsString()
@@ -6,5 +6,6 @@ export class OpenManifestDto {
 
   @IsInt()
   @Min(1)
+  @Max(60)
   capacity: number;
 }

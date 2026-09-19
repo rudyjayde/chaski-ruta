@@ -4,6 +4,8 @@ import { fetchManifests, correctManifest, addManifestPassenger, closeManifest, r
 import SeatMap from '../../components/SeatMap';
 import type { Manifest, ManifestStatus, PaymentMethod } from '../../types';
 import { useAdminDemo } from './AdminApp';
+import DocumentField from '../../components/DocumentField';
+import { isValidDocument, type DocumentType } from '../../lib/validators';
 
 const STATUS_STYLE: Record<ManifestStatus, { label: string; cls: string }> = {
   BORRADOR: { label: 'Borrador', cls: 'bg-t2/10 text-t2' },
@@ -82,7 +84,7 @@ function ManifestDetail({
   m: Manifest;
   onClose: () => void;
   onCorrect: () => void;
-  onAddPassenger: (p: { name: string; dni: string; seat: number; fare: number; paymentMethod: PaymentMethod; origin: string; destination: string }) => Promise<void>;
+  onAddPassenger: (p: { name: string; dni: string; documentType?: DocumentType; seat: number; fare: number; paymentMethod: PaymentMethod; origin: string; destination: string }) => Promise<void>;
   onCloseManifest: () => void;
   addingPassenger: boolean;
   closingManifest: boolean;
@@ -99,6 +101,7 @@ function ManifestDetail({
   const [pNombres, setPNombres] = useState('');
   const [pApellidos, setPApellidos] = useState('');
   const [pDni, setPDni] = useState('');
+  const [pDocType, setPDocType] = useState<DocumentType>('DNI');
   const [selectedSeat, setSelectedSeat] = useState<number | null>(null);
   const [pFare, setPFare] = useState('10');
   const [pMethod, setPMethod] = useState<PaymentMethod>('EFECTIVO');
@@ -106,17 +109,17 @@ function ManifestDetail({
   const [pOrigin, setPOrigin] = useState(terminalName(m.route === 'JULI_PUNO' ? 'JULI' : 'PUNO', org));
   const [pDestination, setPDestination] = useState(terminalName(m.route === 'JULI_PUNO' ? 'PUNO' : 'JULI', org));
   const occupiedSeats = m.passengers.map(p => p.seat);
-  // Regla global: DNI peruano = exactamente 8 dígitos numéricos.
-  const dniValid = /^\d{8}$/.test(pDni);
+  // DNI = 8 números; carné de extranjería y pasaporte tienen su propio formato.
+  const dniValid = isValidDocument(pDocType, pDni);
 
   const resetAddForm = () => {
-    setPNombres(''); setPApellidos(''); setPDni(''); setSelectedSeat(null); setPFare('10'); setPMethod('EFECTIVO');
+    setPNombres(''); setPApellidos(''); setPDni(''); setPDocType('DNI'); setSelectedSeat(null); setPFare('10'); setPMethod('EFECTIVO');
   };
 
   const handleAdd = async () => {
     const fare = Number(pFare);
     if (!pNombres || !pApellidos || !dniValid || selectedSeat === null || !Number.isFinite(fare) || fare < 0) return;
-    await onAddPassenger({ name: `${pNombres.trim()} ${pApellidos.trim()}`, dni: pDni, seat: selectedSeat, fare, paymentMethod: pMethod, origin: pOrigin, destination: pDestination });
+    await onAddPassenger({ name: `${pNombres.trim()} ${pApellidos.trim()}`, dni: pDni, documentType: pDocType, seat: selectedSeat, fare, paymentMethod: pMethod, origin: pOrigin, destination: pDestination });
     resetAddForm();
   };
 
@@ -240,15 +243,7 @@ function ManifestDetail({
                 <input placeholder="Nombres" value={pNombres} onChange={e => setPNombres(e.target.value)} className="h-8 px-2 border border-border rounded text-sm" />
                 <input placeholder="Apellidos" value={pApellidos} onChange={e => setPApellidos(e.target.value)} className="h-8 px-2 border border-border rounded text-sm" />
                 <div className="col-span-2">
-                  <input
-                    placeholder="DNI (8 dígitos)"
-                    inputMode="numeric"
-                    value={pDni}
-                    onChange={e => setPDni(e.target.value.replace(/\D/g, '').slice(0, 8))}
-                    maxLength={8}
-                    className={`h-8 px-2 border rounded text-sm w-full ${pDni && !dniValid ? 'border-danger' : 'border-border'}`}
-                  />
-                  {pDni.length > 0 && !dniValid && <p className="text-[11px] text-danger mt-0.5">El DNI debe tener 8 dígitos numéricos</p>}
+                  <DocumentField size="sm" docType={pDocType} value={pDni} onDocType={setPDocType} onValue={setPDni} />
                 </div>
                 <input placeholder="Tarifa (S/)" type="number" min={0} value={pFare} onChange={e => setPFare(e.target.value)} className="h-8 px-2 border border-border rounded text-sm" />
                 <select value={pMethod} onChange={e => setPMethod(e.target.value as PaymentMethod)} className="h-8 px-2 border border-border rounded text-sm">
@@ -394,7 +389,7 @@ export default function ManifestsPage() {
     }
   };
 
-  const handleAddPassenger = async (p: { name: string; dni: string; seat: number; fare: number; paymentMethod: Manifest['passengers'][number]['paymentMethod']; origin: string; destination: string }) => {
+  const handleAddPassenger = async (p: { name: string; dni: string; documentType?: DocumentType; seat: number; fare: number; paymentMethod: Manifest['passengers'][number]['paymentMethod']; origin: string; destination: string }) => {
     if (!selected) return;
     setAddingPassenger(true);
     setLoadError('');

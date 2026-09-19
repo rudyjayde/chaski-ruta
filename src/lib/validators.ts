@@ -81,3 +81,95 @@ export const isValidOptionalPhone = (value: string) => value === '' || isValidPh
 // sanitize del onChange (el valor del campo nunca pasa del maximo).
 export const dniInputProps = { inputMode: 'numeric' as const, autoComplete: 'off' };
 export const phoneInputProps = { inputMode: 'numeric' as const, autoComplete: 'tel' };
+
+// ─── RUC (Jayde, 19 sept 2026) ───────────────────────────────────────────────
+// 11 numeros que empiezan con 10, 15, 16, 17 o 20; el ultimo es un digito
+// verificador (modulo 11). Misma regla que backend/src/common/validators.ts.
+export const RUC_ERROR = 'El RUC debe tener 11 números, empezar con 10, 15, 16, 17 o 20 y ser válido (dígito verificador).';
+export const sanitizeRuc = (value: string) => value.replace(/\D/g, '').slice(0, 11);
+export const isValidRuc = (value: string) => {
+  if (!/^(10|15|16|17|20)\d{9}$/.test(value)) return false;
+  const weights = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
+  const sum = weights.reduce((acc, w, i) => acc + w * Number(value[i]), 0);
+  const remainder = 11 - (sum % 11);
+  const check = remainder === 10 ? 0 : remainder === 11 ? 1 : remainder;
+  return check === Number(value[10]);
+};
+export const isValidOptionalRuc = (value: string) => value === '' || isValidRuc(value);
+export const rucInputProps = { inputMode: 'numeric' as const, autoComplete: 'off' };
+
+// ─── Contraseña ─────────────────────────────────────────────────────────────
+export const PASSWORD_HINT = 'Mínimo 8 caracteres, con al menos una letra y un número.';
+const COMMON_PASSWORDS = new Set([
+  '12345678', '123456789', '1234567890', '11111111', '12341234', '87654321', 'password', 'password1', 'password12',
+  'password123', 'contraseña1', 'contrasena1', 'contraseña123', 'qwerty123', 'qwertyuiop', 'abc12345', 'a1234567',
+  'admin123', 'admin1234', 'chaski123', 'chaskiai1', 'iloveyou1', 'peru12345', 'bienvenido1', 'test1234',
+]);
+// null = la contraseña sirve; si no, el motivo en español.
+export const passwordProblem = (value: string): string | null => {
+  if (value.length < 8 || value.length > 72 || !/[A-Za-z]/.test(value) || !/\d/.test(value)) {
+    return 'La contraseña debe tener entre 8 y 72 caracteres, con al menos una letra y un número.';
+  }
+  if (COMMON_PASSWORDS.has(value.toLowerCase())) return 'Esa contraseña es demasiado común. Elige otra.';
+  return null;
+};
+
+// ─── Tipo y numero de documento (pasajeros, Libro de Reclamaciones) ─────────
+export type DocumentType = 'DNI' | 'CE' | 'PASAPORTE' | 'RUC';
+export const PASSENGER_DOCUMENT_TYPES: { value: DocumentType; label: string }[] = [
+  { value: 'DNI', label: 'DNI' },
+  { value: 'CE', label: 'Carné de extranjería' },
+  { value: 'PASAPORTE', label: 'Pasaporte' },
+];
+export const COMPLAINT_DOCUMENT_TYPES: { value: DocumentType; label: string }[] = [...PASSENGER_DOCUMENT_TYPES, { value: 'RUC', label: 'RUC' }];
+export const documentLabel = (type?: string | null) => (type === 'CE' ? 'CE' : type === 'PASAPORTE' ? 'Pasaporte' : type === 'RUC' ? 'RUC' : 'DNI');
+
+export const sanitizeDocument = (type: DocumentType, value: string) => {
+  if (type === 'DNI') return sanitizeDni(value);
+  if (type === 'RUC') return sanitizeRuc(value);
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
+};
+export const isValidDocument = (type: DocumentType, value: string) => {
+  if (type === 'DNI') return isValidDni(value);
+  if (type === 'RUC') return isValidRuc(value);
+  if (type === 'CE') return /^[A-Z0-9]{9,12}$/.test(value);
+  return /^[A-Z0-9]{6,12}$/.test(value);
+};
+export const documentError = (type: DocumentType) =>
+  type === 'DNI' ? DNI_ERROR
+    : type === 'RUC' ? RUC_ERROR
+    : type === 'CE' ? 'El carné de extranjería debe tener de 9 a 12 letras o números.'
+    : 'El pasaporte debe tener de 6 a 12 letras o números.';
+export const documentPlaceholder = (type: DocumentType) =>
+  type === 'DNI' ? '8 números' : type === 'RUC' ? '11 números' : type === 'CE' ? '9 a 12 letras o números' : '6 a 12 letras o números';
+
+// ─── GPS: IMEI del equipo ───────────────────────────────────────────────────
+export const IMEI_ERROR = 'El IMEI debe tener exactamente 15 números.';
+export const sanitizeImei = (value: string) => value.replace(/\D/g, '').slice(0, 15);
+export const isValidOptionalImei = (value: string) => value === '' || /^\d{15}$/.test(value);
+
+// ─── Licencia: fechas y estado ──────────────────────────────────────────────
+export const LICENSE_WARNING_DAYS = 30;
+const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+// '' = fechas coherentes; si no, el motivo. Formato YYYY-MM-DD.
+export const licenseDatesError = (issued: string, expiry: string) => {
+  if (!issued) return 'Indica la fecha de emisión de la licencia.';
+  if (!expiry) return 'Indica la fecha de vencimiento de la licencia.';
+  if (issued > todayStr()) return 'La fecha de emisión no puede ser futura.';
+  if (expiry <= issued) return 'El vencimiento debe ser posterior a la fecha de emisión.';
+  return '';
+};
+export type LicenseStatusKind = 'vigente' | 'por_vencer' | 'vencida' | 'sin_licencia';
+export const licenseStatus = (expiry?: string | null): { kind: LicenseStatusKind; label: string; days: number | null; cls: string } => {
+  if (!expiry) return { kind: 'sin_licencia', label: 'Sin licencia', days: null, cls: 'bg-warn/10 text-warn' };
+  const days = Math.round((Date.parse(expiry.slice(0, 10)) - Date.parse(todayStr())) / 86400000);
+  if (days < 0) return { kind: 'vencida', label: 'Vencida', days, cls: 'bg-danger/10 text-danger' };
+  if (days <= LICENSE_WARNING_DAYS) return { kind: 'por_vencer', label: 'Por vencer', days, cls: 'bg-warn/10 text-warn' };
+  return { kind: 'vigente', label: 'Vigente', days, cls: 'bg-ok/10 text-ok' };
+};
+
+// Para el atributo max de un <input type="date"> (nada de fechas futuras).
+export const todayInputValue = () => todayStr();

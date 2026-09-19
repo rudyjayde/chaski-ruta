@@ -165,6 +165,9 @@ export class ManifestsService {
     if (manifest.passengers.length >= manifest.capacity) {
       throw new BadRequestException('El manifiesto ya alcanzo su capacidad');
     }
+    if (dto.seat > manifest.capacity) {
+      throw new BadRequestException(`El asiento ${dto.seat} no existe: esta unidad tiene ${manifest.capacity} asientos.`);
+    }
     if (manifest.passengers.some((p) => p.seat === dto.seat)) {
       throw new BadRequestException(`El asiento ${dto.seat} ya esta ocupado en este manifiesto`);
     }
@@ -210,9 +213,10 @@ export class ManifestsService {
   ): Promise<void> {
     try {
       const email = dto.email?.trim() || undefined;
+      const documentType = dto.documentType ?? 'DNI';
       const profile = await this.prisma.passengerProfile.upsert({
-        where: { organizationId_dni: { organizationId, dni: dto.dni } },
-        create: { organizationId, dni: dto.dni, name: dto.name, email: email ?? null, tripCount: 1, lastTripAt: new Date() },
+        where: { organizationId_documentType_dni: { organizationId, documentType, dni: dto.dni } },
+        create: { organizationId, documentType, dni: dto.dni, name: dto.name, email: email ?? null, tripCount: 1, lastTripAt: new Date() },
         update: { name: dto.name, ...(email ? { email } : {}), tripCount: { increment: 1 }, lastTripAt: new Date() },
       });
 
@@ -235,7 +239,7 @@ export class ManifestsService {
       });
     } catch (err) {
       this.logger.error(
-        `Error registrando perfil/boleto del pasajero DNI ${dto.dni}: ${err instanceof Error ? err.message : String(err)}`,
+        `Error registrando perfil/boleto del pasajero (${dto.documentType ?? 'DNI'} ${dto.dni}): ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }

@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { VisitorAuthService } from './visitor-auth.service';
 import { RegisterVisitorDto } from './dto/register-visitor.dto';
 import { LoginVisitorDto } from './dto/login-visitor.dto';
@@ -14,11 +15,15 @@ export class VisitorAuthController {
   constructor(private visitorAuth: VisitorAuthService) {}
 
   @Post('register')
+  @Throttle({ default: { limit: 10, ttl: 3_600_000 } })
   async register(@Body() dto: RegisterVisitorDto) {
+    // Campo trampa anti-robots: se descarta en silencio (sin token real).
+    if (dto.website?.trim()) return { token: '' };
     return this.visitorAuth.register(dto.email, dto.password, dto.name);
   }
 
   @Post('login')
+  @Throttle({ default: { limit: 8, ttl: 60_000 } })
   async login(@Body() dto: LoginVisitorDto) {
     return this.visitorAuth.login(dto.email, dto.password);
   }

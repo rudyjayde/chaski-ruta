@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { json, urlencoded } from 'express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { validationExceptionFactory } from './common/validation-messages';
 
 async function bootstrap() {
   // bodyParser:false + limites propios -- el body-parser por defecto de Nest/Express
@@ -35,6 +36,7 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      exceptionFactory: validationExceptionFactory,
     }),
   );
 

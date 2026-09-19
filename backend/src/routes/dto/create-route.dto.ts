@@ -1,6 +1,6 @@
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 
 export class CreateRouteDto {
-  @IsString() @IsNotEmpty() origin: string;
-  @IsString() @IsNotEmpty() destination: string;
+  @IsString() @IsNotEmpty() @MaxLength(100) origin: string;
+  @IsString() @IsNotEmpty() @MaxLength(100) destination: string;
 }

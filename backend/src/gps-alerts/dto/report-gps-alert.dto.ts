@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 
 // Reporte manual del conductor/socio -- a diferencia del resto de
 // GpsAlertType (siempre detectados por el cron), esto lo crea directamente
@@ -9,5 +9,6 @@ export class ReportGpsAlertDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   note?: string;
 }

@@ -4,6 +4,7 @@ import {
   getVisitorToken, setVisitorToken, clearVisitorToken, fetchVisitorMe, registerVisitor, loginVisitor, visitorGoogleLoginUrl,
   type VisitorMe, type CommercialRequestStatus,
 } from '../lib/visitor-auth-api';
+import { passwordProblem } from '../lib/validators';
 
 const STATUS_LABEL: Record<CommercialRequestStatus, string> = {
   NUEVA: 'Recibida',
@@ -24,17 +25,25 @@ function VisitorAuthForm({ onAuthenticated }: { onAuthenticated: () => void }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [website, setWebsite] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
+    if (mode === 'register') {
+      const problem = passwordProblem(password);
+      if (problem) {
+        setError(problem);
+        return;
+      }
+    }
     setLoading(true);
     try {
       const { token } = mode === 'login'
         ? await loginVisitor(email, password)
-        : await registerVisitor(email, password, name || undefined);
+        : await registerVisitor(email, password, name || undefined, website || undefined);
       setVisitorToken(token);
       onAuthenticated();
     } catch (err) {
@@ -71,6 +80,7 @@ function VisitorAuthForm({ onAuthenticated }: { onAuthenticated: () => void }) {
       </div>
 
       <form onSubmit={submit} className="space-y-3">
+        <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, overflow: 'hidden' }}><label>Sitio web<input tabIndex={-1} autoComplete="off" value={website} onChange={e => setWebsite(e.target.value)} /></label></div>
         {mode === 'register' && (
           <input
             value={name}
@@ -90,10 +100,11 @@ function VisitorAuthForm({ onAuthenticated }: { onAuthenticated: () => void }) {
         <input
           type="password"
           required
-          minLength={8}
+          minLength={mode === 'register' ? 8 : undefined}
+          maxLength={72}
           value={password}
           onChange={e => setPassword(e.target.value)}
-          placeholder="Contraseña (mínimo 8 caracteres)"
+          placeholder={mode === 'register' ? 'Contraseña (8 o más, con letras y números)' : 'Contraseña'}
           className="w-full h-10 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
         />
         {error && <p className="text-sm text-danger">{error}</p>}

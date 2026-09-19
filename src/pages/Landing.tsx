@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { submitCommercialRequest } from '../lib/commercial-requests-api';
-import { PHONE_ERROR, PLATE_ERROR, phoneInputProps, sanitizePhone, sanitizePlate, isValidPhone, isValidPlate } from '../lib/validators';
+import { PHONE_ERROR, PLATE_ERROR, phoneInputProps, sanitizePhone, sanitizePlate, isValidPhone, isValidPlate, RUC_ERROR, isValidOptionalRuc, sanitizeRuc, rucInputProps } from '../lib/validators';
 import { AccountPanelContent } from './VisitorAccountPage';
 import { useAuth } from '../contexts/AuthContext';
 import { getVisitorToken, fetchVisitorMe, clearVisitorToken } from '../lib/visitor-auth-api';
@@ -153,6 +153,7 @@ function GPSVehicleCard({ plan }: { plan: LandingPlan }) {
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [website, setWebsite] = useState('');
   const [form, setForm] = useState({
     owner: '', email: '', phone: '', association: 'ATIPCAR',
     unitCode: '', plate: '', units: '1',
@@ -179,6 +180,7 @@ function GPSVehicleCard({ plan }: { plan: LandingPlan }) {
         contactPhone: form.phone,
         orgName: form.association,
         answers: { unitCode: form.unitCode, plate: form.plate, units: form.units },
+        website: website || undefined,
       });
       setSent(true);
     } catch (err) {
@@ -239,6 +241,7 @@ function GPSVehicleCard({ plan }: { plan: LandingPlan }) {
               </div>
             ) : (
               <form onSubmit={submit} className="p-6 space-y-4">
+                <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, overflow: 'hidden' }}><label>Sitio web<input tabIndex={-1} autoComplete="off" value={website} onChange={e => setWebsite(e.target.value)} /></label></div>
                 <div className="bg-primary/5 border border-primary/20 rounded p-3 text-xs text-t2">
                   Disponible inicialmente para socios de asociaciones que utilizan CHASKI RUTA.
                 </div>
@@ -306,6 +309,7 @@ function PlanSection({ scrollTo, plans }: { scrollTo: (id: string) => void; plan
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [website, setWebsite] = useState('');
   const [form, setForm] = useState({
     orgName: '', ruc: '', city: '', routes: '',
     contactName: '', email: '', phone: '',
@@ -322,6 +326,10 @@ function PlanSection({ scrollTo, plans }: { scrollTo: (id: string) => void; plan
       setError(PHONE_ERROR);
       return;
     }
+    if (!isValidOptionalRuc(form.ruc)) {
+      setError(RUC_ERROR);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -332,6 +340,7 @@ function PlanSection({ scrollTo, plans }: { scrollTo: (id: string) => void; plan
         contactPhone: form.phone,
         orgName: form.orgName,
         ruc: form.ruc || undefined,
+        website: website || undefined,
         answers: {
           city: form.city,
           routes: form.routes,
@@ -427,15 +436,16 @@ function PlanSection({ scrollTo, plans }: { scrollTo: (id: string) => void; plan
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, overflow: 'hidden' }}><label>Sitio web<input tabIndex={-1} autoComplete="off" value={website} onChange={e => setWebsite(e.target.value)} /></label></div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="col-span-2">
                     <label className="block text-xs font-medium text-t1 mb-1">Nombre de la asociación *</label>
-                    <input required value={form.orgName} onChange={e => set('orgName', e.target.value)} placeholder="ASOTRANS NORTE S.A."
+                    <input required maxLength={150} value={form.orgName} onChange={e => set('orgName', e.target.value)} placeholder="ASOTRANS NORTE S.A."
                       className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-t1 mb-1">RUC</label>
-                    <input value={form.ruc} onChange={e => set('ruc', e.target.value)} placeholder="20XXXXXXXXX"
+                    <input {...rucInputProps} value={form.ruc} onChange={e => set('ruc', sanitizeRuc(e.target.value))} placeholder="20XXXXXXXXX"
                       className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
                   </div>
                   <div>

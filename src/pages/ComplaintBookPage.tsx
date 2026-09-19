@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { ArrowLeft, CheckCircle, Loader2 } from 'lucide-react';
+import DocumentField from '../components/DocumentField';
 import { submitComplaint } from '../lib/complaint-book-api';
-import { PHONE_ERROR, phoneInputProps, sanitizePhone, isValidOptionalPhone } from '../lib/validators';
+import { PHONE_ERROR, phoneInputProps, sanitizePhone, isValidOptionalPhone, COMPLAINT_DOCUMENT_TYPES, isValidDocument, documentError, type DocumentType } from '../lib/validators';
 
 interface Props {
   onBack: () => void;
@@ -13,18 +14,23 @@ const labelCls = 'block text-xs font-medium text-t1 mb-1';
 export default function ComplaintBookPage({ onBack }: Props) {
   const [form, setForm] = useState({
     type: 'RECLAMO' as 'RECLAMO' | 'QUEJA',
-    consumerName: '', consumerDocument: '', consumerAddress: '', consumerEmail: '', consumerPhone: '',
+    consumerName: '', consumerDocumentType: 'DNI' as DocumentType, consumerDocument: '', consumerAddress: '', consumerEmail: '', consumerPhone: '',
     isMinor: false, guardianName: '',
     serviceDescription: '', claimedAmount: '',
     detail: '', consumerRequest: '',
   });
   const set = (k: string, v: string | boolean) => setForm(f => ({ ...f, [k]: v }));
+  const [website, setWebsite] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ number: string } | null>(null);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!isValidDocument(form.consumerDocumentType, form.consumerDocument)) {
+      setError(documentError(form.consumerDocumentType));
+      return;
+    }
     if (!isValidOptionalPhone(form.consumerPhone)) {
       setError(PHONE_ERROR);
       return;
@@ -36,6 +42,7 @@ export default function ComplaintBookPage({ onBack }: Props) {
         type: form.type,
         consumerName: form.consumerName,
         consumerDocument: form.consumerDocument,
+        consumerDocumentType: form.consumerDocumentType,
         consumerAddress: form.consumerAddress || undefined,
         consumerEmail: form.consumerEmail,
         consumerPhone: form.consumerPhone || undefined,
@@ -45,6 +52,7 @@ export default function ComplaintBookPage({ onBack }: Props) {
         claimedAmount: form.claimedAmount ? Number(form.claimedAmount) : undefined,
         detail: form.detail,
         consumerRequest: form.consumerRequest,
+        website: website || undefined,
       });
       setResult(res);
     } catch (err) {
@@ -77,6 +85,7 @@ export default function ComplaintBookPage({ onBack }: Props) {
           </div>
         ) : (
           <form onSubmit={submit} className="space-y-4">
+            <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, overflow: 'hidden' }}><label>Sitio web<input tabIndex={-1} autoComplete="off" value={website} onChange={e => setWebsite(e.target.value)} /></label></div>
             <div>
               <label className={labelCls}>Tipo *</label>
               <div className="flex gap-3">
@@ -92,11 +101,12 @@ export default function ComplaintBookPage({ onBack }: Props) {
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
                 <label className={labelCls}>Nombre completo *</label>
-                <input required value={form.consumerName} onChange={e => set('consumerName', e.target.value)} className={inputCls} />
+                <input required maxLength={120} value={form.consumerName} onChange={e => set('consumerName', e.target.value)} className={inputCls} />
               </div>
               <div>
-                <label className={labelCls}>DNI / CE / Pasaporte *</label>
-                <input required value={form.consumerDocument} onChange={e => set('consumerDocument', e.target.value)} className={inputCls} />
+                <label className={labelCls}>Documento de identidad *</label>
+                <DocumentField types={COMPLAINT_DOCUMENT_TYPES} docType={form.consumerDocumentType} value={form.consumerDocument}
+                  onDocType={t => set('consumerDocumentType', t)} onValue={v => set('consumerDocument', v)} />
               </div>
               <div>
                 <label className={labelCls}>Teléfono</label>
@@ -108,7 +118,7 @@ export default function ComplaintBookPage({ onBack }: Props) {
               </div>
               <div>
                 <label className={labelCls}>Domicilio</label>
-                <input value={form.consumerAddress} onChange={e => set('consumerAddress', e.target.value)} className={inputCls} />
+                <input maxLength={200} value={form.consumerAddress} onChange={e => set('consumerAddress', e.target.value)} className={inputCls} />
               </div>
             </div>
 
@@ -128,22 +138,22 @@ export default function ComplaintBookPage({ onBack }: Props) {
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
                 <label className={labelCls}>Bien o servicio contratado *</label>
-                <input required value={form.serviceDescription} onChange={e => set('serviceDescription', e.target.value)} placeholder="Ej. Plan Operación de CHASKI RUTA" className={inputCls} />
+                <input required maxLength={300} value={form.serviceDescription} onChange={e => set('serviceDescription', e.target.value)} placeholder="Ej. Plan Operación de CHASKI RUTA" className={inputCls} />
               </div>
               <div>
                 <label className={labelCls}>Monto reclamado (S/, opcional)</label>
-                <input type="number" min="0" step="0.01" value={form.claimedAmount} onChange={e => set('claimedAmount', e.target.value)} className={inputCls} />
+                <input type="number" min="0" max="1000000" step="0.01" value={form.claimedAmount} onChange={e => set('claimedAmount', e.target.value)} className={inputCls} />
               </div>
             </div>
 
             <div>
               <label className={labelCls}>Detalle del reclamo o queja *</label>
-              <textarea required rows={4} value={form.detail} onChange={e => set('detail', e.target.value)}
+              <textarea required rows={4} minLength={10} maxLength={3000} value={form.detail} onChange={e => set('detail', e.target.value)}
                 className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary" />
             </div>
             <div>
               <label className={labelCls}>¿Qué solicitas? *</label>
-              <textarea required rows={2} value={form.consumerRequest} onChange={e => set('consumerRequest', e.target.value)}
+              <textarea required rows={2} maxLength={1000} value={form.consumerRequest} onChange={e => set('consumerRequest', e.target.value)}
                 className="w-full px-3 py-2 border border-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary" />
             </div>
 

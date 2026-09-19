@@ -53,10 +53,10 @@ export function visitorGoogleLoginUrl(): string {
   return `${apiUrl()}/auth/google?flow=landing`;
 }
 
-export async function registerVisitor(email: string, password: string, name?: string): Promise<{ token: string }> {
+export async function registerVisitor(email: string, password: string, name?: string, website?: string): Promise<{ token: string }> {
   return request<{ token: string }>('/visitor-auth/register', {
     method: 'POST',
-    body: JSON.stringify({ email, password, name }),
+    body: JSON.stringify({ email, password, name, website }),
   });
 }
 

@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, MinLength, MaxLength } from 'class-validator';
 
 export class RespondSupportTicketDto {
   @IsIn(['EN_PROGRESO', 'RESUELTO'])
@@ -7,5 +7,6 @@ export class RespondSupportTicketDto {
   @IsOptional()
   @IsString()
   @MinLength(1)
+  @MaxLength(2000)
   response?: string;
 }

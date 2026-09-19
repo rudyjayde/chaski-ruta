@@ -54,6 +54,8 @@ export interface Passenger {
   id: string;
   name: string;
   dni: string;
+  // DNI (por defecto), CE, PASAPORTE. `dni` guarda el numero del documento.
+  documentType?: 'DNI' | 'CE' | 'PASAPORTE' | 'RUC';
   seat: number;
   fare: number;
   paymentMethod: PaymentMethod;
@@ -221,6 +223,7 @@ export interface Person {
   // de vencimiento (ISO, solo la parte de fecha importa).
   license?: string | null;
   licenseCategory?: string | null;
+  licenseIssuedAt?: string | null;
   licenseExpiry?: string | null;
 }
 

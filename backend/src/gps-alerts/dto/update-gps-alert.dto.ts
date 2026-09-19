@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpdateGpsAlertDto {
   @IsIn(['EN_REVISION', 'REVISADA', 'DESCARTADA'])
@@ -6,5 +6,6 @@ export class UpdateGpsAlertDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   note?: string;
 }

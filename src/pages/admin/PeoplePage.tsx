@@ -16,11 +16,7 @@ import {
   fetchVehicles, fetchCompanies, type CompanyOption,
   changeVehiclePartner, changeVehicleDriver, updatePersonStatus, updatePersonLicense, resetPersonDevice,
 } from '../../lib/operacion-api';
-import {
-  DNI_ERROR, PHONE_ERROR, LICENSE_ERROR, dniInputProps, phoneInputProps, sanitizeDni, sanitizePhone, sanitizeLicense,
-  isValidDni, isValidPhone, isValidLicense, isValidOptionalDni, isValidOptionalPhone,
-  maskLicense, formatLicenseExpiry, licenseExpiryInputValue,
-} from '../../lib/validators';
+import { DNI_ERROR, PHONE_ERROR, LICENSE_ERROR, dniInputProps, phoneInputProps, sanitizeDni, sanitizePhone, sanitizeLicense, isValidDni, isValidPhone, isValidLicense, isValidOptionalDni, isValidOptionalPhone, maskLicense, formatLicenseExpiry, licenseExpiryInputValue, licenseDatesError, licenseStatus, todayInputValue } from '../../lib/validators';
 
 type PersonTab = 'conductores' | 'socios' | 'administradores' | 'pendientes';
 
@@ -60,12 +56,13 @@ interface SocioForm {
   driverUnit: string;
   license: string;
   licenseCategory: string;
+  licenseIssuedAt: string;
   licenseExpiry: string;
 }
 
 const EMPTY_SOCIO: SocioForm = {
   name: '', dni: '', email: '', phone: '', company: '', vehicleCodes: [],
-  drivesOwn: false, driverUnit: '', license: '', licenseCategory: '', licenseExpiry: '',
+  drivesOwn: false, driverUnit: '', license: '', licenseCategory: '', licenseIssuedAt: '', licenseExpiry: '',
 };
 
 function RegisterSocioModal({
@@ -122,11 +119,14 @@ function RegisterSocioModal({
     if (people.some(person => person.email.toLowerCase() === email && person.role === 'SOCIO')) {
       return setError('Ya existe una cuenta de socio con ese correo. Abre su perfil para vincularle vehículos sin crear otra cuenta.');
     }
-    if (form.drivesOwn && (!form.driverUnit || !form.license || !form.licenseCategory || !form.licenseExpiry)) {
+    if (form.drivesOwn && (!form.driverUnit || !form.license || !form.licenseCategory || !form.licenseIssuedAt || !form.licenseExpiry)) {
       return setError('Selecciona la unidad que manejará y completa los datos de su licencia.');
     }
     if (form.drivesOwn && !isValidLicense(form.license)) {
       return setError(LICENSE_ERROR);
+    }
+    if (form.drivesOwn && licenseDatesError(form.licenseIssuedAt, form.licenseExpiry)) {
+      return setError(licenseDatesError(form.licenseIssuedAt, form.licenseExpiry));
     }
 
     setSaving(true);
@@ -152,6 +152,7 @@ function RegisterSocioModal({
           code: form.driverUnit,
           license: form.license,
           licenseCategory: form.licenseCategory.trim(),
+          licenseIssuedAt: form.licenseIssuedAt,
           licenseExpiry: form.licenseExpiry,
         });
       }
@@ -303,7 +304,8 @@ function RegisterSocioModal({
                 </div>
                 <Field label="Número de licencia" required><input className={`${inputClass} font-mono`} placeholder="Q12345678" autoComplete="off" value={form.license} onChange={e => set('license', sanitizeLicense(e.target.value))} /></Field>
                 <Field label="Categoría" required><input className={inputClass} placeholder="Ej. A-IIb" value={form.licenseCategory} onChange={e => set('licenseCategory', e.target.value)} /></Field>
-                <div className="col-span-2"><Field label="Vencimiento de licencia" required><input type="date" className={inputClass} value={form.licenseExpiry} onChange={e => set('licenseExpiry', e.target.value)} /></Field></div>
+                <Field label="Fecha de emisión" required><input type="date" max={todayInputValue()} className={inputClass} value={form.licenseIssuedAt} onChange={e => set('licenseIssuedAt', e.target.value)} /></Field>
+                <Field label="Vencimiento" required><input type="date" className={inputClass} value={form.licenseExpiry} onChange={e => set('licenseExpiry', e.target.value)} /></Field>
               </div>
             )}
           </fieldset>
@@ -331,12 +333,13 @@ interface DriverForm {
   unitCode: string;
   license: string;
   licenseCategory: string;
+  licenseIssuedAt: string;
   licenseExpiry: string;
 }
 
 const EMPTY_DRIVER: DriverForm = {
   name: '', dni: '', email: '', phone: '', unitCode: '',
-  license: '', licenseCategory: '', licenseExpiry: '',
+  license: '', licenseCategory: '', licenseIssuedAt: '', licenseExpiry: '',
 };
 
 function RegisterDriverModal({
@@ -370,11 +373,14 @@ function RegisterDriverModal({
     if (!form.name.trim() || !isValidDni(form.dni) || !email || !isValidPhone(form.phone)) {
       return setError('Completa los datos del conductor. El DNI debe tener 8 dígitos y el teléfono 9.');
     }
-    if (!selectedUnit || !form.license || !form.licenseCategory || !form.licenseExpiry) {
+    if (!selectedUnit || !form.license || !form.licenseCategory || !form.licenseIssuedAt || !form.licenseExpiry) {
       return setError('Selecciona la unidad y completa todos los datos de la licencia.');
     }
     if (!isValidLicense(form.license)) {
       return setError(LICENSE_ERROR);
+    }
+    if (licenseDatesError(form.licenseIssuedAt, form.licenseExpiry)) {
+      return setError(licenseDatesError(form.licenseIssuedAt, form.licenseExpiry));
     }
     if (existingConductor) {
       return setError('Esta persona ya tiene el rol de conductor. Usa Vincular o cambiar unidad desde su perfil.');
@@ -393,6 +399,7 @@ function RegisterDriverModal({
         code: selectedUnit.code,
         license: form.license,
         licenseCategory: form.licenseCategory.trim(),
+        licenseIssuedAt: form.licenseIssuedAt,
         licenseExpiry: form.licenseExpiry,
       });
       await changeVehicleDriver(selectedUnit.id, conductor.id, 'Alta inicial de conductor');
@@ -437,7 +444,8 @@ function RegisterDriverModal({
             <div className="grid grid-cols-2 gap-4">
               <Field label="Número de licencia" required><input className={`${inputClass} font-mono`} placeholder="Q12345678" autoComplete="off" value={form.license} onChange={e => set('license', sanitizeLicense(e.target.value))} /></Field>
               <Field label="Categoría" required><input className={inputClass} placeholder="Ej. A-IIb" value={form.licenseCategory} onChange={e => set('licenseCategory', e.target.value)} /></Field>
-              <div className="col-span-2"><Field label="Vencimiento" required><input type="date" className={inputClass} value={form.licenseExpiry} onChange={e => set('licenseExpiry', e.target.value)} /></Field></div>
+              <Field label="Fecha de emisión" required><input type="date" max={todayInputValue()} className={inputClass} value={form.licenseIssuedAt} onChange={e => set('licenseIssuedAt', e.target.value)} /></Field>
+              <Field label="Vencimiento" required><input type="date" className={inputClass} value={form.licenseExpiry} onChange={e => set('licenseExpiry', e.target.value)} /></Field>
             </div>
           </fieldset>
 
@@ -528,21 +536,35 @@ function LinkUnitModal({
   );
 }
 
+function LicenseBadge({ expiry }: { expiry?: string | null }) {
+  const st = licenseStatus(expiry);
+  const detail = st.days === null ? '' : st.days < 0 ? ` · hace ${-st.days} d` : ` · en ${st.days} d`;
+  return <span className={`text-[11px] px-2 py-0.5 rounded font-medium whitespace-nowrap ${st.cls}`}>{st.label}{detail}</span>;
+}
+
+const licenseMatches = (p: Person, filter: string) => {
+  const kind = licenseStatus(p.licenseExpiry).kind;
+  return filter === 'alertas' ? kind !== 'vigente' : kind === filter;
+};
+
 // Registrar o corregir la licencia de un conductor que ya existe.
 function LicenseModal({ person, onClose, onSaved }: { person: Person; onClose: () => void; onSaved: (message: string) => void }) {
   const [license, setLicense] = useState(person.license ?? '');
   const [category, setCategory] = useState(person.licenseCategory ?? '');
+  const [issued, setIssued] = useState(licenseExpiryInputValue(person.licenseIssuedAt));
   const [expiry, setExpiry] = useState(licenseExpiryInputValue(person.licenseExpiry));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const save = async () => {
     if (!isValidLicense(license)) return setError(LICENSE_ERROR);
-    if (!category.trim() || !expiry) return setError('Completa la categoría y la fecha de vencimiento.');
+    if (!category.trim()) return setError('Completa la categoría de la licencia.');
+    const datesProblem = licenseDatesError(issued, expiry);
+    if (datesProblem) return setError(datesProblem);
     setSaving(true);
     setError('');
     try {
-      await updatePersonLicense(person.id, { license, licenseCategory: category.trim(), licenseExpiry: expiry });
+      await updatePersonLicense(person.id, { license, licenseCategory: category.trim(), licenseIssuedAt: issued, licenseExpiry: expiry });
       onSaved(`Licencia de ${person.name} guardada.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo guardar la licencia.');
@@ -559,6 +581,7 @@ function LicenseModal({ person, onClose, onSaved }: { person: Person; onClose: (
         <div className="space-y-3">
           <Field label="Número de licencia" required><input className={`${inputClass} font-mono`} placeholder="Q12345678" autoComplete="off" value={license} onChange={e => { setLicense(sanitizeLicense(e.target.value)); setError(''); }} /></Field>
           <Field label="Categoría" required><input className={inputClass} placeholder="Ej. A-IIb" value={category} onChange={e => { setCategory(e.target.value); setError(''); }} /></Field>
+          <Field label="Fecha de emisión" required><input type="date" max={todayInputValue()} className={inputClass} value={issued} onChange={e => { setIssued(e.target.value); setError(''); }} /></Field>
           <Field label="Vencimiento" required><input type="date" className={inputClass} value={expiry} onChange={e => { setExpiry(e.target.value); setError(''); }} /></Field>
         </div>
         {error && <p className="text-xs text-danger mt-3">{error}</p>}
@@ -642,10 +665,19 @@ function PersonDetail({ person, onClose, onLink, onStatusChanged }: { person: Pe
           <div className="border border-border rounded-lg p-3 space-y-2">
             <p className="text-t2">Licencia de conducir</p>
             {person.license ? (
-              <p className="text-t1 font-medium">
-                <span className="font-mono">{maskLicense(person.license)}</span>
-                {' · '}{person.licenseCategory || 'Sin categoría'}{' · vence '}{formatLicenseExpiry(person.licenseExpiry) || '—'}
-              </p>
+              <div className="space-y-1">
+                <p className="text-t1 font-medium">
+                  <span className="font-mono">{maskLicense(person.license)}</span>
+                  {' · '}{person.licenseCategory || 'Sin categoría'}
+                </p>
+                <p className="text-t2">
+                  {person.licenseIssuedAt ? `Emitida ${formatLicenseExpiry(person.licenseIssuedAt)}` : <span className="text-warn">Falta la fecha de emisión</span>}
+                  {' · vence '}{formatLicenseExpiry(person.licenseExpiry) || '—'}
+                </p>
+                <span className={`inline-block text-[11px] px-2 py-0.5 rounded font-medium ${licenseStatus(person.licenseExpiry).cls}`}>
+                  {licenseStatus(person.licenseExpiry).label}{licenseStatus(person.licenseExpiry).days !== null ? ` · ${licenseStatus(person.licenseExpiry).days! < 0 ? `hace ${-licenseStatus(person.licenseExpiry).days!} d` : `en ${licenseStatus(person.licenseExpiry).days} d`}` : ''}
+                </span>
+              </div>
             ) : (
               <p className="text-warn font-medium">No registrada</p>
             )}
@@ -824,6 +856,7 @@ export default function PeoplePage() {
   const [search, setSearch] = useState('');
   const [filterCompany, setFilterCompany] = useState('');
   const [showSuspended, setShowSuspended] = useState(false);
+  const [licenseFilter, setLicenseFilter] = useState('');
   const [selected, setSelected] = useState<Person | null>(null);
   const [linking, setLinking] = useState<Person | null>(null);
   const [showInvite, setShowInvite] = useState(false);
@@ -861,8 +894,8 @@ export default function PeoplePage() {
 
   const filteredPeople = useMemo(() => people.filter(p => tab === 'pendientes' ? p.status === 'PENDIENTE' : p.role === roleMap[tab] && p.status !== 'PENDIENTE').filter(p => {
     const q = search.toLowerCase();
-    return (!q || p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q) || p.code?.includes(q)) && (!filterCompany || p.company === filterCompany) && (showSuspended || p.status !== 'SUSPENDIDO');
-  }), [people, tab, search, filterCompany, showSuspended]);
+    return (!q || p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q) || p.code?.includes(q)) && (!filterCompany || p.company === filterCompany) && (showSuspended || p.status !== 'SUSPENDIDO') && (tab !== 'conductores' || !licenseFilter || licenseMatches(p, licenseFilter));
+  }), [people, tab, search, filterCompany, showSuspended, licenseFilter]);
 
   const counts = {
     conductores: people.filter(p => p.role === 'CONDUCTOR' && p.status !== 'PENDIENTE').length,
@@ -898,14 +931,23 @@ export default function PeoplePage() {
         <div className="relative"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" /><input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Nombre, correo o código..." className="w-72 h-9 pl-9 pr-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" /></div>
         <select value={filterCompany} onChange={e => setFilterCompany(e.target.value)} className="h-9 px-3 border border-border rounded-lg text-sm"><option value="">Todas las empresas</option>{companies.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</select>
         <label className="flex items-center gap-2 text-sm text-t2 select-none"><input type="checkbox" checked={showSuspended} onChange={e => setShowSuspended(e.target.checked)} /> Mostrar dados de baja</label>
+        {tab === 'conductores' && (
+          <select value={licenseFilter} onChange={e => setLicenseFilter(e.target.value)} aria-label="Filtrar por licencia" className="h-9 px-3 border border-border rounded-lg text-sm">
+            <option value="">Todas las licencias</option>
+            <option value="alertas">Requieren atención</option>
+            <option value="vencida">Vencidas</option>
+            <option value="por_vencer">Por vencer (30 días)</option>
+            <option value="sin_licencia">Sin licencia registrada</option>
+          </select>
+        )}
         <span className="text-sm text-t2 ml-auto">{filteredPeople.length} personas</span>
       </div>
 
       <div className="flex flex-1 min-h-0">
         <div className="flex-1 overflow-auto">
           <table className="w-full text-sm" aria-label="Tabla de personas">
-            <thead className="bg-bg sticky top-0"><tr className="text-left text-t2 border-b border-border"><th className="px-4 py-2.5 font-medium">Nombre</th><th className="px-4 py-2.5 font-medium">DNI</th><th className="px-4 py-2.5 font-medium">Correo</th><th className="px-4 py-2.5 font-medium">Empresa</th><th className="px-4 py-2.5 font-medium">Código</th>{(tab === 'conductores' || tab === 'socios') && <th className="px-4 py-2.5 font-medium">Unidad</th>}<th className="px-4 py-2.5 font-medium">Estado</th><th /></tr></thead>
-            <tbody>{filteredPeople.map(person => <tr key={person.id} onClick={() => setSelected(person)} className="border-b border-border hover:bg-hover cursor-pointer"><td className="px-4 py-3 font-medium text-t1">{person.name}</td><td className="px-4 py-3 font-mono text-t2">{maskDni(person.dni)}</td><td className="px-4 py-3 text-t2">{person.email}</td><td className="px-4 py-3 text-t2">{person.company ?? org?.name ?? 'Sin dato'}</td><td className="px-4 py-3 font-mono font-semibold">{person.code ?? '—'}</td>{(tab === 'conductores' || tab === 'socios') && <td className="px-4 py-3 text-t2">{person.linkedUnit || person.code || 'Sin vincular'}</td>}<td className="px-4 py-3"><span className={`text-[11px] px-2 py-0.5 rounded font-medium ${STATUS_STYLE[person.status]}`}>{person.status}</span></td><td className="px-4 py-3"><ChevronRight size={14} className="text-muted" /></td></tr>)}</tbody>
+            <thead className="bg-bg sticky top-0"><tr className="text-left text-t2 border-b border-border"><th className="px-4 py-2.5 font-medium">Nombre</th><th className="px-4 py-2.5 font-medium">DNI</th><th className="px-4 py-2.5 font-medium">Correo</th><th className="px-4 py-2.5 font-medium">Empresa</th><th className="px-4 py-2.5 font-medium">Código</th>{(tab === 'conductores' || tab === 'socios') && <th className="px-4 py-2.5 font-medium">Unidad</th>}{tab === 'conductores' && <th className="px-4 py-2.5 font-medium">Licencia</th>}<th className="px-4 py-2.5 font-medium">Estado</th><th /></tr></thead>
+            <tbody>{filteredPeople.map(person => <tr key={person.id} onClick={() => setSelected(person)} className="border-b border-border hover:bg-hover cursor-pointer"><td className="px-4 py-3 font-medium text-t1">{person.name}</td><td className="px-4 py-3 font-mono text-t2">{maskDni(person.dni)}</td><td className="px-4 py-3 text-t2">{person.email}</td><td className="px-4 py-3 text-t2">{person.company ?? org?.name ?? 'Sin dato'}</td><td className="px-4 py-3 font-mono font-semibold">{person.code ?? '—'}</td>{(tab === 'conductores' || tab === 'socios') && <td className="px-4 py-3 text-t2">{person.linkedUnit || person.code || 'Sin vincular'}</td>}{tab === 'conductores' && <td className="px-4 py-3"><LicenseBadge expiry={person.licenseExpiry} /></td>}<td className="px-4 py-3"><span className={`text-[11px] px-2 py-0.5 rounded font-medium ${STATUS_STYLE[person.status]}`}>{person.status}</span></td><td className="px-4 py-3"><ChevronRight size={14} className="text-muted" /></td></tr>)}</tbody>
           </table>
           {filteredPeople.length === 0 && !loadError && <div className="py-16 text-center text-sm text-t2">No hay registros para los filtros seleccionados.</div>}
         </div>

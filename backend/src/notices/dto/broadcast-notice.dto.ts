@@ -1,4 +1,4 @@
-import { IsArray, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsIn, IsOptional, IsString, MinLength, MaxLength } from 'class-validator';
 
 // Aviso masivo de Super Admin (13 sept 2026, decidido con Jayde): ej. avisar
 // un mantenimiento programado a todas las asociaciones, sin importar su plan
@@ -9,10 +9,12 @@ import { IsArray, IsIn, IsOptional, IsString, MinLength } from 'class-validator'
 export class BroadcastNoticeDto {
   @IsString()
   @MinLength(1)
+  @MaxLength(120)
   title: string;
 
   @IsString()
   @MinLength(1)
+  @MaxLength(2000)
   body: string;
 
   @IsIn(['CONDUCTORES', 'SOCIOS', 'AMBOS', 'ADMINISTRADORES'])

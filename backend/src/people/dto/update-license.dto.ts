@@ -12,6 +12,9 @@ export class UpdateLicenseDto {
   @MinLength(1, { message: 'Indica la categoría de la licencia' })
   licenseCategory: string;
 
+  @IsDateString({}, { message: 'Indica la fecha de emisión de la licencia' })
+  licenseIssuedAt: string;
+
   @IsDateString({}, { message: 'Indica la fecha de vencimiento de la licencia' })
   licenseExpiry: string;
 }

@@ -2,13 +2,7 @@ import { useEffect, useState } from 'react';
 import { Lock, X, CheckCircle } from 'lucide-react';
 import { useAuth, requestPasswordResetApi } from '../../contexts/AuthContext';
 import { fetchMyPersonProfile, updateMyProfile } from '../../lib/operacion-api';
-import {
-  DNI_ERROR, PHONE_ERROR, LICENSE_ERROR,
-  dniInputProps, phoneInputProps,
-  sanitizeDni, sanitizePhone, sanitizeLicense,
-  isValidOptionalDni, isValidOptionalPhone, isValidLicense,
-  licenseExpiryInputValue,
-} from '../../lib/validators';
+import { DNI_ERROR, PHONE_ERROR, LICENSE_ERROR, dniInputProps, phoneInputProps, sanitizeDni, sanitizePhone, sanitizeLicense, isValidOptionalDni, isValidOptionalPhone, isValidLicense, licenseExpiryInputValue, licenseDatesError, todayInputValue } from '../../lib/validators';
 
 const ROLE_LABEL: Record<string, string> = {
   superadmin: 'Super Admin',
@@ -37,7 +31,9 @@ export default function AccountModal({ onClose }: { onClose: () => void }) {
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [form, setForm] = useState({ name: '', dni: '', phone: '', license: '', licenseCategory: '', licenseExpiry: '' });
+  const emptyForm = { name: '', dni: '', phone: '', license: '', licenseCategory: '', licenseIssuedAt: '', licenseExpiry: '' };
+  const [form, setForm] = useState(emptyForm);
+  const [initial, setInitial] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -48,14 +44,17 @@ export default function AccountModal({ onClose }: { onClose: () => void }) {
     fetchMyPersonProfile()
       .then(p => {
         if (cancelled) return;
-        setForm({
+        const loaded = {
           name: p.name ?? '',
           dni: p.dni ?? '',
           phone: p.phone ?? '',
           license: p.license ?? '',
           licenseCategory: p.licenseCategory ?? '',
+          licenseIssuedAt: licenseExpiryInputValue(p.licenseIssuedAt),
           licenseExpiry: licenseExpiryInputValue(p.licenseExpiry),
-        });
+        };
+        setForm(loaded);
+        setInitial(loaded);
       })
       .catch(err => { if (!cancelled) setLoadError(err instanceof Error ? err.message : 'No se pudieron cargar tus datos.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -68,14 +67,19 @@ export default function AccountModal({ onClose }: { onClose: () => void }) {
     setError('');
   };
 
+  // La licencia solo se valida y se envia si cambio algo de ella: quien solo
+  // corrige su celular no queda bloqueado por una licencia cargada antes.
+  const licenseChanged = (['license', 'licenseCategory', 'licenseIssuedAt', 'licenseExpiry'] as const).some(k => form[k] !== initial[k]);
+
   const validate = (): string => {
     if (!form.name.trim()) return 'Escribe tu nombre.';
     if (!isValidOptionalDni(form.dni)) return DNI_ERROR;
     if (!isValidOptionalPhone(form.phone)) return PHONE_ERROR;
-    if (isDriver && (form.license || form.licenseCategory || form.licenseExpiry)) {
+    if (isDriver && licenseChanged) {
       if (!isValidLicense(form.license)) return LICENSE_ERROR;
       if (!form.licenseCategory.trim()) return 'Indica la categoría de tu licencia.';
-      if (!form.licenseExpiry) return 'Indica la fecha de vencimiento de tu licencia.';
+      const dates = licenseDatesError(form.licenseIssuedAt, form.licenseExpiry);
+      if (dates) return dates;
     }
     return '';
   };
@@ -90,11 +94,12 @@ export default function AccountModal({ onClose }: { onClose: () => void }) {
         name: form.name.trim(),
         dni: form.dni,
         phone: form.phone,
-        ...(isDriver && form.license
-          ? { license: form.license, licenseCategory: form.licenseCategory.trim(), licenseExpiry: form.licenseExpiry }
+        ...(isDriver && licenseChanged
+          ? { license: form.license, licenseCategory: form.licenseCategory.trim(), licenseIssuedAt: form.licenseIssuedAt, licenseExpiry: form.licenseExpiry }
           : {}),
       });
       await refreshUser();
+      setInitial(form);
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudieron guardar los cambios.');
@@ -161,6 +166,9 @@ export default function AccountModal({ onClose }: { onClose: () => void }) {
                       </Field>
                       <Field label="Categoría" htmlFor="acc-license-cat">
                         <input id="acc-license-cat" value={form.licenseCategory} onChange={e => set('licenseCategory', e.target.value)} placeholder="Ej. A-IIb" maxLength={20} className={inputClass} />
+                      </Field>
+                      <Field label="Fecha de emisión" htmlFor="acc-license-iss" hint={form.license && !form.licenseIssuedAt ? 'Falta registrar la fecha de emisión.' : undefined}>
+                        <input id="acc-license-iss" type="date" max={todayInputValue()} value={form.licenseIssuedAt} onChange={e => set('licenseIssuedAt', e.target.value)} className={inputClass} />
                       </Field>
                       <Field label="Vencimiento de la licencia" htmlFor="acc-license-exp">
                         <input id="acc-license-exp" type="date" value={form.licenseExpiry} onChange={e => set('licenseExpiry', e.target.value)} className={inputClass} />

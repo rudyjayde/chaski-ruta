@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCompanyDto } from './dto/create-company.dto';
 import { DeleteCompanyDto } from './dto/delete-company.dto';
+import { hasValidRucCheckDigit, RUC_CHECK_MESSAGE } from '../common/validators';
 import { UpdateCompanyDto } from './dto/update-company.dto';
 import { JwtPayload } from '../auth/jwt.strategy';
 
@@ -136,6 +137,9 @@ export class CompaniesService {
 
   async update(organizationId: string, actor: JwtPayload, id: string, dto: UpdateCompanyDto) {
     const existing = await this.findOwned(organizationId, id);
+    if (dto.ruc && dto.ruc !== existing.ruc && !hasValidRucCheckDigit(dto.ruc)) {
+      throw new BadRequestException(RUC_CHECK_MESSAGE);
+    }
     let updated;
     try {
       updated = await this.prisma.company.update({

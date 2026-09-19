@@ -1,10 +1,11 @@
-import { IsString, MinLength } from 'class-validator';
+import { IsString } from 'class-validator';
+import { IsSecurePassword } from '../../common/validators';
 
 export class ResetPasswordDto {
   @IsString()
   token: string;
 
   @IsString()
-  @MinLength(8, { message: 'La contraseña debe tener al menos 8 caracteres.' })
+  @IsSecurePassword()
   password: string;
 }

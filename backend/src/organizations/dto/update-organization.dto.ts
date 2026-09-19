@@ -1,5 +1,5 @@
-import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
-import { IsOptionalPhone } from '../../common/validators';
+import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Max, Min, MinLength, MaxLength } from 'class-validator';
+import { IsOptionalPhone, IsRucFormat } from '../../common/validators';
 
 export class UpdateOrganizationDto {
   // Renovacion de directiva/marca (p. ej. la asociacion cambia de nombre
@@ -8,6 +8,7 @@ export class UpdateOrganizationDto {
   @IsOptional()
   @IsString()
   @MinLength(1)
+  @MaxLength(150)
   name?: string;
 
   // RUC -- normalmente no cambia, pero se permite corregirlo (p. ej. un
@@ -15,7 +16,7 @@ export class UpdateOrganizationDto {
   // servicio atrapa el conflicto y devuelve un mensaje claro en vez de un 500.
   @IsOptional()
   @IsString()
-  @MinLength(11)
+  @IsRucFormat()
   ruc?: string;
 
   // Datos institucionales -- ciudad, representante legal, telefono y correo
@@ -23,10 +24,12 @@ export class UpdateOrganizationDto {
   // que vive en Person y se gestiona desde Personas).
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   city?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(120)
   legalRepName?: string;
 
   @IsOptionalPhone()
@@ -58,6 +61,7 @@ export class UpdateOrganizationDto {
   @IsOptional()
   @IsString()
   @MinLength(1)
+  @MaxLength(500)
   reason?: string;
 
   @IsOptional()
@@ -66,6 +70,7 @@ export class UpdateOrganizationDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   logoUrl?: string;
 
   // Dias de gracia del Plan GPS Vehicular al bajar de PRO a Operacion (13

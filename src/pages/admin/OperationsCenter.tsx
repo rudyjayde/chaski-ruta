@@ -3,14 +3,11 @@ import {
   AlertTriangle, ArrowRight, Clock, CheckCircle, AlertCircle,
   TrendingUp, Truck, Users, MapPin, Wifi, WifiOff, Sparkles,
 } from 'lucide-react';
-import type { QueueEntry, Trip, Manifest, RelocationOrder } from '../../types';
+import type { QueueEntry, Trip, Manifest, RelocationOrder, Person } from '../../types';
+import { licenseStatus } from '../../lib/validators';
 import { useAdminDemo } from './AdminApp';
 import { getQueueDisplayOrder, getOperationalPosition } from '../../lib/queue-ui';
-import {
-  fetchQueue, fetchTrips, fetchManifests, fetchRelocations, advanceQueueEntry, routeLabel, routeLabelShort, terminalName,
-  fetchGpsLive, fetchOperationalConfig, type LiveVehiclePosition, type OperationalConfig,
-  fetchDailyDigest, type DailyDigestFacts, fetchVehicles, fetchGpsDevices, type VehicleGpsStatus,
-} from '../../lib/operacion-api';
+import { fetchQueue, fetchTrips, fetchManifests, fetchRelocations, advanceQueueEntry, routeLabel, routeLabelShort, terminalName, fetchGpsLive, fetchOperationalConfig, type LiveVehiclePosition, type OperationalConfig, fetchDailyDigest, type DailyDigestFacts, fetchVehicles, fetchGpsDevices, type VehicleGpsStatus, fetchPeople } from '../../lib/operacion-api';
 import LiveFleetMap, { ROUTE_COLOR } from '../../components/LiveFleetMap';
 import GpsAlertBanner from '../../components/GpsAlertBanner';
 
@@ -87,6 +84,7 @@ export default function OperationsCenter({ onNavigate }: Props) {
   const [digestLoading, setDigestLoading] = useState(true);
   const [totalUnits, setTotalUnits] = useState<number | null>(null);
   const [offlineDevice, setOfflineDevice] = useState<VehicleGpsStatus | null>(null);
+  const [drivers, setDrivers] = useState<Person[]>([]);
 
   // Resumen diario para el gerente (ia-aplicada.md §2.3) -- se pide una vez al
   // abrir el panel, no en cada refresco de las colas. Best-effort: si falla o
@@ -157,6 +155,25 @@ export default function OperationsCenter({ onNavigate }: Props) {
     fetchVehicles().then(list => { if (!cancelled) setTotalUnits(list.length); }).catch(() => { /* se degrada sin mostrar el total */ });
     return () => { cancelled = true; };
   }, []);
+
+  // Licencias de conducir por vencer o vencidas: asi el administrador sabe que
+  // conductor tiene que pasar de nuevo por el MTC. Best-effort: si falla, la
+  // tarjeta simplemente no aparece.
+  useEffect(() => {
+    let cancelled = false;
+    fetchPeople()
+      .then(list => { if (!cancelled) setDrivers(list.filter(p => p.role === 'CONDUCTOR' && p.status === 'ACTIVO')); })
+      .catch(() => { /* se degrada sin mostrar la tarjeta */ });
+    return () => { cancelled = true; };
+  }, []);
+  const licenseAlerts = useMemo(
+    () => drivers
+      .map(d => ({ d, st: licenseStatus(d.licenseExpiry) }))
+      .filter(x => x.st.kind === 'vencida' || x.st.kind === 'por_vencer')
+      .sort((a, b) => (a.st.days ?? 0) - (b.st.days ?? 0)),
+    [drivers],
+  );
+  const missingLicenses = useMemo(() => drivers.filter(d => !d.license).length, [drivers]);
 
   const todayLabel = new Date().toLocaleDateString('es-PE', { day: '2-digit', month: 'long', year: 'numeric' });
   const timeLabel = now.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: true });
@@ -489,6 +506,36 @@ export default function OperationsCenter({ onNavigate }: Props) {
                     className="mt-2.5 px-3 py-1.5 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary-h transition-colors"
                   >
                     Llamar siguiente
+                  </button>
+                </div>
+              </div>
+            )}
+            {(licenseAlerts.length > 0 || missingLicenses > 0) && (
+              <div className="flex items-start gap-3 p-3.5 rounded-lg border border-warn/30 bg-warn/5">
+                <AlertTriangle size={16} className="text-warn mt-0.5 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-t1">Licencias de conducir por revisar</p>
+                  {licenseAlerts.length > 0 && (
+                    <ul className="mt-1.5 space-y-1">
+                      {licenseAlerts.slice(0, 5).map(({ d, st }) => (
+                        <li key={d.id} className="text-sm text-t2 flex items-center justify-between gap-2">
+                          <span className="truncate">{d.name}</span>
+                          <span className={`text-[11px] px-2 py-0.5 rounded font-medium whitespace-nowrap ${st.cls}`}>
+                            {st.kind === 'vencida' ? `Vencida hace ${-(st.days ?? 0)} d` : `Vence en ${st.days} d`}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {licenseAlerts.length > 5 && <p className="text-sm text-t2 mt-1">+{licenseAlerts.length - 5} más</p>}
+                  {missingLicenses > 0 && (
+                    <p className="text-sm text-t2 mt-1.5">{missingLicenses} {missingLicenses === 1 ? 'conductor sin licencia registrada' : 'conductores sin licencia registrada'}.</p>
+                  )}
+                  <button
+                    onClick={() => onNavigate('personas')}
+                    className="flex items-center gap-1 mt-2.5 px-3 py-1.5 text-sm font-medium text-t1 border border-border rounded-lg bg-white hover:bg-hover transition-colors"
+                  >
+                    Ver conductores <ArrowRight size={13} />
                   </button>
                 </div>
               </div>
