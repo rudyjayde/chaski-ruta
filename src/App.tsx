@@ -340,7 +340,7 @@ function ResetPasswordPage({ navigate }: { navigate: (to: string) => void }) {
   if (!token) {
     return (
       <main className="min-h-screen flex items-center justify-center px-4">
-        <p className="text-sm text-danger">Enlace inválido. Solicita uno nuevo desde "Recuperar acceso".</p>
+        <p className="text-sm text-danger">Enlace inválido o incompleto. Solicita uno nuevo desde "Recuperar acceso".</p>
       </main>
     );
   }
@@ -348,11 +348,11 @@ function ResetPasswordPage({ navigate }: { navigate: (to: string) => void }) {
   return (
     <main className="min-h-screen bg-bg flex items-center justify-center px-4">
       <div className="w-full max-w-sm bg-surface border border-border rounded-lg p-6 shadow-sm">
-        <h1 className="text-base font-semibold text-t1 mb-5">Definir nueva contraseña</h1>
+        <h1 className="text-base font-semibold text-t1 mb-5">Define tu contraseña</h1>
 
         {done ? (
           <>
-            <p className="text-sm text-t2 mb-5">Tu contraseña quedó actualizada. Ya puedes iniciar sesión con ella.</p>
+            <p className="text-sm text-t2 mb-5">Tu contraseña quedó guardada. Ya puedes ingresar con tu correo y esa contraseña.</p>
             <button
               onClick={() => navigate('/ingresar')}
               className="w-full h-10 bg-primary hover:bg-primary-h text-white rounded-lg text-sm font-medium transition-colors"
@@ -363,7 +363,7 @@ function ResetPasswordPage({ navigate }: { navigate: (to: string) => void }) {
         ) : (
           <form onSubmit={handleSubmit} noValidate>
             <div className="mb-4">
-              <label htmlFor="new-password" className="block text-sm font-medium text-t1 mb-1">Nueva contraseña</label>
+              <label htmlFor="new-password" className="block text-sm font-medium text-t1 mb-1">Contraseña (mínimo 8 caracteres)</label>
               <input
                 id="new-password"
                 type="password"

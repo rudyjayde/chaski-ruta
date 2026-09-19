@@ -4,6 +4,7 @@ import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { JwtPayload } from '../auth/jwt.strategy';
 import { MailService } from '../mail/mail.service';
+import { AuthService } from '../auth/auth.service';
 
 // Aplana operationalConfig.terminalOriginName/terminalDestinationName al nivel
 // raiz de la asociacion -- cada asociacion muestra SU PROPIO corredor, nunca el
@@ -25,6 +26,7 @@ export class OrganizationsService {
   constructor(
     private prisma: PrismaService,
     private mail: MailService,
+    private auth: AuthService,
   ) {}
 
   async findAll() {
@@ -125,6 +127,7 @@ export class OrganizationsService {
       orgName: dto.name,
       fromChaski: true,
       orgLogoUrl: dto.logoUrl,
+      setPasswordToken: await this.auth.issuePasswordSetupToken(dto.adminEmail),
     });
 
     return org;

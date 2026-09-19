@@ -5,12 +5,14 @@ import { UpdatePersonStatusDto } from './dto/update-person-status.dto';
 import { UpdateLicenseDto } from './dto/update-license.dto';
 import { JwtPayload } from '../auth/jwt.strategy';
 import { MailService } from '../mail/mail.service';
+import { AuthService } from '../auth/auth.service';
 
 @Injectable()
 export class PeopleService {
   constructor(
     private prisma: PrismaService,
     private mail: MailService,
+    private auth: AuthService,
   ) {}
 
   // El hash NUNCA debe llegar al navegador (ni al del admin que consulta a
@@ -143,9 +145,10 @@ export class PeopleService {
       },
     });
 
-    // Correo de bienvenida explicando el rol -- nunca credenciales, el login
-    // es siempre por Google. Mejor esfuerzo: no revierte ni bloquea el alta
-    // si el correo falla (ver MailService.sendWelcomeEmail).
+    // Correo de bienvenida explicando el rol -- nunca credenciales: la persona
+    // entra con Google o define su propia contraseña con el enlace del correo.
+    // Mejor esfuerzo: no revierte ni bloquea el alta si el correo falla (ver
+    // MailService.sendWelcomeEmail).
     const org = await this.prisma.organization.findUnique({
       where: { id: organizationId },
       select: { name: true, logoUrl: true },
@@ -156,6 +159,7 @@ export class PeopleService {
       role: dto.role,
       orgName: org?.name ?? 'tu asociación',
       orgLogoUrl: org?.logoUrl,
+      setPasswordToken: await this.auth.issuePasswordSetupToken(person.email),
     });
 
     return person;

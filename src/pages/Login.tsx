@@ -237,7 +237,7 @@ export default function Login({ onNavigateToApp, onNavigateToLanding }: Props) {
                 <form onSubmit={handleSubmit} noValidate>
                   <div className="mb-4">
                     <label htmlFor="email" className="block text-sm font-medium text-t1 mb-1">
-                      Usuario o correo
+                      Correo
                     </label>
                     <input
                       id="email"

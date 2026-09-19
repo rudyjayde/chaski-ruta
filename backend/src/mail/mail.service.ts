@@ -23,6 +23,9 @@ interface WelcomeEmailParams {
   // Asociaciones -> Organizacion. Si la asociacion todavia no tiene logo,
   // se usa el nombre en texto como respaldo (ver buildWelcomeEmailHtml).
   orgLogoUrl?: string | null;
+  // Token de un solo uso para que la persona defina su propia contraseña (ver
+  // AuthService.issuePasswordSetupToken). Solo lo lleva el correo de bienvenida.
+  setPasswordToken?: string;
 }
 
 const ROLE_COPY: Record<WelcomeEmailRole, { etiqueta: string; puntos: string[] }> = {
@@ -759,7 +762,24 @@ function buildWelcomeEmailHtml(params: WelcomeEmailParams, frontendUrl: string):
   const copy = ROLE_COPY[params.role];
   const name = escapeHtml(params.name);
   const orgName = escapeHtml(params.orgName);
-  const loginUrl = `${frontendUrl.replace(/\/$/, '')}/ingresar`;
+  const baseUrl = frontendUrl.replace(/\/$/, '');
+  const loginUrl = `${baseUrl}/ingresar`;
+  const setPasswordUrl = params.setPasswordToken
+    ? `${baseUrl}/restablecer-contrasena?token=${encodeURIComponent(params.setPasswordToken)}`
+    : null;
+  const safeTo = escapeHtml(params.to);
+  const accessNote = setPasswordUrl
+    ? `🔑 Tu usuario es tu correo (<strong>${safeTo}</strong>). Puedes ingresar con tu cuenta de <strong>Google</strong> o crear tu propia contraseña con el botón de abajo. El enlace de la contraseña vale 7 días y solo se puede usar una vez.`
+    : `🔑 Ingresa con tu cuenta de <strong>Google</strong> (${safeTo}), o si prefieres, define una contraseña propia desde "Recuperar acceso" en la pantalla de acceso.`;
+  const setPasswordButton = setPasswordUrl
+    ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:12px auto 0;">
+            <tr>
+              <td style="border-radius:10px;border:2px solid #1d3fb8;">
+                <a href="${setPasswordUrl}" style="display:inline-block;padding:10px 26px;font-size:14px;font-weight:700;color:#1d3fb8;text-decoration:none;">Crear mi contraseña</a>
+              </td>
+            </tr>
+          </table>`
+    : '';
 
   const intro = params.fromChaski
     ? `Te damos la bienvenida a <strong>CHASKI AI</strong>. Te agradecemos la confianza de gestionar <strong>${orgName}</strong> con nuestra plataforma.`
@@ -803,7 +823,7 @@ function buildWelcomeEmailHtml(params: WelcomeEmailParams, frontendUrl: string):
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#fffbeb;border:1px solid #fde68a;border-radius:10px;margin-bottom:24px;">
             <tr>
               <td style="padding:12px 16px;font-size:13px;line-height:1.5;color:#78350f;">
-                🔑 Ingresa con tu cuenta de <strong>Google</strong> (${escapeHtml(params.to)}), o si prefieres, define una contraseña propia desde "Recuperar acceso" en la pantalla de acceso.
+                ${accessNote}
               </td>
             </tr>
           </table>
@@ -815,6 +835,7 @@ function buildWelcomeEmailHtml(params: WelcomeEmailParams, frontendUrl: string):
               </td>
             </tr>
           </table>
+          ${setPasswordButton}
         </td>
       </tr>
       <tr>

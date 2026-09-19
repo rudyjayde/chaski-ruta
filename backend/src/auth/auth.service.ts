@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
+import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { GoogleProfile } from './google.strategy';
 import { JwtPayload } from './jwt.strategy';
@@ -20,10 +21,29 @@ interface SelectTokenPayload {
   googleId?: string;
 }
 
-/** Token corto de "restablecer contraseña" enviado por correo — nunca sirve para nada mas. */
+/**
+ * Token de "definir contraseña" enviado por correo — nunca sirve para nada mas.
+ * `pv` es una huella de la contraseña que tenia el correo al emitirlo: cuando
+ * se define una contraseña la huella cambia y el enlace deja de servir (un
+ * solo uso). Los enlaces emitidos antes de agregar `pv` no la traen y siguen
+ * valiendo hasta que venzan (30 min).
+ */
 interface ResetTokenPayload {
   purpose: 'reset-password';
   email: string;
+  pv?: string;
+}
+
+// Huella de las contraseñas actuales de un correo. Solo cuentan las filas que
+// YA tienen contraseña: dar de alta un segundo perfil sin contraseña para ese
+// correo no debe invalidar un enlace pendiente.
+function passwordFingerprint(people: { passwordHash: string | null }[]): string {
+  const hashes = people
+    .map((p) => p.passwordHash)
+    .filter((h): h is string => Boolean(h))
+    .sort()
+    .join('|');
+  return createHash('sha256').update(hashes).digest('hex').slice(0, 16);
 }
 
 @Injectable()
@@ -219,11 +239,36 @@ export class AuthService {
     });
     if (!person) return;
 
-    const token = this.jwt.sign(
-      { purpose: 'reset-password', email: normalized } satisfies ResetTokenPayload,
-      { expiresIn: '30m' },
-    );
+    const token = await this.issuePasswordToken(normalized, '30m');
     await this.mail.sendPasswordResetEmail({ to: normalized, name: person.name, token });
+  }
+
+  /**
+   * Token para que quien fue invitado defina su propia contraseña desde el
+   * correo de bienvenida (sirve con cualquier correo, no solo Gmail). Dura 7
+   * dias porque la invitacion puede leerse dias despues, y es de un solo uso.
+   */
+  async issuePasswordSetupToken(email: string): Promise<string | undefined> {
+    const normalized = email.trim().toLowerCase();
+    // Si ese correo ya tiene contraseña (p. ej. un socio al que ahora se le da
+    // de alta tambien como conductor) no hace falta ofrecerle crearla otra vez.
+    const existing = await this.prisma.person.findFirst({
+      where: { email: normalized, status: { not: 'SUSPENDIDO' }, passwordHash: { not: null } },
+      select: { id: true },
+    });
+    if (existing) return undefined;
+    return this.issuePasswordToken(normalized, '7d');
+  }
+
+  private async issuePasswordToken(normalizedEmail: string, expiresIn: string): Promise<string> {
+    const people = await this.prisma.person.findMany({
+      where: { email: normalizedEmail, status: { not: 'SUSPENDIDO' } },
+      select: { passwordHash: true },
+    });
+    return this.jwt.sign(
+      { purpose: 'reset-password', email: normalizedEmail, pv: passwordFingerprint(people) } satisfies ResetTokenPayload,
+      { expiresIn },
+    );
   }
 
   /**
@@ -239,6 +284,9 @@ export class AuthService {
     });
     if (people.length === 0) {
       throw new UnauthorizedException('No se encontro una cuenta activa para este enlace.');
+    }
+    if (payload.pv !== undefined && payload.pv !== passwordFingerprint(people)) {
+      throw new UnauthorizedException('Este enlace ya se usó. Si necesitas otra contraseña, pide uno nuevo desde "Recuperar acceso".');
     }
     const passwordHash = await bcrypt.hash(password, 10);
     await this.prisma.person.updateMany({
