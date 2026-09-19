@@ -3,9 +3,16 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreatePersonDto } from './dto/create-person.dto';
 import { UpdatePersonStatusDto } from './dto/update-person-status.dto';
 import { UpdateLicenseDto } from './dto/update-license.dto';
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
 import { JwtPayload } from '../auth/jwt.strategy';
 import { MailService } from '../mail/mail.service';
 import { AuthService } from '../auth/auth.service';
+
+// "12345678" -> "******78": en Auditoria nunca queda un documento completo.
+function maskId(value?: string | null): string {
+  if (!value) return 'sin dato';
+  return value.length > 4 ? `${'*'.repeat(value.length - 2)}${value.slice(-2)}` : value;
+}
 
 @Injectable()
 export class PeopleService {
@@ -245,6 +252,91 @@ export class PeopleService {
       },
     });
     return updated;
+  }
+
+  /** Mi propio registro. No pasa por el filtro de asociacion: el Super Admin no tiene una. */
+  async findMe(personId: string) {
+    const person = await this.prisma.person.findUnique({ where: { id: personId }, select: PeopleService.SAFE_SELECT });
+    if (!person) throw new NotFoundException('Persona no encontrada');
+    return person;
+  }
+
+  /**
+   * "Mi cuenta": la persona corrige sus propios datos personales. El correo
+   * (con el que la invitaron), el rol y la asociacion NO se pueden cambiar
+   * desde aqui. Nombre, DNI y celular son de la persona, no del perfil: si el
+   * mismo correo tiene dos perfiles (Socio + Conductor), se actualizan en
+   * ambos. La licencia solo la edita un conductor. Un campo vacio no cambia
+   * nada. Cada cambio queda en Auditoria (con DNI y licencia enmascarados).
+   */
+  async updateMe(actor: JwtPayload, dto: UpdateMyProfileDto) {
+    const me = await this.prisma.person.findUnique({ where: { id: actor.sub } });
+    if (!me) throw new NotFoundException('Persona no encontrada');
+
+    const name = dto.name?.trim();
+    const shared: { name?: string; dni?: string; phone?: string } = {};
+    const changes: string[] = [];
+    if (name && name !== me.name) {
+      shared.name = name;
+      changes.push(`Nombre: ${me.name} → ${name}`);
+    }
+    if (dto.dni && dto.dni !== me.dni) {
+      shared.dni = dto.dni;
+      changes.push(`DNI: ${maskId(me.dni)} → ${maskId(dto.dni)}`);
+    }
+    if (dto.phone && dto.phone !== me.phone) {
+      shared.phone = dto.phone;
+      changes.push(`Celular: ${me.phone ?? 'sin dato'} → ${dto.phone}`);
+    }
+
+    const licenseData: { license?: string; licenseCategory?: string; licenseExpiry?: Date } = {};
+    const touchesLicense = Boolean(dto.license || dto.licenseCategory?.trim() || dto.licenseExpiry);
+    if (touchesLicense) {
+      if (me.role !== 'CONDUCTOR') throw new BadRequestException('La licencia de conducir solo aplica a conductores.');
+      const category = dto.licenseCategory?.trim() || me.licenseCategory;
+      const license = dto.license || me.license;
+      const expiry = dto.licenseExpiry ? new Date(dto.licenseExpiry) : me.licenseExpiry;
+      if (!license || !category || !expiry) {
+        throw new BadRequestException('Para registrar la licencia indica el número, la categoría y la fecha de vencimiento.');
+      }
+      if (license !== me.license) await this.assertLicenseFree(license, me.id);
+      const expiryChanged = expiry.toISOString().slice(0, 10) !== me.licenseExpiry?.toISOString().slice(0, 10);
+      if (license !== me.license || category !== me.licenseCategory || expiryChanged) {
+        licenseData.license = license;
+        licenseData.licenseCategory = category;
+        licenseData.licenseExpiry = expiry;
+        changes.push(`Licencia: ${maskId(me.license)} → ${maskId(license)} (${category}, vence ${expiry.toISOString().slice(0, 10)})`);
+      }
+    }
+
+    if (changes.length === 0) return this.findMe(me.id);
+
+    await this.prisma.$transaction(async (tx) => {
+      if (Object.keys(shared).length > 0) {
+        await tx.person.updateMany({ where: { email: me.email, organizationId: me.organizationId }, data: shared });
+      }
+      if (Object.keys(licenseData).length > 0) {
+        await tx.person.update({ where: { id: me.id }, data: licenseData });
+      }
+    });
+
+    // El Super Admin no pertenece a ninguna asociacion, y la Auditoria siempre
+    // es de una asociacion: en ese caso no hay donde registrarla.
+    if (me.organizationId) {
+      await this.prisma.auditEntry.create({
+        data: {
+          organizationId: me.organizationId,
+          actorId: actor.sub,
+          actorRole: actor.role,
+          action: 'ACTUALIZAR_PERFIL',
+          resource: `Persona ${shared.name ?? me.name}`,
+          resourceId: me.id,
+          before: 'Datos personales anteriores',
+          after: changes.join(' · '),
+        },
+      });
+    }
+    return this.findMe(me.id);
   }
 
   /**

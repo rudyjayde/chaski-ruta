@@ -42,6 +42,8 @@ interface AuthContextValue {
   fetchProfileOptions: (selectToken: string) => Promise<ProfileOption[]>;
   loginWithSelectedProfile: (selectToken: string, personId: string) => Promise<void>;
   logout: () => void;
+  // Vuelve a leer el perfil (p. ej. tras cambiar el nombre en "Mi cuenta").
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -236,8 +238,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
+  const refreshUser = useCallback(async () => {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) return;
+    const profile = await fetchProfile(token);
+    setUser(buildUserFromBackendProfile(profile));
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, restoring, login, loginWithToken, fetchProfileOptions, loginWithSelectedProfile, logout }}>
+    <AuthContext.Provider value={{ user, restoring, login, loginWithToken, fetchProfileOptions, loginWithSelectedProfile, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

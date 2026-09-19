@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Bell, RefreshCw, LogOut, ChevronDown, User, 
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchMyOrganization, fetchNoticesUnreadCount, markNoticesRead } from '../../lib/operacion-api';
+import AccountModal from './AccountModal';
 
 const NOTICES_POLL_MS = 30000;
 
@@ -55,6 +56,7 @@ export default function Shell({ navItems, activeSection, onNavigate, children, i
   const handleLogout = onLogout ?? logout;
   const [collapsed, setCollapsed] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [showAccountModal, setShowAccountModal] = useState(false);
 
   // Modo oscuro/claro dentro de la asociación (Admin/Conductor/Socio/SuperAdmin).
   // Independiente del toggle de la Landing — este solo aplica dentro de Shell.
@@ -251,7 +253,7 @@ export default function Shell({ navItems, activeSection, onNavigate, children, i
                   <button
                     className="w-full flex items-center gap-2 px-3 py-2 text-sm text-t2 hover:bg-hover"
                     role="menuitem"
-                    onClick={() => { setAccountOpen(false); }}
+                    onClick={() => { setAccountOpen(false); setShowAccountModal(true); }}
                   >
                     <User size={14} />
                     Mi cuenta
@@ -287,6 +289,8 @@ export default function Shell({ navItems, activeSection, onNavigate, children, i
       >
         {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
       </button>
+
+      {showAccountModal && <AccountModal onClose={() => setShowAccountModal(false)} />}
     </div>
   );
 }

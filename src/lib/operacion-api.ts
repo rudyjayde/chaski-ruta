@@ -758,6 +758,20 @@ export async function fetchMyPersonProfile(): Promise<Person> {
   return request<Person>('/people/me');
 }
 
+// "Mi cuenta": la persona corrige SUS datos (nunca correo, rol ni asociacion).
+export interface UpdateMyProfileInput {
+  name?: string;
+  dni?: string;
+  phone?: string;
+  license?: string;
+  licenseCategory?: string;
+  licenseExpiry?: string;
+}
+
+export async function updateMyProfile(input: UpdateMyProfileInput): Promise<Person> {
+  return request<Person>('/people/me', { method: 'PATCH', body: JSON.stringify(input) });
+}
+
 export async function createPerson(input: CreatePersonInput, organizationId?: string): Promise<Person> {
   return request<Person>(
     organizationId ? `/people?organizationId=${encodeURIComponent(organizationId)}` : '/people',

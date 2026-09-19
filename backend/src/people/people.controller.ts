@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { PeopleService } from './people.service';
 import { CreatePersonDto } from './dto/create-person.dto';
 import { UpdatePersonStatusDto } from './dto/update-person-status.dto';
 import { UpdateLicenseDto } from './dto/update-license.dto';
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -36,7 +37,15 @@ export class PeopleController {
   @Get('me')
   @Roles('ADMINISTRADOR', 'SUPERADMIN', 'SOCIO', 'CONDUCTOR')
   findMe(@CurrentUser() user: JwtPayload) {
-    return this.people.findOne(user.organizationId!, user.sub);
+    return this.people.findMe(user.sub);
+  }
+
+  // "Mi cuenta": cada persona corrige SUS datos personales (nunca correo, rol ni
+  // asociacion -- el DTO no los acepta). Antes de @Get(':id') por la misma razon.
+  @Patch('me')
+  @Roles('ADMINISTRADOR', 'SUPERADMIN', 'SOCIO', 'CONDUCTOR')
+  updateMe(@CurrentUser() user: JwtPayload, @Body() dto: UpdateMyProfileDto) {
+    return this.people.updateMe(user, dto);
   }
 
   @Get(':id')
