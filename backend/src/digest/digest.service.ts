@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { routeLabel } from '../common/route-labels';
 import { PrismaService } from '../prisma/prisma.service';
 import { AnthropicService } from '../ai/anthropic.service';
 
@@ -39,6 +40,7 @@ export class DigestService {
   async computeFacts(organizationId: string): Promise<DigestFacts> {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
+    const routeConfig = await this.prisma.operationalConfig.findUnique({ where: { organizationId } });
 
     const [
       vueltasCompletadasHoy,
@@ -90,7 +92,7 @@ export class DigestService {
       inscripcionesRetrasadasPendientesAhora,
       incidentesHoy: incidentTrips.map((t) => ({
         unidad: t.vehicle.code,
-        ruta: t.route === 'JULI_PUNO' ? 'Juli → Puno' : 'Puno → Juli',
+        ruta: routeLabel(t.route as 'JULI_PUNO' | 'PUNO_JULI', routeConfig),
         nota: t.incidentNote,
       })),
       anomaliasRecaudacionHoy: incidentManifests.map((m) => ({

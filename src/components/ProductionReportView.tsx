@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Filter, Download, Repeat } from 'lucide-react';
-import { fetchTrips, fetchManifests } from '../lib/operacion-api';
+import { fetchTrips, fetchManifests, routeLabel, type Organization } from '../lib/operacion-api';
 import { localDateStr } from '../lib/dates';
 import type { RouteDir, TripStatus } from '../types';
 
@@ -101,12 +101,15 @@ function statusBadge(s: string) {
 export default function ProductionReportView({
   code,
   orgName,
+  org,
   personName,
   personLabel,
   defaultRoute = 'todas',
 }: {
   code: string;
   orgName?: string;
+  // La asociacion, para mostrar SUS nombres de ruta (ida y retorno).
+  org?: Organization | null;
   personName?: string;
   // Como se llama en el encabezado del PDF/CSV -- "Conductor" o "Socio".
   personLabel: string;
@@ -194,7 +197,7 @@ export default function ProductionReportView({
   const vueltasLabel = `${report.vueltasCompletas}${report.mediaVueltaExtra ? ' y media' : ''}`;
 
   const handleDownload = (fmt: 'PDF' | 'CSV') => {
-    const routeName = routeFilter === 'PUNO_JULI' ? 'Puno - Juli' : routeFilter === 'JULI_PUNO' ? 'Juli - Puno' : 'Todas';
+    const routeName = routeFilter === 'todas' ? 'Todas' : routeLabel(routeFilter, org);
     const fileBase = 'reporte-produccion-' + code.toLowerCase();
     if (fmt === 'CSV') {
       const header = 'Fecha,Ruta,Salida,Llegada,Pasajeros,Efectivo,Yape,Plin,Transferencia,QR,Total,Estado,Manifiesto';
@@ -213,7 +216,7 @@ export default function ProductionReportView({
         'Ruta filtrada: ' + routeName,
         'Periodo: ' + period,
         '',
-        ...filtered.map(t => t.date + ' | ' + (t.route === 'JULI_PUNO' ? 'Juli-Puno' : 'Puno-Juli') + ' | ' + t.departure + '-' + t.arrival + ' | ' + t.passengers + ' pasajeros | S/ ' + (t.efectivo + t.yape + t.plin + t.transferencia + t.qr) + ' | ' + t.status),
+        ...filtered.map(t => t.date + ' | ' + routeLabel(t.route, org) + ' | ' + t.departure + '-' + t.arrival + ' | ' + t.passengers + ' pasajeros | S/ ' + (t.efectivo + t.yape + t.plin + t.transferencia + t.qr) + ' | ' + t.status),
         '',
         'Vueltas completas: ' + vueltasLabel,
         'Pasajeros: ' + report.pasajeros,
@@ -275,8 +278,8 @@ export default function ProductionReportView({
               className="h-8 px-2 border border-border rounded text-xs focus:outline-none focus:ring-1 focus:ring-primary"
             >
               <option value="todas">Todas</option>
-              <option value="JULI_PUNO">Juli → Puno</option>
-              <option value="PUNO_JULI">Puno → Juli</option>
+              <option value="JULI_PUNO">{routeLabel('JULI_PUNO', org)}</option>
+              <option value="PUNO_JULI">{routeLabel('PUNO_JULI', org)}</option>
             </select>
           </div>
           <div>
@@ -358,7 +361,7 @@ export default function ProductionReportView({
               ) : filtered.map(t => (
                 <tr key={t.id} className="border-b border-border last:border-0 hover:bg-hover/50">
                   <td className="px-3 py-2.5 font-mono text-t2 whitespace-nowrap">{t.date.slice(5)}</td>
-                  <td className="px-3 py-2.5 text-t1 whitespace-nowrap">{t.route === 'JULI_PUNO' ? 'Juli → Puno' : 'Puno → Juli'}</td>
+                  <td className="px-3 py-2.5 text-t1 whitespace-nowrap">{routeLabel(t.route, org)}</td>
                   <td className="px-3 py-2.5 font-mono text-t2">{t.departure}</td>
                   <td className="px-3 py-2.5 font-mono text-t2">{t.status === 'ACTIVO' ? '—' : t.arrival}</td>
                   <td className="px-3 py-2.5 text-right text-t1">{t.passengers}</td>

@@ -26,6 +26,7 @@ import { AuthService } from '../src/auth/auth.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { validationExceptionFactory } from '../src/common/validation-messages';
 import { hasValidRucCheckDigit } from '../src/common/validators';
+import { routeLabel as routeLabelOf } from '../src/common/route-labels';
 
 const JULI = { lat: -16.2035, lng: -69.4597 };
 const PUNO = { lat: -15.8402, lng: -70.0219 };
@@ -510,6 +511,22 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     check('el administrador SÍ puede eliminar a un conductor sin unidad', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
     const drvN2 = await call(T.admin, 'POST', '/people', { name: 'Conductor Libre', email: dEmail, role: 'CONDUCTOR', dni: '87651277', license: 'Q77777777', licenseCategory: 'A-IIIa', licenseIssuedAt: '2024-01-01', licenseExpiry: '2030-01-01' });
     check('REGLA: se vuelve a registrar el mismo conductor (mismo correo, DNI y licencia) como nuevo', drvN2.status === 201 && drvN2.json.id !== drvN1.json.id, `HTTP ${drvN2.status} ${msg(drvN2)}`);
+    // ─ Cada asociación muestra SUS rutas, nunca las de otra ─
+    check('sin rutas ni terminales escritos, la etiqueta es "Ida"/"Retorno" (nunca Juli/Puno)', routeLabelOf('JULI_PUNO', { terminalOriginName: '', terminalDestinationName: '' }) === 'Ida' && routeLabelOf('PUNO_JULI', null) === 'Retorno');
+    check('con las rutas escritas, ida y retorno salen tal cual', routeLabelOf('JULI_PUNO', { routeOriginName: 'Puno', routeDestinationName: 'Juliaca', returnOriginName: 'Juliaca', returnDestinationName: 'Puno' }) === 'Puno → Juliaca' && routeLabelOf('PUNO_JULI', { routeOriginName: 'Puno', routeDestinationName: 'Juliaca', returnOriginName: 'Juliaca', returnDestinationName: 'Puno' }) === 'Juliaca → Puno');
+    let ruc2 = '';
+    for (let d = 0; d < 10 && !ruc2; d++) if (hasValidRucCheckDigit(`2011111111${d}`)) ruc2 = `2011111111${d}`;
+    const bare = await call(TS, 'POST', '/organizations', { name: `ZZ E2E S ${stamp}`, ruc: ruc2, adminName: 'Admin S', adminEmail: `e2e.${stamp}.sinrutas@example.test` });
+    if (bare.json.id) { orgIds.push(bare.json.id); await prisma.organization.update({ where: { id: bare.json.id }, data: { status: 'ACTIVA' } }); }
+    const bareDir = ((await call(T.d[0], 'GET', '/organizations/directory')).json as any[]).find((o) => o.id === bare.json.id);
+    check('una asociación nueva sin nombres arranca vacía (no hereda "Juli"/"Puno")', bare.status === 201 && !!bareDir && bareDir.terminalOriginName === '' && bareDir.terminalDestinationName === '', bareDir ? JSON.stringify({ t: bareDir.terminalOriginName }) : `HTTP ${bare.status} ${msg(bare)}`);
+    await call(TS, 'POST', `/operational-config?organizationId=${orgA.id}`, { routeOriginName: 'Puno', routeDestinationName: 'Juliaca', returnOriginName: 'Juliaca', returnDestinationName: 'Puno' });
+    await wipeOps();
+    await join(4, 'JULI_PUNO', JULI);
+    const dxx = await dispatch(4, 'JULI_PUNO');
+    const tokenV = 'atp_' + Buffer.from(`${dxx.manifest.id}|${dxx.manifest.number}|${u[4].code}`).toString('base64url');
+    const ver = await call(T.d[0], 'GET', `/manifests-public/verify/${tokenV}`);
+    check('la verificación pública del manifiesto usa el nombre de ruta de SU asociación', ver.status === 200 && ver.json.routeLabel === 'Puno → Juliaca', `HTTP ${ver.status} ${ver.json.routeLabel ?? msg(ver)}`);
     await prisma.person.delete({ where: { id: superP.id } }).catch(() => null);
 
     // ═════════ J. CONSISTENCIA FINAL ═════════

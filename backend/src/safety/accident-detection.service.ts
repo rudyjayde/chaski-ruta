@@ -1,3 +1,4 @@
+import { routeLabel as routeLabelFor } from '../common/route-labels';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
@@ -164,7 +165,8 @@ export class AccidentDetectionService {
     // Si NO tiene PRO, la unidad solo tiene GPS Vehicular individual pagado
     // por el socio -- el Administrador de esa asociacion no tiene por que
     // enterarse, asi que en su lugar se notifica a Super Admin.
-    const routeLabel = trip.route === 'JULI_PUNO' ? 'Juli → Puno' : 'Puno → Juli';
+    const routeConfig = await this.prisma.operationalConfig.findUnique({ where: { organizationId } });
+    const routeLabel = routeLabelFor(trip.route as 'JULI_PUNO' | 'PUNO_JULI', routeConfig);
     if (trip.organization.plan === 'PRO') {
       const admins = await this.prisma.person.findMany({
         where: { organizationId, role: 'ADMINISTRADOR', status: 'ACTIVO' },

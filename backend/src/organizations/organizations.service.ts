@@ -29,8 +29,8 @@ function flattenCorridor<T extends { operationalConfig?: Corridor | null }>(org:
   const { operationalConfig, ...rest } = org;
   return {
     ...rest,
-    terminalOriginName: operationalConfig?.terminalOriginName ?? 'Juli',
-    terminalDestinationName: operationalConfig?.terminalDestinationName ?? 'Puno',
+    terminalOriginName: operationalConfig?.terminalOriginName ?? '',
+    terminalDestinationName: operationalConfig?.terminalDestinationName ?? '',
     routeOriginName: operationalConfig?.routeOriginName ?? null,
     routeDestinationName: operationalConfig?.routeDestinationName ?? null,
     returnOriginName: operationalConfig?.returnOriginName ?? null,
@@ -129,9 +129,10 @@ export class OrganizationsService {
       await tx.operationalConfig.create({
         data: {
           organizationId: org.id,
-          ...(dto.terminalOriginName ? { terminalOriginName: dto.terminalOriginName } : {}),
+          // Sin nombre escrito queda vacio (nunca "Juli"/"Puno" de otra asociacion).
+          terminalOriginName: dto.terminalOriginName?.trim() ?? '',
+          terminalDestinationName: dto.terminalDestinationName?.trim() ?? '',
           ...(dto.terminalOriginAddress ? { terminalOriginAddress: dto.terminalOriginAddress } : {}),
-          ...(dto.terminalDestinationName ? { terminalDestinationName: dto.terminalDestinationName } : {}),
           ...(dto.terminalDestinationAddress ? { terminalDestinationAddress: dto.terminalDestinationAddress } : {}),
           ...(dto.routeOriginName?.trim() ? { routeOriginName: dto.routeOriginName.trim() } : {}),
           ...(dto.routeDestinationName?.trim() ? { routeDestinationName: dto.routeDestinationName.trim() } : {}),

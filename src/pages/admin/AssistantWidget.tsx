@@ -1,18 +1,23 @@
 import { useState, useRef, useEffect } from 'react';
 import { Sparkles, Send, Loader2, X } from 'lucide-react';
 import { useAssistantChat } from './assistant-chat-context';
+import { routeLabel } from '../../lib/operacion-api';
+import { useAdminDemo } from './AdminApp';
 
 // Widget flotante que acompaña al administrador en cualquier pantalla del
 // panel (Colas, Manifiestos, Flota, etc.) -- comparte la misma conversacion
 // que la pestaña dedicada "Asistente AI" via AssistantChatProvider, para que
 // no se pierda el hilo al pasar de uno a otro.
-const SUGGESTIONS = [
+// La sugerencia de la cola usa el nombre de la ruta de ESTA asociacion.
+const suggestionsFor = (queueRoute: string) => [
   '¿Dónde está el vehículo 001?',
-  '¿Cómo va la cola Juli → Puno?',
+  queueRoute === 'Ida' ? '¿Cómo va la cola de ida?' : `¿Cómo va la cola ${queueRoute}?`,
   'Dame el resumen de hoy',
 ];
 
 export default function AssistantWidget() {
+  const { org } = useAdminDemo();
+  const SUGGESTIONS = suggestionsFor(routeLabel('JULI_PUNO', org));
   const { assistantName, messages, sending, error, send } = useAssistantChat();
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');

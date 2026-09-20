@@ -1,15 +1,20 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Sparkles, Loader2 } from 'lucide-react';
 import { useAssistantChat } from './assistant-chat-context';
+import { routeLabel } from '../../lib/operacion-api';
+import { useAdminDemo } from './AdminApp';
 
-const SUGGESTIONS = [
+// La sugerencia de la cola usa el nombre de la ruta de ESTA asociacion.
+const suggestionsFor = (queueRoute: string) => [
   '¿Dónde está el vehículo 001?',
   '¿Cuántas vueltas hizo hoy la unidad 002?',
-  '¿Cómo va la cola Juli → Puno?',
+  queueRoute === 'Ida' ? '¿Cómo va la cola de ida?' : `¿Cómo va la cola ${queueRoute}?`,
   'Dame el resumen de hoy',
 ];
 
 export default function AssistantPage() {
+  const { org } = useAdminDemo();
+  const SUGGESTIONS = suggestionsFor(routeLabel('JULI_PUNO', org));
   const { assistantName, messages, sending, error, send } = useAssistantChat();
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);

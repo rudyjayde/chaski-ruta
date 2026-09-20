@@ -107,7 +107,7 @@ function ManifestVerificationPage({ token }: { token: string }) {
     );
   }
 
-  const routeLabel = record.route === 'JULI_PUNO' ? 'Juli → Puno' : 'Puno → Juli';
+  const routeLabel = record.routeLabel ?? (record.route === 'JULI_PUNO' ? 'Ida' : 'Retorno');
   const total = record.passengers.reduce((sum, passenger) => sum + passenger.fare, 0);
 
   return (

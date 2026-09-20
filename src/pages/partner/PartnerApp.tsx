@@ -335,7 +335,7 @@ function PartnerProduction() {
       <p className="text-sm text-t2 mb-4">Producción y recaudación real de tu unidad, con el mismo cálculo que usa tu conductor para rendirte cuentas.</p>
       <UnitTabs units={myUnits} selected={selectedCode} onSelect={setSelectedCode} />
       {selectedCode ? (
-        <ProductionReportView code={selectedCode} orgName={org?.name} personName={profile?.name} personLabel="Socio" />
+        <ProductionReportView code={selectedCode} orgName={org?.name} org={org} personName={profile?.name} personLabel="Socio" />
       ) : (
         <p className="text-sm text-t2">No tienes ninguna unidad vinculada todavía.</p>
       )}

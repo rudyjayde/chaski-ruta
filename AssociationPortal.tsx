@@ -189,7 +189,7 @@ export default function AssociationPortal({ onEnterAssociation, onLogout }: Prop
                 <CheckCircle size={14} />
                 Acceso activo · {roleName(user?.role ?? '')}
               </p>
-              <TerminalBox origin={org?.terminalOriginName} destination={org?.terminalDestinationName} center={false} />
+              {(org?.terminalOriginName || org?.terminalDestinationName) && <TerminalBox origin={org?.terminalOriginName} destination={org?.terminalDestinationName} center={false} />}
               <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mt-3">Rutas habilitadas</p>
               {enabledRoutes(org).length > 0
                 ? <RouteBadges routes={enabledRoutes(org)} center={false} />
@@ -228,7 +228,7 @@ export default function AssociationPortal({ onEnterAssociation, onLogout }: Prop
                   <OrgAvatar name={other.name} logoUrl={other.logoUrl} size={72} />
                   <p className="text-sm font-semibold text-t1 mt-3">{other.name}</p>
                   <p className="text-xs text-t2 mt-1">Información disponible</p>
-                  <TerminalBox origin={other.terminalOriginName} destination={other.terminalDestinationName} />
+                  {(other.terminalOriginName || other.terminalDestinationName) && <TerminalBox origin={other.terminalOriginName} destination={other.terminalDestinationName} />}
                   <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mt-3">Rutas habilitadas</p>
                   {enabledRoutes(other).length > 0
                     ? <RouteBadges routes={enabledRoutes(other)} />

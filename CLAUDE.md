@@ -50,3 +50,19 @@ construye **al final**, una vez que el sistema web esté completo — ver
 `docs/planes/plataformas-web-y-app-nativa.md` §6.3.
 
 Fuente completa de las reglas de negocio: `docs/planes/DOCUMENTO_MAESTRO_NEGOCIO_Y_PRODUCTO.md`.
+
+## Rutas de cada asociación: nunca escribir "Juli" ni "Puno" fijos
+
+**Regla permanente (20 de septiembre de 2026).** Cada asociación entra con SUS
+rutas (las dos "Rutas habilitadas": ida y retorno). Juli-Puno es solo el
+ejemplo de la primera asociación. Prohibido escribir a mano el nombre de una
+ciudad o ruta en pantallas, correos, PDF, reportes, alertas o textos de IA:
+
+- Pantallas: `routeLabel()`, `routeEnds()`, `terminalName()` de `src/lib/operacion-api.ts`, con la asociación del usuario (`useDriverContext().org`, `useAdminDemo().org`, etc.).
+- Servidor: `routeLabel()` / `routeEnds()` de `backend/src/common/route-labels.ts`, leyendo la `OperationalConfig` de la asociación.
+- `JULI_PUNO` / `PUNO_JULI` son solo códigos internos de ida / retorno, nunca se muestran.
+- Sin rutas escritas se muestra "Ida" / "Retorno". Una asociación nueva nace vacía.
+
+Detalle en `docs/planes/DOCUMENTO_MAESTRO_NEGOCIO_Y_PRODUCTO.md` §5.4 y
+`docs/planes/reglas-de-datos-y-validaciones.md` §11-§12. Antes de cambiar
+cualquier texto de ruta, correr `backend/scripts/e2e-colas.ts` (sección L).

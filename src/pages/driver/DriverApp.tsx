@@ -18,7 +18,7 @@ import {
   prepareTripForEntry, departQueueEntry, createDelayedRegistrationRequest,
   fetchMyPersonProfile, fetchMyOrganization, type Organization,
   fetchNotices, type Notice,
-  fetchGpsLive, fetchGpsDevices, fetchGpsHistory, routeLabelShort, reportGpsAlert,
+  fetchGpsLive, fetchGpsDevices, fetchGpsHistory, routeLabelShort, routeLabel, routeEnds, reportGpsAlert,
   type LiveVehiclePosition, type VehicleGpsStatus, type GpsHistoryPoint,
 } from '../../lib/operacion-api';
 import { getOperationalPosition, getOperationalState, getVehiclesAhead, getQueueDisplayOrder } from '../../lib/queue-ui';
@@ -609,7 +609,7 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
   const returnRoute: RouteDir | null = myTrip?.status === 'ACTIVO'
     ? (myTrip.route === 'JULI_PUNO' ? 'PUNO_JULI' : 'JULI_PUNO')
     : null;
-  const returnRouteLabel = returnRoute === 'JULI_PUNO' ? 'Juli → Puno' : returnRoute === 'PUNO_JULI' ? 'Puno → Juli' : '';
+  const returnRouteLabel = returnRoute ? routeLabel(returnRoute, org) : '';
   const myEntryOpposite = returnRoute === 'JULI_PUNO' ? myEntryJP : returnRoute === 'PUNO_JULI' ? myEntryPJ : null;
   const myTrips = trips.filter(t => t.code === myCode);
   const lastCompletedTrip = myTrips.find(t => t.status === 'COMPLETADO') ?? null; // ya viene ordenado desc
@@ -631,16 +631,19 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
   // §3.11: en que terminal esta parado el conductor — inferido con la misma logica
   // que ya usa Plan Operacion (cola activa, o direccion del ultimo viaje completado),
   // nunca GPS fisico ni algo que el conductor tenga que elegir a mano.
-  const inferredTerminal: 'Juli' | 'Puno' = myTrip
-    ? (myTrip.route === 'JULI_PUNO' ? 'Puno' : 'Juli')
+  // Si esta parado en el terminal de ORIGEN de la ida (true) o en el de destino (false).
+  const atOrigin = myTrip
+    ? myTrip.route === 'PUNO_JULI'
     : activeEntryRoute
-      ? (activeEntryRoute === 'JULI_PUNO' ? 'Juli' : 'Puno')
+      ? activeEntryRoute === 'JULI_PUNO'
       : lastCompletedTrip
-        ? (lastCompletedTrip.route === 'JULI_PUNO' ? 'Puno' : 'Juli')
-        : 'Juli';
-  const nextRoute: RouteDir = inferredTerminal === 'Juli' ? 'JULI_PUNO' : 'PUNO_JULI';
-  const nextRouteLabel = nextRoute === 'JULI_PUNO' ? 'Juli → Puno' : 'Puno → Juli';
-  const destinationFor = nextRoute === 'JULI_PUNO' ? 'Puno' : 'Juli';
+        ? lastCompletedTrip.route === 'PUNO_JULI'
+        : true;
+  const nextRoute: RouteDir = atOrigin ? 'JULI_PUNO' : 'PUNO_JULI';
+  const nextRouteLabel = routeLabel(nextRoute, org);
+  const nextEnds = routeEnds(nextRoute, org);
+  const inferredTerminal = nextEnds.origin || (atOrigin ? 'el origen' : 'el destino');
+  const destinationFor = nextEnds.destination || (atOrigin ? 'el destino' : 'el origen');
 
   // Datos derivados de la cola activa del conductor — se calculan una sola vez
   // aqui para no repetir la busqueda en cada rama del render de abajo.
@@ -820,7 +823,7 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
                   {myTrip.status === 'ACTIVO' ? 'Viaje en curso' : 'Manifiesto preparado'} — código {myTrip.code}
                 </p>
                 <p className="text-xs text-t2 mt-1">
-                  {myTrip.route === 'JULI_PUNO' ? 'Juli → Puno' : 'Puno → Juli'}
+                  {routeLabel(myTrip.route, org)}
                   {myTrip.manifestId ? ' · manifiesto abierto' : ' · sin manifiesto abierto todavía'}
                 </p>
                 {minutesUntilReturnEligible !== null && minutesUntilReturnEligible > 0 && (
@@ -1002,6 +1005,7 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
 // ─── Cola ─────────────────────────────────────────────────────────────────────
 function DriverQueue() {
   const { user } = useAuth();
+  const { org } = useDriverContext();
   const code = user?.code ?? '';
   const [errorMsg, setErrorMsg] = useState('');
   const [queueJP, setQueueJP] = useState<QueueEntry[]>([]);
@@ -1111,8 +1115,8 @@ function DriverQueue() {
   };
 
   const queueCards: Array<{ key: 'JULI_PUNO' | 'PUNO_JULI'; label: string; entries: QueueEntry[]; myEntry: QueueEntry | null; blockedByOther: boolean }> = [
-    { key: 'JULI_PUNO', label: 'Juli → Puno', entries: queueJP, myEntry: myEntryJP, blockedByOther: isActiveEntry(myEntryPJ) },
-    { key: 'PUNO_JULI', label: 'Puno → Juli', entries: queuePJ, myEntry: myEntryPJ, blockedByOther: isActiveEntry(myEntryJP) },
+    { key: 'JULI_PUNO', label: routeLabel('JULI_PUNO', org), entries: queueJP, myEntry: myEntryJP, blockedByOther: isActiveEntry(myEntryPJ) },
+    { key: 'PUNO_JULI', label: routeLabel('PUNO_JULI', org), entries: queuePJ, myEntry: myEntryPJ, blockedByOther: isActiveEntry(myEntryJP) },
   ];
 
   return (
@@ -1399,9 +1403,9 @@ function DriverManifest() {
     : null;
   const pendingManifests = manifests.filter(m => m.pendingDigitize && m.id !== activeManifest?.id);
 
-  const routeLabel = (route?: string) => (route === 'PUNO_JULI' ? 'Puno → Juli' : 'Juli → Puno');
-  const originFor = (route?: string) => (route === 'PUNO_JULI' ? 'Puno' : 'Juli');
-  const destinationFor = (route?: string) => (route === 'PUNO_JULI' ? 'Juli' : 'Puno');
+  const routeText = (route?: string) => routeLabel(route === 'PUNO_JULI' ? 'PUNO_JULI' : 'JULI_PUNO', org);
+  const originFor = (route?: string) => routeEnds(route === 'PUNO_JULI' ? 'PUNO_JULI' : 'JULI_PUNO', org).origin;
+  const destinationFor = (route?: string) => routeEnds(route === 'PUNO_JULI' ? 'PUNO_JULI' : 'JULI_PUNO', org).destination;
 
   const handleOpenManifest = async () => {
     if (!myTrip) return;
@@ -1576,7 +1580,7 @@ function DriverManifest() {
         verificationUrl,
         number: source.number,
         issueDate: formatManifestDateTime(downloadedAt),
-        route: routeLabel(source.route),
+        route: routeText(source.route),
         departure: source.date + ' ' + source.departureTime,
         arrival: closedAt ? formatManifestDateTime(closedAt) : formatManifestDateTime(downloadedAt),
         downloadedAt: formatManifestDateTime(downloadedAt),
@@ -1611,7 +1615,7 @@ function DriverManifest() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-base font-semibold text-t1">Completar manifiesto — {digitizing.number}</h1>
-            <p className="text-xs text-t2 mt-0.5">{routeLabel(digitizing.route)} · Respaldo en papel pendiente de digitalizar</p>
+            <p className="text-xs text-t2 mt-0.5">{routeText(digitizing.route)} · Respaldo en papel pendiente de digitalizar</p>
           </div>
           <button onClick={() => { setDigitizing(null); setDigitizePassengers([]); setAiSummary(''); }} className="text-muted hover:text-t1" aria-label="Cancelar"><X size={18} /></button>
         </div>
@@ -1710,11 +1714,11 @@ function DriverManifest() {
           <h1 className="text-base font-semibold text-t1">Manifiesto activo</h1>
           <p className="text-xs text-t2 mt-0.5">
             {justClosed
-              ? `${justClosed.number} · ${routeLabel(justClosed.route)} · cerrado`
+              ? `${justClosed.number} · ${routeText(justClosed.route)} · cerrado`
               : activeManifest
-                ? `${activeManifest.number} · ${routeLabel(activeManifest.route)} · ${activeManifest.departureTime}`
+                ? `${activeManifest.number} · ${routeText(activeManifest.route)} · ${activeManifest.departureTime}`
                 : myTrip
-                  ? `Viaje activo código ${myTrip.code} · ${routeLabel(myTrip.route)} · sin manifiesto abierto`
+                  ? `Viaje activo código ${myTrip.code} · ${routeText(myTrip.route)} · sin manifiesto abierto`
                   : 'Sin viaje activo'}
           </p>
         </div>
@@ -1831,7 +1835,7 @@ function DriverManifest() {
       {!justClosed && !activeManifest && myTrip && !myTrip.manifestId && (
         <div className="bg-surface border border-border rounded-lg p-6 text-center space-y-3">
           <FileCheck size={28} className="mx-auto text-primary" />
-          <p className="text-sm text-t1 font-medium">Viaje en curso — código {myTrip.code} · {routeLabel(myTrip.route)}</p>
+          <p className="text-sm text-t1 font-medium">Viaje en curso — código {myTrip.code} · {routeText(myTrip.route)}</p>
           <p className="text-xs text-t2">Abre el manifiesto para empezar a registrar pasajeros.</p>
           <button
             onClick={handleOpenManifest}
@@ -1848,7 +1852,7 @@ function DriverManifest() {
           <CheckCircle size={28} className="mx-auto text-ok" />
           <div>
             <p className="text-sm text-t1 font-medium">
-              {myTrip.status === 'ACTIVO' ? 'Viaje en curso' : 'Manifiesto preparado'} — código {myTrip.code} · {routeLabel(myTrip.route)}
+              {myTrip.status === 'ACTIVO' ? 'Viaje en curso' : 'Manifiesto preparado'} — código {myTrip.code} · {routeText(myTrip.route)}
             </p>
             <p className="text-xs text-t2 mt-1">
               El manifiesto de este viaje ya está cerrado{myTrip.status === 'ACTIVO' ? '.' : ' — marca salida cuando estés listo para partir.'}
@@ -1881,7 +1885,7 @@ function DriverManifest() {
               <div key={m.id} className="flex items-center justify-between bg-surface border border-border rounded-lg px-3 py-2">
                 <div>
                   <p className="text-sm text-t1 font-medium">{m.number}</p>
-                  <p className="text-xs text-t2">{routeLabel(m.route)} · {m.date} · {m.departureTime}</p>
+                  <p className="text-xs text-t2">{routeText(m.route)} · {m.date} · {m.departureTime}</p>
                 </div>
                 <button
                   onClick={() => { setDigitizing(m); setDigitizePassengers([]); }}
@@ -1946,7 +1950,7 @@ function DriverTrips() {
   return (
     <div className="p-6 lg:p-8">
       <h1 className="text-base font-semibold text-t1 mb-5">Mis viajes / Producción</h1>
-      <ProductionReportView code={code} orgName={org?.name} personName={profile?.name} personLabel="Conductor" />
+      <ProductionReportView code={code} orgName={org?.name} org={org} personName={profile?.name} personLabel="Conductor" />
     </div>
   );
 }

@@ -214,11 +214,51 @@ solo en un frontend, y ninguna se duplica de forma distinta en otro:
 Detalle completo de usuarios, permisos y estado real de cada superficie en
 `plataformas-web-y-app-nativa.md`.
 
+### 5.4 Rutas de cada asociación (regla permanente, agregado 20 de septiembre de 2026)
+
+**Regla:** cuando se crea una asociación nueva, todo lo que ve ingresa con
+**las rutas de esa asociación** -- nunca con las de otra. Ninguna pantalla,
+correo, PDF, reporte, alerta ni texto del asistente puede tener escrito a
+mano "Juli", "Puno" ni ninguna otra ciudad: el corredor Juli-Puno es solo el
+ejemplo de la primera asociación (ATIPCAR / Virgen de Fátima), no un valor del
+sistema.
+
+1. **Rutas habilitadas = exactamente dos:** una **ida** y un **retorno**. Las
+   escribe el Super Admin a mano (origen + destino + "Agregar", una por vez),
+   sin valores por defecto. Cada una tiene su cola de salida propia. Ej.:
+   ida "Juli → Puno", retorno "Puno → Juli".
+2. **Nombre del terminal ≠ nombre de la ruta.** El terminal lleva su nombre
+   completo y su dirección (ej. "Terminal Zonal Puno", con el mapa de Google);
+   la ruta lleva nombres cortos (ej. "Puno"). Son campos distintos.
+3. **Paradas adicionales:** paradas intermedias solo informativas, sin límite.
+   **No crean una cola de salida nueva.** (Antes se llamaban "Rutas de
+   operación adicionales" y no hacían nada.)
+4. **Asociación sin rutas escritas:** se muestra "Ida" y "Retorno" (o el nombre
+   de sus terminales si los tiene). Una asociación nueva nace con todo vacío;
+   nunca hereda "Juli"/"Puno".
+5. **Portal de asociaciones:** cada tarjeta muestra los nombres de los dos
+   terminales (uno por línea) y debajo "Rutas habilitadas"; sin rutas, "Rutas
+   por configurar".
+6. **Internamente** las dos direcciones son los códigos `JULI_PUNO` (ida) y
+   `PUNO_JULI` (retorno). Son solo códigos: nunca se muestran como texto.
+
+**Dónde vive:** las etiquetas las arman `routeLabel()`, `routeEnds()` y
+`terminalName()` en `src/lib/operacion-api.ts` (pantallas) y
+`backend/src/common/route-labels.ts` (correos, resumen diario, alertas,
+lector de manifiestos en papel y verificación pública del QR). Hay pruebas en
+`backend/scripts/e2e-colas.ts` (sección L). Todo texto de ruta nuevo debe salir
+de esos ayudantes.
+
+**Pendiente:** una asociación nueva arranca con las coordenadas de terminal de
+Juli y Puno (valores por defecto del modelo) hasta que el Super Admin guarda las
+suyas en el mapa; mientras tanto sus conductores serían rechazados por "estar
+lejos del terminal". Falta avisarlo en el panel o exigir las coordenadas.
+
 ## 6. ATIPCAR como primer cliente
 
 ### 6.1 Alcance
 
-ATIPCAR es la primera asociacion cliente configurada en CHASKI RUTA. Opera el corredor:
+ATIPCAR es la primera asociacion cliente configurada en CHASKI RUTA (ver la regla de rutas por asociación en §5.4: este corredor es solo su ejemplo). Opera el corredor:
 
 - Juli -> Puno.
 - Puno -> Juli.

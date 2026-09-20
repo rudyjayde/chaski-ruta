@@ -1,3 +1,4 @@
+import { routeEnds, routeLabel } from '../common/route-labels';
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RouteDir } from '@prisma/client';
@@ -397,8 +398,8 @@ export class ManifestsService {
     }
 
     const occupiedSeats = new Set(manifest.passengers.map((p) => p.seat));
-    const origin = manifest.route === 'PUNO_JULI' ? 'Puno' : 'Juli';
-    const destination = manifest.route === 'PUNO_JULI' ? 'Juli' : 'Puno';
+    const routeConfig = await this.prisma.operationalConfig.findUnique({ where: { organizationId } });
+    const { origin, destination } = routeEnds(manifest.route as 'JULI_PUNO' | 'PUNO_JULI', routeConfig);
 
     const prompt = `Esta es una foto de un manifiesto de pasajeros de un bus interprovincial peruano, llenado a mano o impreso en papel. Lee cada fila de pasajero y devuelve UNICAMENTE un JSON valido (sin texto adicional, sin markdown, sin bloques de codigo) con esta forma exacta:
 {"passengers":[{"seat":numero,"name":"nombres y apellidos completos","dni":"8 digitos o cadena vacia si no es legible","fare":numero,"paymentMethod":"EFECTIVO, YAPE, PLIN, TRANSFERENCIA, QR, o null si no esta indicado"}]}
@@ -593,7 +594,7 @@ Reglas estrictas:
 
     const manifest = await this.prisma.manifest.findUnique({
       where: { id: parsed.id },
-      include: { passengers: true, vehicle: true, driver: true, company: true, organization: true },
+      include: { passengers: true, vehicle: true, driver: true, company: true, organization: { include: { operationalConfig: true } } },
     });
     if (
       !manifest ||
@@ -607,6 +608,7 @@ Reglas estrictas:
     return {
       number: manifest.number,
       route: manifest.route,
+      routeLabel: routeLabel(manifest.route as 'JULI_PUNO' | 'PUNO_JULI', manifest.organization.operationalConfig),
       date: manifest.date,
       departureTime: manifest.departureTime,
       arrivalTime: manifest.arrivalTime,

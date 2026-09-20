@@ -50,11 +50,11 @@ function createPdfBlob(lines: string[]) {
   return new Blob([pdf], { type: 'application/pdf' });
 }
 
-function downloadManifestPdf(m: Manifest, orgName: string) {
+function downloadManifestPdf(m: Manifest, orgName: string, routeText: string) {
   const total = m.passengers.reduce((s, p) => s + p.fare, 0);
   const lines = [
     (orgName || 'CHASKI AI') + ' - MANIFIESTO ' + m.number,
-    'Ruta: ' + (m.route === 'JULI_PUNO' ? 'Juli -> Puno' : 'Puno -> Juli') + '   Fecha: ' + m.date + '   Salida: ' + m.departureTime,
+    'Ruta: ' + routeText.replace('→', '->') + '   Fecha: ' + m.date + '   Salida: ' + m.departureTime,
     'Unidad: ' + m.code + '   Placa: ' + m.plate + '   Empresa: ' + m.company + '   Conductor: ' + m.driverName,
     'Estado: ' + m.status + '   Capacidad: ' + m.capacity,
     '',
@@ -316,7 +316,7 @@ function ManifestDetail({
               </button>
             )}
             {m.pdfGenerated && (
-              <button onClick={() => downloadManifestPdf(m, org?.name ?? '')} className="px-3 py-1.5 text-sm bg-primary text-white rounded hover:bg-primary-h flex items-center gap-1.5">
+              <button onClick={() => downloadManifestPdf(m, org?.name ?? '', routeLabel(m.route, org))} className="px-3 py-1.5 text-sm bg-primary text-white rounded hover:bg-primary-h flex items-center gap-1.5">
                 <Download size={12} /> Descargar PDF
               </button>
             )}

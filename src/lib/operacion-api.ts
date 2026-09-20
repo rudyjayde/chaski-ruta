@@ -95,6 +95,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export type ManifestPublicVerification = {
   number: string;
   route: RouteDir;
+  // Nombre de la ruta segun la asociacion que emitio el manifiesto.
+  routeLabel?: string;
   date: string;
   departureTime: string;
   arrivalTime: string | null;
@@ -916,36 +918,40 @@ type CorridorNames = Pick<Organization, 'terminalOriginName' | 'terminalDestinat
 
 function names(org: CorridorNames): { origin: string; destination: string } {
   return {
-    origin: org?.routeOriginName?.trim() || org?.terminalOriginName?.trim() || 'Juli',
-    destination: org?.routeDestinationName?.trim() || org?.terminalDestinationName?.trim() || 'Puno',
+    origin: org?.routeOriginName?.trim() || org?.terminalOriginName?.trim() || '',
+    destination: org?.routeDestinationName?.trim() || org?.terminalDestinationName?.trim() || '',
   };
 }
 
-/** "Puno → Juliaca" / "Juliaca → Puno" (o "Ambas rutas" si viene 'AMBAS'). */
-export function routeLabel(route: RouteDir | 'AMBAS', org: CorridorNames): string {
+/** Origen y destino de cada una de las dos rutas (ida = JULI_PUNO, retorno = PUNO_JULI) de ESTA asociacion. */
+export function routeEnds(route: RouteDir, org: CorridorNames): { origin: string; destination: string } {
   const { origin, destination } = names(org);
+  if (route === 'JULI_PUNO') return { origin, destination };
+  return {
+    origin: org?.returnOriginName?.trim() || destination,
+    destination: org?.returnDestinationName?.trim() || origin,
+  };
+}
+
+/** "Puno → Juliaca" / "Juliaca → Puno" (o "Ambas rutas"); "Ida"/"Retorno" si la asociacion no escribio sus rutas. */
+export function routeLabel(route: RouteDir | 'AMBAS', org: CorridorNames): string {
   if (route === 'AMBAS') return 'Ambas rutas';
-  // Las dos rutas habilitadas se escriben a mano (ida y retorno): si estan,
-  // son las etiquetas reales de cada cola.
-  const idaO = org?.routeOriginName?.trim(), idaD = org?.routeDestinationName?.trim();
-  const retO = org?.returnOriginName?.trim(), retD = org?.returnDestinationName?.trim();
-  if (route === 'JULI_PUNO' && idaO && idaD) return `${idaO} → ${idaD}`;
-  if (route === 'PUNO_JULI' && retO && retD) return `${retO} → ${retD}`;
-  return route === 'JULI_PUNO' ? `${origin} → ${destination}` : `${destination} → ${origin}`;
+  const { origin, destination } = routeEnds(route, org);
+  if (!origin || !destination) return route === 'JULI_PUNO' ? 'Ida' : 'Retorno';
+  return `${origin} → ${destination}`;
 }
 
 /** Version corta para tablas angostas: "P→J" a partir de las iniciales reales. */
 export function routeLabelShort(route: RouteDir, org: CorridorNames): string {
-  const { origin, destination } = names(org);
-  const o = origin.charAt(0).toUpperCase();
-  const d = destination.charAt(0).toUpperCase();
-  return route === 'JULI_PUNO' ? `${o}→${d}` : `${d}→${o}`;
+  const { origin, destination } = routeEnds(route, org);
+  if (!origin || !destination) return route === 'JULI_PUNO' ? 'Ida' : 'Ret.';
+  return `${origin.charAt(0).toUpperCase()}→${destination.charAt(0).toUpperCase()}`;
 }
 
-/** Nombre de un solo terminal ('JULI' = terminal de origen, 'PUNO' = terminal de destino). */
+/** Nombre de un solo terminal ('JULI' = terminal de origen de la ida, 'PUNO' = terminal de destino). */
 export function terminalName(terminal: 'JULI' | 'PUNO', org: CorridorNames): string {
   const { origin, destination } = names(org);
-  return terminal === 'JULI' ? origin : destination;
+  return (terminal === 'JULI' ? origin : destination) || (terminal === 'JULI' ? 'Origen' : 'Destino');
 }
 
 export async function fetchOrganizationsDirectory(): Promise<OrganizationDirectoryEntry[]> {
