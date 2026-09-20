@@ -469,6 +469,10 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     if (rn.json.id) await prisma.organization.update({ where: { id: rn.json.id }, data: { status: 'ACTIVA' } });
     const dirR = ((await call(T.d[0], 'GET', '/organizations/directory')).json as any[]).find((o) => o.id === rn.json.id);
     check('el directorio trae terminal ("Terminal Zonal Puno") y ruta ("Puno") por separado', !!dirR && dirR.terminalOriginName === 'Terminal Zonal Puno' && dirR.routeOriginName === 'Puno' && dirR.routeDestinationName === 'Juliaca' && dirR.returnOriginName === 'Juliaca' && dirR.returnDestinationName === 'Puno', dirR ? JSON.stringify({ t: dirR.terminalOriginName, r: dirR.routeOriginName }) : 'sin asociación (¿estado?)');
+    const rnAdmin = await prisma.person.findFirst({ where: { organizationId: rn.json.id, role: 'ADMINISTRADOR' } });
+    if (rnAdmin) await prisma.person.update({ where: { id: rnAdmin.id }, data: { status: 'ACTIVO' } });
+    const meR = rnAdmin ? (await call(await tok(rnAdmin), 'GET', '/organizations/me')).json : {};
+    check('"Tu asociación" (/organizations/me) trae las dos rutas: ida y retorno', meR.routeOriginName === 'Puno' && meR.routeDestinationName === 'Juliaca' && meR.returnOriginName === 'Juliaca' && meR.returnDestinationName === 'Puno', JSON.stringify({ i: `${meR.routeOriginName}>${meR.routeDestinationName}`, r: `${meR.returnOriginName}>${meR.returnDestinationName}` }));
     const upd = await call(TS, 'POST', `/operational-config?organizationId=${rn.json.id}`, { routeOriginName: 'Puno Centro' });
     check('el Super Admin puede cambiar el nombre de la ruta sin tocar el del terminal', upd.status === 201 && upd.json.routeOriginName === 'Puno Centro' && upd.json.terminalOriginName === 'Terminal Zonal Puno', `HTTP ${upd.status} ${msg(upd)}`);
     // ─ Eliminar personas (administrador / socio / conductor) ─

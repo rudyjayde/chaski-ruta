@@ -134,6 +134,12 @@ function EnabledRoutesEditor({ routes, editing, onChange }: { routes: EnabledRou
           </button>
         </div>
       )}
+      {editing && routes.length < 2 && (origin.trim() || destination.trim()) && (
+        <p className="text-xs text-warn mt-2">Esta ruta todavía no está guardada: toca "Agregar" para que quede en la lista.</p>
+      )}
+      {editing && routes.length === 1 && !origin.trim() && !destination.trim() && (
+        <p className="text-xs text-warn mt-2">Falta la ruta de retorno: agrégala para que la asociación tenga sus dos rutas.</p>
+      )}
       {editing && routes.length >= 2 && <p className="text-[11px] text-t2">Ya están las dos rutas (ida y retorno). Quita una con la X si necesitas cambiarla.</p>}
     </div>
   );
@@ -171,6 +177,7 @@ function StopsEditor({ stops, onChange }: { stops: { origin: string; destination
           <Plus size={14} /> Agregar
         </button>
       </div>
+      {(origin.trim() || destination.trim()) && <p className="text-xs text-warn mt-2">Esta parada todavía no está guardada: toca "Agregar" para que quede en la lista.</p>}
     </div>
   );
 }
@@ -204,6 +211,7 @@ function NamesListEditor({ items, placeholder, onChange }: { items: string[]; pl
           <Plus size={14} /> Agregar
         </button>
       </div>
+      {name.trim() && <p className="text-xs text-warn mt-2">Este nombre todavía no está en la lista: toca "Agregar" (o Enter).</p>}
     </div>
   );
 }
