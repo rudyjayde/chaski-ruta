@@ -462,6 +462,15 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     check('el mismo equipo GPS se puede volver a usar en la asociación nueva', reuseGps);
     const nuevaVacia = newC ? (await prisma.trip.count({ where: { organizationId: newC } })) + (await prisma.manifest.count({ where: { organizationId: newC } })) : -1;
     check('la asociación nueva arranca sin viajes ni manifiestos del historial anterior', nuevaVacia === 0, `${nuevaVacia}`);
+    // Rutas habilitadas con nombre propio (distinto del nombre del terminal)
+    const rn = await call(TS, 'POST', '/organizations', { name: `ZZ E2E R ${stamp}`, ruc: '20100070970', adminName: 'Admin R', adminEmail: `e2e.${stamp}.rutas@example.test`, terminalOriginName: 'Terminal Zonal Puno', terminalDestinationName: 'Terminal Zonal Juliaca', routeOriginName: 'Puno', routeDestinationName: 'Juliaca' });
+    if (rn.json.id) orgIds.push(rn.json.id);
+    check('se crea una asociación con nombre de terminal Y nombre de ruta por separado', rn.status === 201, `HTTP ${rn.status} ${msg(rn)}`);
+    if (rn.json.id) await prisma.organization.update({ where: { id: rn.json.id }, data: { status: 'ACTIVA' } });
+    const dirR = ((await call(T.d[0], 'GET', '/organizations/directory')).json as any[]).find((o) => o.id === rn.json.id);
+    check('el directorio trae terminal ("Terminal Zonal Puno") y ruta ("Puno") por separado', !!dirR && dirR.terminalOriginName === 'Terminal Zonal Puno' && dirR.routeOriginName === 'Puno' && dirR.routeDestinationName === 'Juliaca', dirR ? JSON.stringify({ t: dirR.terminalOriginName, r: dirR.routeOriginName }) : 'sin asociación (¿estado?)');
+    const upd = await call(TS, 'POST', `/operational-config?organizationId=${rn.json.id}`, { routeOriginName: 'Puno Centro' });
+    check('el Super Admin puede cambiar el nombre de la ruta sin tocar el del terminal', upd.status === 201 && upd.json.routeOriginName === 'Puno Centro' && upd.json.terminalOriginName === 'Terminal Zonal Puno', `HTTP ${upd.status} ${msg(upd)}`);
     await prisma.person.delete({ where: { id: superP.id } }).catch(() => null);
 
     // ═════════ J. CONSISTENCIA FINAL ═════════

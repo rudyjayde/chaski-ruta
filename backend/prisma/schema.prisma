@@ -702,6 +702,13 @@ model OperationalConfig {
   terminalDestinationName    String  @default("Puno")
   terminalDestinationAddress String?
 
+  // Nombres de las RUTAS habilitadas (20 sept 2026): distintos del nombre del
+  // terminal. Ej. terminal "Terminal Zonal Puno" -> ruta "Puno". Con estos dos
+  // se arman automaticamente la ruta de ida ("Puno -> Juliaca") y la de vuelta
+  // ("Juliaca -> Puno"). Si estan vacios se usa el nombre del terminal.
+  routeOriginName      String?
+  routeDestinationName String?
+
   // Coordenadas de referencia de cada terminal, para la verificación puntual de
   // GPS al confirmar llegada (plan-operacion.md §3.3) -- valores por defecto son
   // el centro aproximado de Juli/Puno; el Super Admin los ajusta al punto real

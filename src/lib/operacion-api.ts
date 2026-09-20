@@ -844,6 +844,10 @@ export interface Organization {
   // configuro los suyos).
   terminalOriginName: string;
   terminalDestinationName: string;
+  // Nombres de las rutas habilitadas (distintos del nombre del terminal); si
+  // vienen vacios se usa el nombre del terminal.
+  routeOriginName?: string | null;
+  routeDestinationName?: string | null;
 }
 
 export interface CreateOrganizationInput {
@@ -862,6 +866,8 @@ export interface CreateOrganizationInput {
   terminalOriginAddress?: string;
   terminalDestinationName?: string;
   terminalDestinationAddress?: string;
+  routeOriginName?: string;
+  routeDestinationName?: string;
 }
 
 export async function fetchOrganizations(): Promise<Organization[]> {
@@ -883,6 +889,8 @@ export interface OrganizationDirectoryEntry {
   terminalDestinationName: string;
   terminalOriginAddress?: string | null;
   terminalDestinationAddress?: string | null;
+  routeOriginName?: string | null;
+  routeDestinationName?: string | null;
 }
 
 // ─── Etiquetas de ruta/terminal por asociacion ──────────────────────────────
@@ -891,12 +899,12 @@ export interface OrganizationDirectoryEntry {
 // direccion ('ruta de ida'/'ruta de vuelta', 'terminal de origen'/'terminal de
 // destino') -- estas funciones son el UNICO lugar que debe traducirlos a texto,
 // para no volver a repetir "Juli"/"Puno" a mano en cada pantalla.
-type CorridorNames = Pick<Organization, 'terminalOriginName' | 'terminalDestinationName'> | null | undefined;
+type CorridorNames = Pick<Organization, 'terminalOriginName' | 'terminalDestinationName' | 'routeOriginName' | 'routeDestinationName'> | null | undefined;
 
 function names(org: CorridorNames): { origin: string; destination: string } {
   return {
-    origin: org?.terminalOriginName?.trim() || 'Juli',
-    destination: org?.terminalDestinationName?.trim() || 'Puno',
+    origin: org?.routeOriginName?.trim() || org?.terminalOriginName?.trim() || 'Juli',
+    destination: org?.routeDestinationName?.trim() || org?.terminalDestinationName?.trim() || 'Puno',
   };
 }
 
@@ -1430,6 +1438,8 @@ export interface OperationalConfig {
   terminalOriginAddress: string | null;
   terminalDestinationName: string;
   terminalDestinationAddress: string | null;
+  routeOriginName: string | null;
+  routeDestinationName: string | null;
   terminalOriginLat: number;
   terminalOriginLng: number;
   terminalDestinationLat: number;

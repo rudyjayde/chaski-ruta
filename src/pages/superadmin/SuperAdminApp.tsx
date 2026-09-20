@@ -799,6 +799,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
     terminalDestinationAddress: '',
     terminalDestinationLat: null as number | null,
     terminalDestinationLng: null as number | null,
+    routeOriginName: '',
+    routeDestinationName: '',
     initialConfigNotes: '',
     // Parametros antifraude (plan-operacion.md §3.10) -- ya existian en el
     // backend y en OperationalConfig, pero ningun formulario los expone
@@ -955,6 +957,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           terminalDestinationAddress: cfg.terminalDestinationAddress ?? '',
           terminalDestinationLat: cfg.terminalDestinationLat ?? null,
           terminalDestinationLng: cfg.terminalDestinationLng ?? null,
+          routeOriginName: cfg.routeOriginName ?? '',
+          routeDestinationName: cfg.routeDestinationName ?? '',
           initialConfigNotes: cfg.initialConfigNotes ?? '',
           gpsRadiusMeters: cfg.gpsRadiusMeters ?? 300,
           minTripMinutesOutbound: cfg.minTripMinutesOutbound ?? 90,
@@ -980,6 +984,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           ...(opForm.terminalDestinationLat != null && opForm.terminalDestinationLng != null
             ? { terminalDestinationLat: opForm.terminalDestinationLat, terminalDestinationLng: opForm.terminalDestinationLng }
             : {}),
+          routeOriginName: opForm.routeOriginName.trim(),
+          routeDestinationName: opForm.routeDestinationName.trim(),
           initialConfigNotes: opForm.initialConfigNotes.trim(),
           gpsRadiusMeters: opForm.gpsRadiusMeters,
           minTripMinutesOutbound: opForm.minTripMinutesOutbound,
@@ -1252,6 +1258,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 terminalDestinationAddress: opConfig.terminalDestinationAddress ?? '',
                 terminalDestinationLat: opConfig.terminalDestinationLat ?? null,
                 terminalDestinationLng: opConfig.terminalDestinationLng ?? null,
+                routeOriginName: opConfig.routeOriginName ?? '',
+                routeDestinationName: opConfig.routeDestinationName ?? '',
                 initialConfigNotes: opConfig.initialConfigNotes ?? '',
                 gpsRadiusMeters: opConfig.gpsRadiusMeters ?? 300,
                 minTripMinutesOutbound: opConfig.minTripMinutesOutbound ?? 90,
@@ -1447,26 +1455,25 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 <p className="text-sm font-semibold text-t1 mb-2">Terminal 1 — Punto de salida de la ruta de ida</p>
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-sm font-medium text-t1 mb-1">Nombre corto (para Rutas habilitadas) *</label>
+                    <label className="block text-sm font-medium text-t1 mb-1">Nombre del terminal *</label>
                     {editingOp ? (
                       <input
                         value={opForm.terminalOriginName}
                         onChange={e => setOpForm(v => ({ ...v, terminalOriginName: e.target.value }))}
-                        placeholder="Juli"
+                        placeholder="Terminal Zonal Juli"
                         className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                       />
                     ) : (
                       <p className="text-sm text-t1">{opForm.terminalOriginName || '—'}</p>
                     )}
-                    <p className="text-xs text-t2 mt-1">Corto, ej. "Juli" — se usa para armar la ruta ("Juli → Puno"). El nombre completo del terminal va en Dirección.</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-t1 mb-1">Dirección (nombre completo del terminal)</label>
+                    <label className="block text-sm font-medium text-t1 mb-1">Dirección</label>
                     {editingOp ? (
                       <input
                         value={opForm.terminalOriginAddress}
                         onChange={e => setOpForm(v => ({ ...v, terminalOriginAddress: e.target.value }))}
-                        placeholder="Terminal Zonal Juli, Jr. Terminal 123"
+                        placeholder="Jr. Terminal 123, Juli"
                         className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                       />
                     ) : (
@@ -1496,26 +1503,25 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 <p className="text-sm font-semibold text-t1 mb-2">Terminal 2 — Punto de salida de la ruta de vuelta</p>
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-sm font-medium text-t1 mb-1">Nombre corto (para Rutas habilitadas) *</label>
+                    <label className="block text-sm font-medium text-t1 mb-1">Nombre del terminal *</label>
                     {editingOp ? (
                       <input
                         value={opForm.terminalDestinationName}
                         onChange={e => setOpForm(v => ({ ...v, terminalDestinationName: e.target.value }))}
-                        placeholder="Puno"
+                        placeholder="Terminal Zonal Puno"
                         className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                       />
                     ) : (
                       <p className="text-sm text-t1">{opForm.terminalDestinationName || '—'}</p>
                     )}
-                    <p className="text-xs text-t2 mt-1">Corto, ej. "Puno" — se usa para armar la ruta ("Puno → Juli"). El nombre completo del terminal va en Dirección.</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-t1 mb-1">Dirección (nombre completo del terminal)</label>
+                    <label className="block text-sm font-medium text-t1 mb-1">Dirección</label>
                     {editingOp ? (
                       <input
                         value={opForm.terminalDestinationAddress}
                         onChange={e => setOpForm(v => ({ ...v, terminalDestinationAddress: e.target.value }))}
-                        placeholder="Terminal Terrestre de Puno"
+                        placeholder="Terminal Terrestre, Puno"
                         className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                       />
                     ) : (
@@ -1539,6 +1545,51 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                     </p>
                   </div>
                 </div>
+              </div>
+
+              <div className="border border-border rounded-lg p-4 bg-bg">
+                <p className="text-sm font-semibold text-t1 mb-1">Rutas habilitadas</p>
+                <p className="text-xs text-t2 mb-3">
+                  Estas son las dos rutas reales de la asociación (una de ida y una de vuelta): son las que tienen cola de salida y las que aparecen en el portal. Se crean solas a partir de estos dos nombres — no son lo mismo que el nombre del terminal.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-t1 mb-1">Origen de la ruta de ida</label>
+                    {editingOp ? (
+                      <input
+                        value={opForm.routeOriginName}
+                        onChange={e => setOpForm(v => ({ ...v, routeOriginName: e.target.value }))}
+                        placeholder="Puno"
+                        className="w-full h-9 px-3 border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    ) : (
+                      <p className="text-sm text-t1">{opForm.routeOriginName || '—'}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-t1 mb-1">Destino de la ruta de ida</label>
+                    {editingOp ? (
+                      <input
+                        value={opForm.routeDestinationName}
+                        onChange={e => setOpForm(v => ({ ...v, routeDestinationName: e.target.value }))}
+                        placeholder="Juliaca"
+                        className="w-full h-9 px-3 border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    ) : (
+                      <p className="text-sm text-t1">{opForm.routeDestinationName || '—'}</p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 mt-3">
+                  {(() => {
+                    const o = opForm.routeOriginName.trim() || opForm.terminalOriginName.trim() || '—';
+                    const d = opForm.routeDestinationName.trim() || opForm.terminalDestinationName.trim() || '—';
+                    return [`${o} → ${d}`, `${d} → ${o}`].map(label => (
+                      <span key={label} className="px-2 py-1 rounded border border-border bg-surface text-[11px] font-medium text-t1">{label}</span>
+                    ));
+                  })()}
+                </div>
+                <p className="text-[11px] text-t2 mt-2">Si lo dejas vacío se usa el nombre del terminal.</p>
               </div>
 
               <div>
@@ -2473,7 +2524,7 @@ function NewOrgWizard({
     // Step 1
     adminName: sug?.adminName ?? '', adminEmail: sug?.adminEmail ?? '', adminPhone: sug?.adminPhone ?? '',
     // Step 2
-    terminal1: sug?.terminal1 ?? '', terminal1Address: '', terminal2: sug?.terminal2 ?? '', terminal2Address: '',
+    terminal1: sug?.terminal1 ?? '', terminal1Address: '', terminal2: sug?.terminal2 ?? '', terminal2Address: '', routeOrigin: '', routeDestination: '',
     routes:
       sug?.routes && sug.routes.length > 0
         ? sug.routes
@@ -2532,6 +2583,8 @@ function NewOrgWizard({
           ...(form.terminal1Address.trim() ? { terminalOriginAddress: form.terminal1Address.trim() } : {}),
           ...(form.terminal2.trim() ? { terminalDestinationName: form.terminal2.trim() } : {}),
           ...(form.terminal2Address.trim() ? { terminalDestinationAddress: form.terminal2Address.trim() } : {}),
+          ...(form.routeOrigin.trim() ? { routeOriginName: form.routeOrigin.trim() } : {}),
+          ...(form.routeDestination.trim() ? { routeDestinationName: form.routeDestination.trim() } : {}),
         });
         setCreated(true);
       } catch (err) {
@@ -2747,13 +2800,12 @@ function NewOrgWizard({
               </div>
               <div className="grid md:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-t1 mb-1">Nombre corto (para Rutas habilitadas)</label>
-                  <input value={form.terminal1} onChange={event => set('terminal1', event.target.value)} placeholder="Juli"
+                  <label className="block text-sm font-medium text-t1 mb-1">Nombre del terminal</label>
+                  <input value={form.terminal1} onChange={event => set('terminal1', event.target.value)} placeholder="Terminal Terrestre Juli"
                     className="w-full h-9 px-3 border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-                  <p className="text-xs text-t2 mt-1">Corto, ej. "Juli" — arma la ruta ("Juli → Puno"). El nombre completo va en Dirección.</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-t1 mb-1">Dirección (nombre completo del terminal)</label>
+                  <label className="block text-sm font-medium text-t1 mb-1">Dirección</label>
                   <input value={form.terminal1Address} onChange={event => set('terminal1Address', event.target.value)} placeholder="Escribe o selecciona en el mapa"
                     className="w-full h-9 px-3 border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
                 </div>
@@ -2773,16 +2825,43 @@ function NewOrgWizard({
               </div>
               <div className="grid md:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-t1 mb-1">Nombre corto (para Rutas habilitadas)</label>
-                  <input value={form.terminal2} onChange={event => set('terminal2', event.target.value)} placeholder="Puno"
+                  <label className="block text-sm font-medium text-t1 mb-1">Nombre del terminal</label>
+                  <input value={form.terminal2} onChange={event => set('terminal2', event.target.value)} placeholder="Terminal Zonal Puno"
                     className="w-full h-9 px-3 border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-                  <p className="text-xs text-t2 mt-1">Corto, ej. "Puno" — arma la ruta ("Puno → Juli"). El nombre completo va en Dirección.</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-t1 mb-1">Dirección (nombre completo del terminal)</label>
+                  <label className="block text-sm font-medium text-t1 mb-1">Dirección</label>
                   <input value={form.terminal2Address} onChange={event => set('terminal2Address', event.target.value)} placeholder="Escribe o selecciona en el mapa"
                     className="w-full h-9 px-3 border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
                 </div>
+              </div>
+            </div>
+
+            <div className="border border-border rounded-lg p-4 bg-bg">
+              <h3 className="text-base font-semibold text-t1">Rutas habilitadas</h3>
+              <p className="text-sm text-t2 mt-0.5 mb-3">
+                La ruta de ida y la de vuelta que tendrán cola de salida (se crean solas). Es un nombre corto, distinto del nombre del terminal — ej. "Puno" y "Juliaca".
+              </p>
+              <div className="grid md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-t1 mb-1">Origen de la ruta de ida</label>
+                  <input value={form.routeOrigin} onChange={event => set('routeOrigin', event.target.value)} placeholder="Puno"
+                    className="w-full h-9 px-3 border border-border rounded-md text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-t1 mb-1">Destino de la ruta de ida</label>
+                  <input value={form.routeDestination} onChange={event => set('routeDestination', event.target.value)} placeholder="Juliaca"
+                    className="w-full h-9 px-3 border border-border rounded-md text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 mt-3">
+                {(() => {
+                  const o = form.routeOrigin.trim() || form.terminal1.trim() || '—';
+                  const d = form.routeDestination.trim() || form.terminal2.trim() || '—';
+                  return [`${o} → ${d}`, `${d} → ${o}`].map(label => (
+                    <span key={label} className="px-2 py-1 rounded border border-border bg-surface text-[11px] font-medium text-t1">{label}</span>
+                  ));
+                })()}
               </div>
             </div>
 
@@ -2790,8 +2869,8 @@ function NewOrgWizard({
               <div className="flex items-start gap-2 mb-4">
                 <Map size={17} className="text-primary mt-0.5" />
                 <div>
-                  <h3 className="text-base font-semibold text-t1">Rutas de operación</h3>
-                  <p className="text-sm text-t2 mt-0.5">Define la ruta de ida, la ruta de vuelta y cualquier recorrido adicional.</p>
+                  <h3 className="text-base font-semibold text-t1">Paradas adicionales</h3>
+                  <p className="text-sm text-t2 mt-0.5">Opcional. Paradas intermedias por las que pasa la unidad, solo informativas: no crean una cola de salida nueva. La ruta de ida y la de vuelta ya son las "Rutas habilitadas" de arriba.</p>
                 </div>
               </div>
 
@@ -2938,6 +3017,7 @@ function NewOrgWizard({
               ['Dirección terminal 1', form.terminal1Address || '—'],
               ['Terminal 2', form.terminal2 || '—'],
               ['Dirección terminal 2', form.terminal2Address || '—'],
+              ['Rutas habilitadas', (form.routeOrigin.trim() || form.terminal1.trim()) && (form.routeDestination.trim() || form.terminal2.trim()) ? `${form.routeOrigin.trim() || form.terminal1.trim()} → ${form.routeDestination.trim() || form.terminal2.trim()} · ${form.routeDestination.trim() || form.terminal2.trim()} → ${form.routeOrigin.trim() || form.terminal1.trim()}` : '—'],
               ['Rutas', form.routes
                 .filter(route => route.origin && route.destination)
                 .map(route => route.origin + ' → ' + route.destination)
@@ -2979,15 +3059,13 @@ function NewOrgWizard({
           currentAddress={mapTarget === 'terminal1' ? form.terminal1Address : form.terminal2Address}
           onClose={() => setMapTarget(null)}
           onSelect={location => {
-            // Solo la direccion se llena con lo que dice Google Maps (QA 20
-            // sept 2026): el nombre de Maps suele ser largo ("Terminal Zonal
-            // Sur de Puno") y NO es el nombre corto que arma "Rutas
-            // habilitadas" -- ese lo escribe el Super Admin a mano. Antes se
-            // pisaba sin querer con el nombre de Maps.
+            // Google Maps llena el nombre y la direccion del terminal. Las RUTAS
+            // habilitadas tienen sus propios campos (routeOrigin/routeDestination)
+            // y ya no dependen del nombre del terminal.
             if (mapTarget === 'terminal1') {
-              setForm(current => ({ ...current, terminal1Address: location.address }));
+              setForm(current => ({ ...current, terminal1: location.name, terminal1Address: location.address }));
             } else {
-              setForm(current => ({ ...current, terminal2Address: location.address }));
+              setForm(current => ({ ...current, terminal2: location.name, terminal2Address: location.address }));
             }
             setMapTarget(null);
           }}

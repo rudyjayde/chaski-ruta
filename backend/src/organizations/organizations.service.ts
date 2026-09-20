@@ -19,13 +19,18 @@ type Corridor = {
   terminalDestinationName: string;
   terminalOriginAddress?: string | null;
   terminalDestinationAddress?: string | null;
+  routeOriginName?: string | null;
+  routeDestinationName?: string | null;
 };
+const CORRIDOR_SELECT = { terminalOriginName: true, terminalDestinationName: true, routeOriginName: true, routeDestinationName: true } as const;
 function flattenCorridor<T extends { operationalConfig?: Corridor | null }>(org: T) {
   const { operationalConfig, ...rest } = org;
   return {
     ...rest,
     terminalOriginName: operationalConfig?.terminalOriginName ?? 'Juli',
     terminalDestinationName: operationalConfig?.terminalDestinationName ?? 'Puno',
+    routeOriginName: operationalConfig?.routeOriginName ?? null,
+    routeDestinationName: operationalConfig?.routeDestinationName ?? null,
     ...(operationalConfig && 'terminalOriginAddress' in operationalConfig
       ? { terminalOriginAddress: operationalConfig.terminalOriginAddress, terminalDestinationAddress: operationalConfig.terminalDestinationAddress }
       : {}),
@@ -44,7 +49,7 @@ export class OrganizationsService {
     const orgs = await this.prisma.organization.findMany({
       where: { status: { not: 'ELIMINADA' } },
       orderBy: { createdAt: 'desc' },
-      include: { operationalConfig: { select: { terminalOriginName: true, terminalDestinationName: true } } },
+      include: { operationalConfig: { select: CORRIDOR_SELECT } },
     });
     return orgs.map(flattenCorridor);
   }
@@ -52,7 +57,7 @@ export class OrganizationsService {
   async findOne(id: string) {
     const org = await this.prisma.organization.findUnique({
       where: { id },
-      include: { operationalConfig: { select: { terminalOriginName: true, terminalDestinationName: true } } },
+      include: { operationalConfig: { select: CORRIDOR_SELECT } },
     });
     if (!org) throw new NotFoundException('Asociacion no encontrada');
     return flattenCorridor(org);
@@ -73,7 +78,7 @@ export class OrganizationsService {
         ruc: true,
         logoUrl: true,
         operationalConfig: {
-          select: { terminalOriginName: true, terminalDestinationName: true, terminalOriginAddress: true, terminalDestinationAddress: true },
+          select: { ...CORRIDOR_SELECT, terminalOriginAddress: true, terminalDestinationAddress: true },
         },
       },
       orderBy: { name: 'asc' },
@@ -124,6 +129,8 @@ export class OrganizationsService {
           ...(dto.terminalOriginAddress ? { terminalOriginAddress: dto.terminalOriginAddress } : {}),
           ...(dto.terminalDestinationName ? { terminalDestinationName: dto.terminalDestinationName } : {}),
           ...(dto.terminalDestinationAddress ? { terminalDestinationAddress: dto.terminalDestinationAddress } : {}),
+          ...(dto.routeOriginName?.trim() ? { routeOriginName: dto.routeOriginName.trim() } : {}),
+          ...(dto.routeDestinationName?.trim() ? { routeDestinationName: dto.routeDestinationName.trim() } : {}),
         },
       });
 

@@ -13,6 +13,9 @@ export class UpdateOperationalConfigDto {
   @IsOptional() @IsString() @MaxLength(150) terminalDestinationName?: string;
   @IsOptional() @IsString() @MaxLength(200) terminalDestinationAddress?: string;
 
+  @IsOptional() @IsString() @MaxLength(60) routeOriginName?: string;
+  @IsOptional() @IsString() @MaxLength(60) routeDestinationName?: string;
+
   @IsOptional() @IsNumber() @Min(-19) @Max(0) terminalOriginLat?: number;
   @IsOptional() @IsNumber() @Min(-82) @Max(-68) terminalOriginLng?: number;
   @IsOptional() @IsNumber() @Min(-19) @Max(0) terminalDestinationLat?: number;

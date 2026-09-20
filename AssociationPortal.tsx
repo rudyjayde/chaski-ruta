@@ -14,7 +14,7 @@ const CHASKI_WORDMARK_URL = 'https://res.cloudinary.com/sgf8nwgk/image/upload/e_
 // configurado por el Super Admin al crearla) -- nunca uno global compartido. Esta
 // funcion arma las dos etiquetas de ruta (ida/vuelta) a partir de los nombres
 // reales de esa asociacion, con Juli/Puno como respaldo si aun no tiene los suyos.
-function corridorRoutes(originName?: string, destinationName?: string): string[] {
+function corridorRoutes(originName?: string | null, destinationName?: string | null): string[] {
   const origin = originName?.trim() || 'Juli';
   const destination = destinationName?.trim() || 'Puno';
   return [`${origin} → ${destination}`, `${destination} → ${origin}`];
@@ -170,7 +170,7 @@ export default function AssociationPortal({ onEnterAssociation, onLogout }: Prop
                 Acceso activo · {roleName(user?.role ?? '')}
               </p>
               <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mt-3">Rutas habilitadas</p>
-              <RouteBadges routes={corridorRoutes(org?.terminalOriginName, org?.terminalDestinationName)} center={false} />
+              <RouteBadges routes={corridorRoutes(org?.routeOriginName?.trim() || org?.terminalOriginName, org?.routeDestinationName?.trim() || org?.terminalDestinationName)} center={false} />
             </div>
 
             <div className="flex-shrink-0 flex flex-col items-center gap-1.5">
@@ -206,12 +206,12 @@ export default function AssociationPortal({ onEnterAssociation, onLogout }: Prop
                   <p className="text-sm font-semibold text-t1 mt-3">{other.name}</p>
                   <p className="text-xs text-t2 mt-1">Información disponible</p>
                   <div className="mt-2 space-y-0.5">
-                    {[other.terminalOriginAddress?.trim() || other.terminalOriginName, other.terminalDestinationAddress?.trim() || other.terminalDestinationName].map((terminal, i) => (
+                    {[other.terminalOriginName, other.terminalDestinationName].map((terminal, i) => (
                       <p key={i} className="text-xs text-t2">{terminal}</p>
                     ))}
                   </div>
                   <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mt-3">Rutas habilitadas</p>
-                  <RouteBadges routes={corridorRoutes(other.terminalOriginName, other.terminalDestinationName)} />
+                  <RouteBadges routes={corridorRoutes(other.routeOriginName?.trim() || other.terminalOriginName, other.routeDestinationName?.trim() || other.terminalDestinationName)} />
                   <span className="mt-4 h-9 px-3 border border-border rounded-md text-sm font-medium text-t1 inline-flex items-center justify-center gap-2">
                     Ver información
                     <ArrowRight size={14} />

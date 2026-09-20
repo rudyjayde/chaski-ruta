@@ -73,4 +73,15 @@ export class CreateOrganizationDto {
   @IsOptional()
   @IsString()
   terminalDestinationAddress?: string;
+
+  // Nombres de las rutas habilitadas (distintos del nombre del terminal).
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  routeOriginName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  routeDestinationName?: string;
 }
