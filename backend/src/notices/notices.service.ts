@@ -133,4 +133,19 @@ export class NoticesService {
       },
     });
   }
+  /** El mismo aviso privado para varias personas (transparencia de colas: se avisa a todos los conductores). */
+  async createSystemNoticeMany(organizationId: string, targetPersonIds: string[], title: string, body: string) {
+    if (targetPersonIds.length === 0) return;
+    await this.prisma.notice.createMany({
+      data: targetPersonIds.map((targetPersonId) => ({
+        organizationId,
+        authorId: targetPersonId,
+        authorName: 'CHASKI AI',
+        title,
+        body,
+        audience: 'AMBOS' as const,
+        targetPersonId,
+      })),
+    });
+  }
 }

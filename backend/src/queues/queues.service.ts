@@ -8,11 +8,17 @@ import { AdvanceQueueDto } from './dto/advance-queue.dto';
 import { OverrideQueueDto } from './dto/override-queue.dto';
 import { redactPerson } from '../common/redact';
 import { NoticesService } from '../notices/notices.service';
+import { routeLabel } from '../common/route-labels';
 
 type RouteDir = 'JULI_PUNO' | 'PUNO_JULI';
 
 const GPS_VEHICULO_SIN_SENAL =
   'El GPS de tu vehiculo no tiene señal. Pide autorizacion a tu administrador para inscribirte con el GPS de tu celular.';
+
+const ENROLL_NEEDS_AUTH =
+  'Tu inscripcion necesita autorizacion del administrador. Ya le avisamos; cuando la autorice presiona Inscribirme otra vez.';
+// Cuanto vale una autorizacion de inscripcion sin usar.
+const ENROLL_AUTH_VALID_HOURS = 24;
 
 // Cuanto dura la autorizacion del administrador para usar el GPS del celular (termina antes si el equipo vuelve a reportar).
 const GPS_FALLBACK_HOURS = 24;
@@ -425,6 +431,37 @@ export class QueuesService {
     // administrador/superadmin sin ninguna de las dos evidencias: sigue SIN_EVIDENCIA/SIN_GPS,
     // caso de excepcion real (igual que ya permitia trips.service.ts -> complete()).
 
+    // Historial de la unidad (20 sept 2026): si el sistema no puede confirmar de donde viene el CONDUCTOR (sin
+    // viajes, o su ultimo viaje no calza con el terminal donde esta), NO entra solo: se crea la solicitud al
+    // administrador, que autoriza con motivo. Va DESPUES de lo fisico (celular, radio) para no molestar al
+    // administrador por intentos que igual iban a fallar. Administrador/Super Admin inscriben sin esto.
+    let enrollmentAuthorization: { id: string; resolutionReason: string | null; resolvedByName: string } | null = null;
+    let declaredLaterBefore = false;
+    if (actor.role === 'CONDUCTOR' && !verifiedRelocation) {
+      declaredLaterBefore = await this.wasDeclaredLater(organizationId, route, actor.sub);
+      if (config.enrollmentAuthRequired) {
+        const mismatch = await this.historyMismatch(organizationId, vehicle.id, route, activeTrip, declaredLaterBefore);
+        if (mismatch) {
+          const granted = await this.prisma.enrollmentAuthRequest.findFirst({
+            where: {
+              organizationId,
+              vehicleId: vehicle.id,
+              route,
+              status: 'AUTORIZADO',
+              resolvedAt: { gte: new Date(Date.now() - ENROLL_AUTH_VALID_HOURS * 3600 * 1000) },
+            },
+            include: { resolvedBy: { select: { name: true } } },
+            orderBy: { resolvedAt: 'desc' },
+          });
+          if (!granted) {
+            await this.ensureEnrollmentAuthRequest(organizationId, actor, vehicle, route, mismatch, config);
+            throw new ForbiddenException(ENROLL_NEEDS_AUTH);
+          }
+          enrollmentAuthorization = { id: granted.id, resolutionReason: granted.resolutionReason, resolvedByName: granted.resolvedBy?.name ?? 'el administrador' };
+        }
+      }
+    }
+
     // Ultimo viaje de esta unidad en la direccion contraria — da el gate de tiempo
     // minimo (§3.4) y la hora real de salida para la cadena de predecesores (§3.5).
     // Con la fusion de arriba, si hay un viaje activo (siempre en la direccion
@@ -493,7 +530,7 @@ export class QueuesService {
     // null a proposito para que recomputeOrder use registeredAt -- el
     // instante de este mismo paso de "Inscribirme", justo cuando se confirmo
     // la evidencia GPS de arriba.
-    let chainDepartureAt = verifiedRelocation ? null : lastOppositeTrip?.actualDeparture ?? null;
+    let chainDepartureAt = verifiedRelocation || enrollmentAuthorization ? null : lastOppositeTrip?.actualDeparture ?? null;
     // Regla de Jayde (20 sept 2026): si esta unidad se ausento y OTRA que salio
     // DESPUES que ella ya esta en esta cola (porque el administrador autorizo su
     // "inscripcion retrasada"), esta unidad perdio su turno: entra al FINAL de
@@ -607,6 +644,36 @@ export class QueuesService {
     }
 
     const finalEntry = await this.prisma.queueEntry.findUnique({ where: { id: created.id } });
+
+    // Transparencia de colas: solo los casos especiales llegan a la campanita (con codigo de unidad y nombre
+    // del conductor). Las inscripciones normales se ven en la lista de la cola, como siempre.
+    if (actor.role === 'CONDUCTOR' && (enrollmentAuthorization || declaredLaterBefore)) {
+      const inQueue = await this.prisma.queueEntry.count({
+        where: { organizationId, route, status: { notIn: ['AUSENTE', 'RETIRADO'] } },
+      });
+      const who = await this.prisma.person.findUnique({ where: { id: actor.sub }, select: { name: true } });
+      const label = routeLabel(route, config);
+      const unit = `${vehicle.code} (${who?.name ?? 'conductor'})`;
+      if (enrollmentAuthorization) {
+        await this.prisma.enrollmentAuthRequest.update({
+          where: { id: enrollmentAuthorization.id },
+          data: { status: 'CONSUMIDO', consumedAt: new Date() },
+        });
+        await this.notifyOrgMembers(
+          organizationId,
+          [actor.sub],
+          'Unidad inscrita con autorizacion',
+          `La unidad ${unit} fue inscrita en ${label} sin venir de la cola (posicion ${finalEntry?.position ?? inQueue} de ${inQueue}). Motivo autorizado por ${enrollmentAuthorization.resolvedByName}: ${enrollmentAuthorization.resolutionReason ?? 'sin motivo'}.`,
+        );
+      } else {
+        await this.notifyOrgMembers(
+          organizationId,
+          [actor.sub],
+          'Unidad inscrita mas tarde',
+          `La unidad ${unit} habia dicho que saldria mas tarde y se inscribio en ${label}: quedo en la posicion ${finalEntry?.position ?? inQueue} de ${inQueue}.`,
+        );
+      }
+    }
     return { ...finalEntry, movedToEnd };
   }
 
@@ -1165,7 +1232,7 @@ export class QueuesService {
         organizationId,
         admin.id,
         'GPS del vehiculo sin señal',
-        `${driver?.name ?? 'Un conductor'} (unidad ${vehicle.code}) pide usar el GPS de su celular para inscribirse. Autorizalo o rechazalo en Inscripciones retrasadas.${
+        `${driver?.name ?? 'Un conductor'} (unidad ${vehicle.code}) pide usar el GPS de su celular para inscribirse. Autorizalo o rechazalo en Autorizaciones de inscripcion.${
           repeated ? ` Atencion: es la solicitud ${lastWeek} de esta unidad en 7 dias.` : ''
         }`,
       );
@@ -1255,5 +1322,186 @@ export class QueuesService {
     return best
       ? { route: best.route, terminalName: best.name, distanceMeters: Math.round(best.distance) }
       : { route: null, terminalName: '', distanceMeters: null };
+  }
+  // ── Autorizaciones de inscripcion (unidad sin historial o que no calza con el terminal) ──
+
+  /** "No saldre ahora" borra la entrada; la huella queda en Auditoria: lo ultimo del conductor en esa cola es haber declarado. */
+  private async wasDeclaredLater(organizationId: string, route: RouteDir, personId: string): Promise<boolean> {
+    const last = await this.prisma.auditEntry.findFirst({
+      where: { organizationId, actorId: personId, resource: `Cola ${route}`, action: { in: ['ME_INSCRIBO_MAS_TARDE', 'INSCRIPCION_COLA'] } },
+      orderBy: { createdAt: 'desc' },
+      select: { action: true, createdAt: true },
+    });
+    return !!last && last.action === 'ME_INSCRIBO_MAS_TARDE' && Date.now() - last.createdAt.getTime() < 24 * 3600 * 1000;
+  }
+
+  /**
+   * Null = el historial cuadra, entra normal. SIN_HISTORIAL = nunca completo un viaje. NO_COINCIDE = su ultimo viaje
+   * termino en el mismo terminal del que dice salir, sin un viaje de por medio (la unidad aparecio en otro lado).
+   */
+  private async historyMismatch(
+    organizationId: string,
+    vehicleId: string,
+    route: RouteDir,
+    activeTrip: { route: string } | null,
+    declaredLater: boolean,
+  ): Promise<'SIN_HISTORIAL' | 'NO_COINCIDE' | null> {
+    // Llega ahora con su viaje activo en el sentido contrario: ese viaje se completa en este mismo paso.
+    if (activeTrip) return null;
+    // Volvio tras "No saldre ahora", o el administrador la cargo hace poco en esta misma cola: es coherente.
+    if (declaredLater) return null;
+    const recentEntry = await this.prisma.queueEntry.findFirst({
+      where: { organizationId, vehicleId, route, registeredAt: { gte: new Date(Date.now() - 24 * 3600 * 1000) } },
+      select: { id: true },
+    });
+    if (recentEntry) return null;
+    // Reubicacion autorizada por el administrador rumbo a este terminal: ya tiene su propia orden.
+    const queueOrigin = route === 'JULI_PUNO' ? 'JULI' : 'PUNO';
+    const queueDestination = route === 'JULI_PUNO' ? 'PUNO' : 'JULI';
+    const relocating = await this.prisma.relocationUnit.findFirst({
+      where: { vehicleId, relocationOrder: { organizationId, status: 'EN_TRASLADO', fromTerminal: queueDestination, toTerminal: queueOrigin } },
+      select: { id: true },
+    });
+    if (relocating) return null;
+
+    const last = await this.prisma.trip.findFirst({
+      where: { organizationId, vehicleId, status: 'COMPLETADO' },
+      orderBy: { actualDeparture: 'desc' },
+      select: { route: true },
+    });
+    if (!last) return 'SIN_HISTORIAL';
+    return last.route === opposite(route) ? null : 'NO_COINCIDE';
+  }
+
+  /** Aviso privado a los conductores y administradores de la asociacion (menos a quien se excluya). */
+  private async notifyOrgMembers(organizationId: string, excludeIds: string[], title: string, body: string) {
+    const people = await this.prisma.person.findMany({
+      where: {
+        organizationId,
+        role: { in: ['CONDUCTOR', 'ADMINISTRADOR'] },
+        status: { notIn: ['SUSPENDIDO', 'ELIMINADO'] },
+        id: { notIn: excludeIds },
+      },
+      select: { id: true },
+    });
+    await this.notices.createSystemNoticeMany(organizationId, people.map((p) => p.id), title, body);
+  }
+
+  private async ensureEnrollmentAuthRequest(
+    organizationId: string,
+    actor: JwtPayload,
+    vehicle: { id: string; code: string },
+    route: RouteDir,
+    type: 'SIN_HISTORIAL' | 'NO_COINCIDE',
+    config: Parameters<typeof routeLabel>[1],
+  ) {
+    const open = await this.prisma.enrollmentAuthRequest.findFirst({
+      where: { organizationId, vehicleId: vehicle.id, route, status: 'PENDIENTE' },
+    });
+    if (open) return open;
+
+    const created = await this.prisma.enrollmentAuthRequest.create({
+      data: { organizationId, vehicleId: vehicle.id, route, requestedById: actor.sub, type },
+    });
+    const why = type === 'SIN_HISTORIAL' ? 'la unidad no tiene viajes registrados' : 'su ultimo viaje no calza con el terminal donde esta';
+    await this.prisma.auditEntry.create({
+      data: {
+        organizationId,
+        actorId: actor.sub,
+        actorRole: actor.role,
+        action: 'SOLICITAR_AUTORIZACION_INSCRIPCION',
+        resource: `Unidad ${vehicle.code}`,
+        resourceId: created.id,
+        before: null,
+        after: 'PENDIENTE',
+        reason: `Inscripcion en ${routeLabel(route, config)}: ${why}`,
+      },
+    });
+    const driver = await this.prisma.person.findUnique({ where: { id: actor.sub }, select: { name: true } });
+    const admins = await this.prisma.person.findMany({
+      where: { organizationId, role: 'ADMINISTRADOR', status: { notIn: ['SUSPENDIDO', 'ELIMINADO'] } },
+      select: { id: true },
+    });
+    await this.notices.createSystemNoticeMany(
+      organizationId,
+      admins.map((a) => a.id),
+      'Autorizacion de inscripcion pendiente',
+      `${driver?.name ?? 'Un conductor'} (unidad ${vehicle.code}) quiere inscribirse en ${routeLabel(route, config)} y el sistema no puede confirmar de donde viene: ${why}. Autorizalo o rechazalo en Autorizaciones de inscripcion.`,
+    );
+    return created;
+  }
+
+  /** Lo que ve el conductor en su Inicio: si su inscripcion espera autorizacion o fue rechazada. */
+  async myEnrollmentAuthStatus(organizationId: string, actor: JwtPayload) {
+    const vehicle = await this.prisma.vehicle.findFirst({ where: { organizationId, currentDriverId: actor.sub } });
+    if (!vehicle) return { request: null };
+    const since = new Date(Date.now() - ENROLL_AUTH_VALID_HOURS * 3600 * 1000);
+    const latest = await this.prisma.enrollmentAuthRequest.findFirst({
+      where: { organizationId, vehicleId: vehicle.id, createdAt: { gte: since }, status: { in: ['PENDIENTE', 'RECHAZADO'] } },
+      orderBy: { createdAt: 'desc' },
+    });
+    // Una solicitud rechazada deja de mostrarse cuando el conductor ya pidio otra (o esta se atendio).
+    return {
+      request: latest
+        ? { id: latest.id, status: latest.status, route: latest.route, type: latest.type, resolutionReason: latest.resolutionReason, resolvedAt: latest.resolvedAt }
+        : null,
+    };
+  }
+
+  async listEnrollmentAuthRequests(organizationId: string) {
+    return this.prisma.enrollmentAuthRequest.findMany({
+      where: { organizationId },
+      include: {
+        vehicle: { select: { code: true, plate: true } },
+        requestedBy: { select: { name: true } },
+        resolvedBy: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+  }
+
+  async resolveEnrollmentAuthRequest(organizationId: string, actor: JwtPayload, id: string, approve: boolean, reason?: string) {
+    const request = await this.prisma.enrollmentAuthRequest.findUnique({ where: { id }, include: { vehicle: { select: { code: true } } } });
+    if (!request || request.organizationId !== organizationId) throw new NotFoundException('Solicitud no encontrada');
+    if (request.status !== 'PENDIENTE') throw new BadRequestException('Esta solicitud ya fue resuelta');
+
+    const motive = (reason ?? '').trim();
+    if (motive.length > 300) throw new BadRequestException('El motivo no puede pasar de 300 letras');
+    if (approve && motive.length < 10) {
+      throw new BadRequestException('Escribe el motivo de la autorizacion (minimo 10 letras): lo veran los conductores.');
+    }
+
+    const updated = await this.prisma.enrollmentAuthRequest.update({
+      where: { id },
+      data: {
+        status: approve ? 'AUTORIZADO' : 'RECHAZADO',
+        resolvedById: actor.sub,
+        resolvedAt: new Date(),
+        resolutionReason: motive || null,
+      },
+    });
+    await this.prisma.auditEntry.create({
+      data: {
+        organizationId,
+        actorId: actor.sub,
+        actorRole: actor.role,
+        action: 'RESOLVER_AUTORIZACION_INSCRIPCION',
+        resource: `Unidad ${request.vehicle.code}`,
+        resourceId: id,
+        before: 'PENDIENTE',
+        after: updated.status,
+        reason: motive || (approve ? null : 'Solicitud rechazada'),
+      },
+    });
+    await this.notices.createSystemNotice(
+      organizationId,
+      request.requestedById,
+      approve ? 'Inscripcion autorizada' : 'Inscripcion rechazada',
+      approve
+        ? `Tu administrador autorizo tu inscripcion (unidad ${request.vehicle.code}). Presiona Inscribirme otra vez: entraras al final de la cola.`
+        : `Tu administrador rechazo tu inscripcion (unidad ${request.vehicle.code}).${motive ? ` Motivo: ${motive}.` : ''} Comunicate con el.`,
+    );
+    return updated;
   }
 }

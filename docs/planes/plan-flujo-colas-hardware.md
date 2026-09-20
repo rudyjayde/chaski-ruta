@@ -162,6 +162,29 @@ trabajo es únicamente para los casos de excepción:
 - **Accidente o incidencia en ruta:** sigue el flujo ya existente del botón
   de alerta (`plan-operacion.md` §3.7) y resolución manual del gerente.
 
+## 3.1. Autorizaciones de inscripción: unidad sin historial o que no coincide (20 de septiembre de 2026)
+
+**Regla decidida con Jayde.** El conductor usa siempre el mismo botón **Inscribirme**; no existe un botón aparte. El servidor revisa primero lo físico (celular registrado, radio del terminal) y **después el historial de la unidad**. Si no puede confirmar de dónde viene, la unidad **no entra sola**: se crea sola una solicitud y el administrador la resuelve.
+
+**Cuándo pide autorización** (solo a un CONDUCTOR; el administrador y el Super Admin inscriben sin esto):
+1. **Sin historial:** la unidad nunca completó un viaje.
+2. **Historial que no coincide:** su último viaje terminó en el mismo terminal del que dice salir, sin un viaje de por medio (apareció en otro lado, por ejemplo llegó el jueves a Puno y el sábado el GPS la detecta en Juli).
+
+**No la pide** (el historial cuadra): viene de completar un viaje en sentido contrario (o lo completa en este mismo paso), volvió a inscribirse tras "No saldré ahora", tiene una entrada reciente (24 h) en esa misma cola, o tiene una reubicación autorizada rumbo a ese terminal.
+
+**El administrador** (pantalla **Autorizaciones de inscripción**, antes "Inscripción retrasada", ahora una sola bandeja con los tres tipos de caso: sin historial/no coincide, GPS del vehículo sin señal e inscripción retrasada) **autoriza con un motivo obligatorio** (10 a 300 letras) o rechaza (motivo opcional). Al autorizar, el conductor vuelve a presionar Inscribirme y la unidad entra **al final de la cola** (sin hora de salida anterior que la adelante). La autorización vale 24 h y se usa una sola vez.
+
+**Transparencia de las colas.** A la campanita (conductores y administrador de la asociación) solo llegan los casos especiales, con **código de la unidad y nombre del conductor** (excepción consciente a la privacidad entre conductores, decidida por Jayde):
+- *Unidad inscrita con autorización:* "La unidad ***(Nombre) fue inscrita en {ruta} sin venir de la cola … Motivo autorizado por {administrador}: …".
+- *Unidad inscrita más tarde:* una unidad que dijo "No saldré ahora" se inscribió otra vez ("… había dicho que saldría más tarde y quedó en la posición N de M").
+- Al administrador le llega también el aviso de cada solicitud pendiente; al conductor, el de la autorización o el rechazo (con su motivo).
+
+Las inscripciones **normales** no generan avisos en la campanita: se ven en la lista de la cola, como siempre.
+
+**Primer día de operación:** no hay "modo de arranque" (decidido con Jayde). El administrador carga la cola a mano con **Inscribir unidad**, en el orden en que las unidades venían operando.
+
+**Interruptor por asociación:** `OperationalConfig.enrollmentAuthRequired` (por defecto sí; solo Super Admin lo cambia por la API, sin pantalla todavía).
+
 ## 4. Qué pasa con el manifiesto y el viaje `PROGRAMADO`
 
 El manifiesto se llena *antes* de marcar salida, no después — el esquema ya

@@ -76,8 +76,8 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     const orgA = await prisma.organization.create({ data: { name: `ZZ E2E A ${stamp}`, ruc: `2099${stamp}9`.slice(0, 11), status: 'ACTIVA', plan: 'OPERACION' } });
     const orgB = await prisma.organization.create({ data: { name: `ZZ E2E B ${stamp}`, ruc: `2098${stamp}9`.slice(0, 11), status: 'ACTIVA', plan: 'OPERACION' } });
     orgIds.push(orgA.id, orgB.id);
-    await prisma.operationalConfig.create({ data: { organizationId: orgA.id, terminalOriginLat: JULI.lat, terminalOriginLng: JULI.lng, terminalDestinationLat: PUNO.lat, terminalDestinationLng: PUNO.lng } });
-    await prisma.operationalConfig.create({ data: { organizationId: orgB.id, terminalOriginLat: JULI.lat, terminalOriginLng: JULI.lng, terminalDestinationLat: PUNO.lat, terminalDestinationLng: PUNO.lng } });
+    await prisma.operationalConfig.create({ data: { organizationId: orgA.id, enrollmentAuthRequired: false, terminalOriginLat: JULI.lat, terminalOriginLng: JULI.lng, terminalDestinationLat: PUNO.lat, terminalDestinationLng: PUNO.lng } });
+    await prisma.operationalConfig.create({ data: { organizationId: orgB.id, enrollmentAuthRequired: false, terminalOriginLat: JULI.lat, terminalOriginLng: JULI.lng, terminalDestinationLat: PUNO.lat, terminalDestinationLng: PUNO.lng } });
     const coA = await prisma.company.create({ data: { organizationId: orgA.id, name: 'ZZ Empresa A' } });
     const coB = await prisma.company.create({ data: { organizationId: orgB.id, name: 'ZZ Empresa B' } });
     const adminA = await mk(orgA.id, 'ADMINISTRADOR', 'Admin A', 0);
@@ -448,7 +448,7 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     }
     const orgC = await prisma.organization.create({ data: { name: `ZZ E2E C ${stamp}`, ruc, status: 'ACTIVA', plan: 'PRO' } });
     orgIds.push(orgC.id);
-    await prisma.operationalConfig.create({ data: { organizationId: orgC.id, terminalOriginLat: JULI.lat, terminalOriginLng: JULI.lng, terminalDestinationLat: PUNO.lat, terminalDestinationLng: PUNO.lng } });
+    await prisma.operationalConfig.create({ data: { organizationId: orgC.id, enrollmentAuthRequired: false, terminalOriginLat: JULI.lat, terminalOriginLng: JULI.lng, terminalDestinationLat: PUNO.lat, terminalDestinationLng: PUNO.lng } });
     const coC = await prisma.company.create({ data: { organizationId: orgC.id, name: 'ZZ Empresa C' } });
     const adminC = await mk(orgC.id, 'ADMINISTRADOR', 'Admin C', 0);
     const drvC = await mk(orgC.id, 'CONDUCTOR', 'Conductor C', 1);
@@ -791,11 +791,131 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     r = await pJoin('JULI_PUNO', PUNO);
     check('y elegir Juli → Puno estando en Puno se rechaza mencionando el terminal Juli (403)', r.status === 403 && /terminal Juli/.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
     r = await pJoin('PUNO_JULI', PUNO);
-    check('sin historial y estando en el terminal de Puno se inscribe directo en Puno → Juli, sin pedir excepción', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    check('con la exigencia de autorización apagada, sin historial y en el terminal de Puno se inscribe directo en Puno → Juli', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
     const pPos = await prisma.queueEntry.findFirst({ where: { organizationId: orgA.id, route: 'PUNO_JULI', vehicleId: pV.id } });
     const lastRegistered = await prisma.queueEntry.findMany({ where: { organizationId: orgA.id, route: 'PUNO_JULI', status: { notIn: ['AUSENTE', 'RETIRADO'] } }, orderBy: { position: 'desc' }, take: 1 });
     check('queda registrada al final de la cola (sin hora de salida anterior)', !!pPos && lastRegistered[0]?.id === pPos.id, `pos ${pPos?.position}`);
     await prisma.queueEntry.deleteMany({ where: { organizationId: orgA.id, vehicleId: pV.id } });
+
+    // ═════════ Q. AUTORIZACIONES DE INSCRIPCION (sin historial / historial que no calza) ═════════
+    head('Q. Autorizaciones de inscripción');
+    await prisma.operationalConfig.update({ where: { organizationId: orgA.id }, data: { enrollmentAuthRequired: true } });
+    const qD = await mk(orgA.id, 'CONDUCTOR', 'Rudy Prueba', 33);
+    const qV = await prisma.vehicle.create({ data: { organizationId: orgA.id, code: 'QA33', companyId: coA.id, vehicleType: 'HIACE', plate: `QA${stamp.slice(-1)}-333`, model: 'Toyota Hiace', year: 2024, currentDriverId: qD.id } });
+    const qT = await tok(qD);
+    const qJoin = (route: string, gps: { lat: number; lng: number }, token = qT, vehicleId = qV.id) => call(token, 'POST', `/queues/${route}/join`, { vehicleId, deviceId: `q-${vehicleId.slice(-4)}`, ...gps });
+    const qClean = (vehicleId = qV.id) => prisma.queueEntry.deleteMany({ where: { organizationId: orgA.id, vehicleId } });
+    const notices = (personId: string, title: string) => prisma.notice.findMany({ where: { targetPersonId: personId, title } });
+    const ownerAdmin = await prisma.person.findFirst({ where: { organizationId: orgA.id, role: 'ADMINISTRADOR' } });
+
+    // 1. Sin historial: no entra solo
+    r = await qJoin('PUNO_JULI', PUNO);
+    check('sin historial, el conductor NO entra solo: el sistema pide autorización del administrador (403)', r.status === 403 && /autorizacion del administrador/.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    const qReq1 = await prisma.enrollmentAuthRequest.findFirst({ where: { organizationId: orgA.id, vehicleId: qV.id, status: 'PENDIENTE' } });
+    check('se creó sola una solicitud PENDIENTE de tipo SIN_HISTORIAL', qReq1?.type === 'SIN_HISTORIAL' && qReq1?.route === 'PUNO_JULI', JSON.stringify({ t: qReq1?.type, r: qReq1?.route }));
+    await qJoin('PUNO_JULI', PUNO);
+    check('intentar de nuevo no duplica la solicitud', (await prisma.enrollmentAuthRequest.count({ where: { vehicleId: qV.id, status: 'PENDIENTE' } })) === 1);
+    check('el administrador recibe el aviso de la solicitud', (await notices(ownerAdmin!.id, 'Autorizacion de inscripcion pendiente')).length >= 1);
+    r = await qJoin('PUNO_JULI', FAR);
+    check('fuera del radio del terminal se rechaza por distancia y NO molesta al administrador (403 por radio, sin solicitud nueva)', r.status === 403 && /radio/.test(msg(r)) && (await prisma.enrollmentAuthRequest.count({ where: { vehicleId: qV.id } })) === 1, `HTTP ${r.status} ${msg(r)}`);
+    r = await call(qT, 'GET', '/queues/enrollment-auth/mine');
+    check('el conductor ve su solicitud pendiente en su Inicio', r.status === 200 && r.json.request?.status === 'PENDIENTE', JSON.stringify(r.json));
+
+    // 2. Permisos
+    r = await call(qT, 'GET', '/queues/enrollment-auth/list');
+    check('el conductor NO puede ver la lista del administrador (403)', r.status === 403, `HTTP ${r.status}`);
+    r = await call(T.admin, 'GET', '/queues/enrollment-auth/list');
+    check('el administrador ve la solicitud en su lista', r.status === 200 && r.json.some((x: any) => x.id === qReq1!.id && x.vehicle.code === 'QA33'), `HTTP ${r.status}`);
+    r = await call(TAO, 'POST', `/queues/enrollment-auth/${qReq1!.id}/resolve`, { approve: true, reason: 'Motivo de otra asociacion' });
+    check('el administrador de OTRA asociación no puede resolverla (404)', r.status === 404, `HTTP ${r.status}`);
+    r = await call(qT, 'POST', `/queues/enrollment-auth/${qReq1!.id}/resolve`, { approve: true, reason: 'Me autorizo yo mismo' });
+    check('el conductor NO puede autorizarse a sí mismo (403)', r.status === 403, `HTTP ${r.status}`);
+
+    // 3. El motivo es obligatorio al autorizar
+    r = await call(T.admin, 'POST', `/queues/enrollment-auth/${qReq1!.id}/resolve`, { approve: true });
+    check('autorizar SIN motivo se rechaza (400)', r.status === 400, `HTTP ${r.status} ${msg(r)}`);
+    r = await call(T.admin, 'POST', `/queues/enrollment-auth/${qReq1!.id}/resolve`, { approve: true, reason: 'corto' });
+    check('autorizar con un motivo demasiado corto se rechaza (400)', r.status === 400, `HTTP ${r.status}`);
+    r = await call(T.admin, 'POST', `/queues/enrollment-auth/${qReq1!.id}/resolve`, { approve: true, reason: 'Unidad nueva de Rudy que llego de Lima el sabado y empieza en Puno' });
+    check('con un motivo claro el administrador autoriza', r.status === 201 && r.json.status === 'AUTORIZADO', `HTTP ${r.status} ${msg(r)}`);
+    check('el conductor recibe el aviso de que fue autorizado', (await notices(qD.id, 'Inscripcion autorizada')).length >= 1);
+
+    // 4. Se inscribe con la autorizacion: al final de la cola y avisa a todos con el motivo
+    r = await qJoin('PUNO_JULI', PUNO);
+    check('autorizado, el conductor presiona Inscribirme otra vez y entra', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    const qEntry = await prisma.queueEntry.findFirst({ where: { organizationId: orgA.id, route: 'PUNO_JULI', vehicleId: qV.id } });
+    const lastInQueue = await prisma.queueEntry.findMany({ where: { organizationId: orgA.id, route: 'PUNO_JULI', status: { notIn: ['AUSENTE', 'RETIRADO'] } }, orderBy: { position: 'desc' }, take: 1 });
+    check('entra AL FINAL de la cola', !!qEntry && lastInQueue[0]?.id === qEntry.id, `pos ${qEntry?.position}`);
+    check('la solicitud queda CONSUMIDA (no sirve una segunda vez)', (await prisma.enrollmentAuthRequest.findUnique({ where: { id: qReq1!.id } }))?.status === 'CONSUMIDO');
+    const others = await notices(drivers[0].id, 'Unidad inscrita con autorizacion');
+    check('otro conductor recibe el aviso con código de unidad, nombre del conductor y motivo', others.length >= 1 && /QA33 \(Rudy Prueba\)/.test(others[0].body) && /Lima el sabado/.test(others[0].body), others[0]?.body ?? 'sin aviso');
+    check('el administrador recibe el mismo aviso', (await notices(ownerAdmin!.id, 'Unidad inscrita con autorizacion')).length >= 1);
+    check('quien se inscribió no recibe su propio aviso especial', (await notices(qD.id, 'Unidad inscrita con autorizacion')).length === 0);
+    await qClean();
+
+    // 5. Rechazo
+    r = await qJoin('PUNO_JULI', PUNO);
+    check('sin historial vuelve a pedir autorización (nueva solicitud)', r.status === 403 && /autorizacion/.test(msg(r)), `HTTP ${r.status}`);
+    const qReq2 = await prisma.enrollmentAuthRequest.findFirst({ where: { vehicleId: qV.id, status: 'PENDIENTE' } });
+    r = await call(T.admin, 'POST', `/queues/enrollment-auth/${qReq2!.id}/resolve`, { approve: false, reason: 'No te conozco en esta terminal' });
+    check('el administrador puede rechazar', r.status === 201 && r.json.status === 'RECHAZADO', `HTTP ${r.status} ${msg(r)}`);
+    r = await qJoin('PUNO_JULI', PUNO);
+    check('rechazada, el conductor no entra (403)', r.status === 403, `HTTP ${r.status}`);
+    r = await call(qT, 'GET', '/queues/enrollment-auth/mine');
+    check('el conductor ve el rechazo con el motivo', r.status === 200 && (r.json.request?.status === 'RECHAZADO' || r.json.request?.status === 'PENDIENTE'), JSON.stringify(r.json));
+    check('el conductor recibe el aviso del rechazo con el motivo', (await notices(qD.id, 'Inscripcion rechazada')).some((n) => /No te conozco/.test(n.body)));
+    r = await call(T.admin, 'POST', `/queues/enrollment-auth/${qReq2!.id}/resolve`, { approve: true, reason: 'Ya estaba resuelta' });
+    check('una solicitud ya resuelta no se puede volver a resolver (400)', r.status === 400, `HTTP ${r.status}`);
+    await prisma.enrollmentAuthRequest.updateMany({ where: { vehicleId: qV.id, status: 'PENDIENTE' }, data: { status: 'EXPIRADO' } });
+
+    // 6. Administrador inscribe directo
+    r = await call(T.admin, 'POST', '/queues/PUNO_JULI/join', { vehicleId: qV.id, ...PUNO });
+    check('el administrador inscribe la unidad sin pedir autorización (carga manual del primer día)', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    await qClean();
+
+    // 7. Historial que no calza: su ultimo viaje termino en Puno pero dice salir de Juli
+    const mD = await mk(orgA.id, 'CONDUCTOR', 'Marco Historial', 34);
+    const mV = await prisma.vehicle.create({ data: { organizationId: orgA.id, code: 'QB34', companyId: coA.id, vehicleType: 'HIACE', plate: `QB${stamp.slice(-1)}-334`, model: 'Toyota Hiace', year: 2024, currentDriverId: mD.id } });
+    const mT = await tok(mD);
+    await prisma.trip.create({ data: { organizationId: orgA.id, vehicleId: mV.id, driverId: mD.id, route: 'JULI_PUNO', status: 'COMPLETADO', scheduledDeparture: new Date(Date.now() - 6 * 3600e3), actualDeparture: new Date(Date.now() - 6 * 3600e3), actualArrival: new Date(Date.now() - 3 * 3600e3), scheduledArrival: new Date(Date.now() - 3 * 3600e3) } as any });
+    r = await qJoin('JULI_PUNO', JULI, mT, mV.id);
+    check('llegó a Puno y ahora dice salir de Juli sin viaje de por medio: necesita autorización (403)', r.status === 403 && /autorizacion del administrador/.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    check('la solicitud es de tipo NO_COINCIDE', (await prisma.enrollmentAuthRequest.findFirst({ where: { vehicleId: mV.id, status: 'PENDIENTE' } }))?.type === 'NO_COINCIDE');
+    await prisma.enrollmentAuthRequest.updateMany({ where: { vehicleId: mV.id }, data: { status: 'EXPIRADO' } });
+    r = await qJoin('PUNO_JULI', PUNO, mT, mV.id);
+    check('en cambio, inscribirse en Puno → Juli (donde terminó su viaje) entra normal, sin autorización', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+
+    // 8. "No saldre ahora": al volver a inscribirse se avisa a todos
+    const mEntry = await prisma.queueEntry.findFirst({ where: { organizationId: orgA.id, route: 'PUNO_JULI', vehicleId: mV.id } });
+    r = await call(mT, 'POST', `/queues/entries/${mEntry!.id}/declare-later`);
+    check('el conductor declara "No saldré ahora"', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    r = await qJoin('PUNO_JULI', PUNO, mT, mV.id);
+    check('más tarde vuelve a inscribirse y entra (sin pedir autorización)', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    const qLater = await notices(drivers[0].id, 'Unidad inscrita mas tarde');
+    check('los demás conductores reciben el aviso "había dicho que saldría más tarde" con código y nombre', qLater.length >= 1 && /QB34 \(Marco Historial\)/.test(qLater[0].body) && /posicion/.test(qLater[0].body), qLater[0]?.body ?? 'sin aviso');
+    check('el administrador también recibe ese aviso', (await notices(ownerAdmin!.id, 'Unidad inscrita mas tarde')).length >= 1);
+    await qClean(mV.id);
+
+    // 8b. Una inscripcion NORMAL no genera avisos especiales
+    const before = await prisma.notice.count({ where: { organizationId: orgA.id, title: { in: ['Unidad inscrita con autorizacion', 'Unidad inscrita mas tarde'] } } });
+    r = await qJoin('PUNO_JULI', PUNO, mT, mV.id);
+    // (la unidad ya tiene entrada reciente y viaje coherente: inscripcion normal)
+    const after = await prisma.notice.count({ where: { organizationId: orgA.id, title: { in: ['Unidad inscrita con autorizacion', 'Unidad inscrita mas tarde'] } } });
+    check('una inscripción normal no genera avisos en la campanita', r.status === 201 && after === before, `HTTP ${r.status} avisos ${before}→${after}`);
+    await qClean(mV.id);
+
+    // 9. Interruptor por asociacion (solo Super Admin)
+    const superQ = await prisma.person.create({ data: { organizationId: null, name: 'Super E2E Q', email: `e2e.${stamp}.superq@example.test`, role: 'SUPERADMIN', status: 'ACTIVO' } });
+    const TSQ = await tok(superQ);
+    r = await call(T.admin, 'POST', '/operational-config', { enrollmentAuthRequired: false });
+    check('el administrador NO puede apagar la exigencia (solo Super Admin, 403)', r.status === 403, `HTTP ${r.status}`);
+    r = await call(TSQ, 'POST', `/operational-config?organizationId=${orgA.id}`, { enrollmentAuthRequired: false });
+    check('el Super Admin puede apagarla para una asociación', r.status === 201 && r.json.enrollmentAuthRequired === false, `HTTP ${r.status} ${msg(r)}`);
+    r = await qJoin('PUNO_JULI', PUNO);
+    check('con la exigencia apagada, una unidad sin historial entra directo', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    await qClean();
+    await prisma.person.delete({ where: { id: superQ.id } }).catch(() => null);
+    await prisma.operationalConfig.update({ where: { organizationId: orgA.id }, data: { enrollmentAuthRequired: false } });
 
     // ═════════ J. CONSISTENCIA FINAL ═════════
     head('J. Consistencia de datos');
@@ -820,6 +940,7 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
         await prisma.trip.deleteMany({ where: { organizationId: id } });
         await prisma.delayedRegistrationRequest.deleteMany({ where: { organizationId: id } });
         await prisma.gpsFallbackRequest.deleteMany({ where: { organizationId: id } });
+        await prisma.enrollmentAuthRequest.deleteMany({ where: { organizationId: id } });
         const ordIds = (await prisma.relocationOrder.findMany({ where: { organizationId: id }, select: { id: true } })).map((o) => o.id);
         await prisma.relocationUnit.deleteMany({ where: { relocationOrderId: { in: ordIds } } });
         await prisma.relocationOrder.deleteMany({ where: { organizationId: id } });

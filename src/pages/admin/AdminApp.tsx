@@ -58,7 +58,7 @@ const BASE_NAV: NavItem[] = [
   { id: 'manifiestos', label: 'Ventas y manifiestos', icon: FileText },
   { id: 'viajes', label: 'Viajes', icon: Route },
   { id: 'reubicaciones', label: 'Reubicaciones', icon: ArrowLeftRight },
-  { id: 'inscripcion-retrasada', label: 'Inscripción retrasada', icon: Clock },
+  { id: 'inscripcion-retrasada', label: 'Autorizaciones de inscripción', icon: Clock },
   { id: 'flota', label: 'Unidades y flota', icon: Truck },
   { id: 'empresas', label: 'Empresas integrantes', icon: Building2 },
   { id: 'personas', label: 'Personas', icon: Users },

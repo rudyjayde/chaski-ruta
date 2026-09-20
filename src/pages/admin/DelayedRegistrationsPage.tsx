@@ -4,6 +4,7 @@ import type { DelayedRegistrationRequest } from '../../types';
 import { fetchDelayedRegistrationRequests, resolveDelayedRegistrationRequest, routeLabel } from '../../lib/operacion-api';
 import { useAdminDemo } from './AdminApp';
 import GpsFallbackSection from './GpsFallbackSection';
+import EnrollmentAuthSection from './EnrollmentAuthSection';
 
 const STATUS_STYLE: Record<DelayedRegistrationRequest['status'], { label: string; cls: string }> = {
   PENDIENTE: { label: 'Pendiente', cls: 'bg-warn/10 text-warn' },
@@ -55,9 +56,9 @@ export default function DelayedRegistrationsPage() {
     <div className="p-6 lg:p-8 space-y-5 max-w-4xl">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-t1">Inscripción retrasada</h1>
+          <h1 className="text-2xl font-bold text-t1">Autorizaciones de inscripción</h1>
           <p className="text-sm text-t2 mt-0.5">
-            Un conductor no puede inscribirse porque la unidad que salió antes que él todavía no se inscribió ni avisó que se quedaba. Resuelve cada caso llamando al predecesor o autorizando la inscripción igual.
+            Aquí llegan los casos en que un conductor no puede inscribirse solo y necesita tu decisión: unidades sin historial, GPS del vehículo sin señal, o una unidad bloqueada porque la que salió antes que ella todavía no se inscribió (inscripción retrasada).
           </p>
         </div>
         <button
@@ -68,10 +69,16 @@ export default function DelayedRegistrationsPage() {
         </button>
       </div>
 
+      <EnrollmentAuthSection />
       <GpsFallbackSection />
 
       {loadError && <div className="p-3 bg-danger/5 border border-danger/30 rounded-lg text-sm text-danger">{loadError}</div>}
       {actionError && <div className="p-3 bg-danger/5 border border-danger/30 rounded-lg text-sm text-danger">{actionError}</div>}
+
+      <h2 className="text-lg font-bold text-t1 pt-2">Inscripción retrasada</h2>
+      <p className="text-sm text-t2 -mt-3">
+        La unidad que salió antes que el conductor todavía no se inscribió ni avisó que se quedaba. Resuelve cada caso llamando al predecesor o autorizando la inscripción igual.
+      </p>
 
       {loading ? (
         <div className="flex items-center gap-3 text-t2 text-sm py-8 justify-center">

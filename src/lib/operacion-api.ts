@@ -335,9 +335,18 @@ export async function fetchQueue(route: RouteDir): Promise<QueueEntry[]> {
 // lat/lng: ubicacion del celular al momento de "Inscribirme" (§3.3), chequeo
 // puntual (nunca rastreo continuo). Confirma la llegada como parte del mismo
 // paso -- ya no existe un boton "Marcar llegada" ni "Confirmar llegada" separados.
+// Evento que avisa al cartel del Inicio/Cola que la solicitud de autorizacion cambio (se crea sola al
+// intentar inscribirse sin historial): asi aparece al instante y no a los 20 s del siguiente refresco.
+export const ENROLLMENT_AUTH_EVENT = 'chaski-enrollment-auth-changed';
+
 export async function joinQueue(route: RouteDir, vehicleId: string, deviceId?: string, isRelocation?: boolean, lat?: number, lng?: number): Promise<{ movedToEnd: boolean }> {
-  const res = await request<{ movedToEnd?: boolean } | undefined>(`/queues/${route}/join`, { method: 'POST', body: JSON.stringify({ vehicleId, deviceId, isRelocation, lat, lng }) });
-  return { movedToEnd: Boolean(res?.movedToEnd) };
+  try {
+    const res = await request<{ movedToEnd?: boolean } | undefined>(`/queues/${route}/join`, { method: 'POST', body: JSON.stringify({ vehicleId, deviceId, isRelocation, lat, lng }) });
+    return { movedToEnd: Boolean(res?.movedToEnd) };
+  } catch (err) {
+    if (err instanceof Error && /autorizacion del administrador/i.test(err.message)) window.dispatchEvent(new Event(ENROLLMENT_AUTH_EVENT));
+    throw err;
+  }
 }
 
 export async function confirmArrival(entryId: string, lat: number, lng: number): Promise<void> {
@@ -1467,6 +1476,8 @@ export interface OperationalConfig {
   gpsRadiusMeters: number;
   // Antiguedad maxima (min) de la ultima señal del GPS del vehiculo para tomarla como valida.
   gpsMaxAgeMinutes: number;
+  // Exigir autorizacion del administrador a un conductor cuyo historial no se puede confirmar.
+  enrollmentAuthRequired: boolean;
   timeoutMinutes: number;
   anomalySpeedThresholdKmh: number;
   // Nombres genericos (no "Juli"/"Puno" fijos) -- cada asociacion define su
@@ -1660,6 +1671,67 @@ export async function resolveDelayedRegistrationRequest(id: string, resolution: 
     body: JSON.stringify({ resolution }),
   });
   return mapDelayedRegistrationRequest(raw);
+}
+
+// ─── Autorizaciones de inscripcion (unidad sin historial / que no calza con el terminal) ────────────
+export type EnrollmentAuthStatus = 'PENDIENTE' | 'AUTORIZADO' | 'RECHAZADO' | 'CONSUMIDO' | 'EXPIRADO';
+export type EnrollmentAuthType = 'SIN_HISTORIAL' | 'NO_COINCIDE';
+
+export interface MyEnrollmentAuth {
+  request: { id: string; status: EnrollmentAuthStatus; route: RouteDir; type: EnrollmentAuthType; resolutionReason: string | null } | null;
+}
+
+export interface EnrollmentAuthRow {
+  id: string;
+  status: EnrollmentAuthStatus;
+  type: EnrollmentAuthType;
+  route: RouteDir;
+  vehicleCode: string;
+  vehiclePlate: string;
+  driverName: string;
+  resolvedByName: string | null;
+  resolutionReason: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+interface RawEnrollmentAuthRow {
+  id: string;
+  status: EnrollmentAuthStatus;
+  type: EnrollmentAuthType;
+  route: RouteDir;
+  vehicle: { code: string; plate: string };
+  requestedBy: { name: string };
+  resolvedBy: { name: string } | null;
+  resolutionReason: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export async function fetchMyEnrollmentAuth(): Promise<MyEnrollmentAuth> {
+  return request<MyEnrollmentAuth>('/queues/enrollment-auth/mine');
+}
+
+export async function fetchEnrollmentAuthRequests(): Promise<EnrollmentAuthRow[]> {
+  const raw = await request<RawEnrollmentAuthRow[]>('/queues/enrollment-auth/list');
+  return raw.map(r => ({
+    id: r.id,
+    status: r.status,
+    type: r.type,
+    route: r.route,
+    vehicleCode: r.vehicle.code,
+    vehiclePlate: r.vehicle.plate,
+    driverName: r.requestedBy.name,
+    resolvedByName: r.resolvedBy?.name ?? null,
+    resolutionReason: r.resolutionReason,
+    createdAt: r.createdAt,
+    resolvedAt: r.resolvedAt,
+  }));
+}
+
+// El motivo es obligatorio al autorizar (lo ven todos los conductores); al rechazar es opcional.
+export async function resolveEnrollmentAuthRequest(id: string, approve: boolean, reason?: string): Promise<void> {
+  await request(`/queues/enrollment-auth/${id}/resolve`, { method: 'POST', body: JSON.stringify({ approve, reason }) });
 }
 
 // ─── Detectar en cual terminal esta el celular (Inicio del conductor sin historial) ───────────────

@@ -1,4 +1,4 @@
-import { IsNumber, IsOptional, IsString, Min, Max, MaxLength } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsString, Min, Max, MaxLength } from 'class-validator';
 
 // Todos opcionales: se actualiza solo lo que el Super Admin cambia en la pantalla.
 export class UpdateOperationalConfigDto {
@@ -10,6 +10,8 @@ export class UpdateOperationalConfigDto {
   @IsOptional() @IsNumber() @Min(50) @Max(2000) gpsRadiusMeters?: number;
   // Antiguedad maxima de la ultima señal del GPS del vehiculo para tomarla como valida (min).
   @IsOptional() @IsNumber() @Min(1) @Max(60) gpsMaxAgeMinutes?: number;
+  // Exigir autorizacion del administrador a un conductor cuyo historial no se puede confirmar.
+  @IsOptional() @IsBoolean() enrollmentAuthRequired?: boolean;
   @IsOptional() @IsNumber() @Min(1) @Max(240) timeoutMinutes?: number;
   @IsOptional() @IsNumber() @Min(30) @Max(200) anomalySpeedThresholdKmh?: number;
 

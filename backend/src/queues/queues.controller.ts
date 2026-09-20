@@ -210,4 +210,32 @@ export class QueuesController {
     const orgId = resolveOrgId(user, organizationId);
     return this.queues.detectTerminal(orgId, la, lo);
   }
+  // Autorizaciones de inscripcion (unidad sin historial o que no calza con el terminal).
+  @Get('enrollment-auth/mine')
+  @Roles('CONDUCTOR')
+  myEnrollmentAuthStatus(@CurrentUser() user: JwtPayload, @Query('organizationId') organizationId?: string) {
+    const orgId = resolveOrgId(user, organizationId);
+    return this.queues.myEnrollmentAuthStatus(orgId, user);
+  }
+
+  @Get('enrollment-auth/list')
+  @Roles('ADMINISTRADOR', 'SUPERADMIN')
+  listEnrollmentAuthRequests(@CurrentUser() user: JwtPayload, @Query('organizationId') organizationId?: string) {
+    const orgId = resolveOrgId(user, organizationId);
+    return this.queues.listEnrollmentAuthRequests(orgId);
+  }
+
+  @Post('enrollment-auth/:id/resolve')
+  @Roles('ADMINISTRADOR', 'SUPERADMIN')
+  resolveEnrollmentAuthRequest(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: { approve: boolean; reason?: string },
+    @Query('organizationId') organizationId?: string,
+  ) {
+    if (typeof dto?.approve !== 'boolean') throw new BadRequestException('Indica si autorizas o rechazas (approve: true o false)');
+    if (dto.reason !== undefined && typeof dto.reason !== 'string') throw new BadRequestException('El motivo debe ser texto');
+    const orgId = resolveOrgId(user, organizationId);
+    return this.queues.resolveEnrollmentAuthRequest(orgId, user, id, dto.approve, dto.reason);
+  }
 }

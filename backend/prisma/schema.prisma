@@ -94,6 +94,7 @@ model Organization {
   relocationOrders            RelocationOrder[]
   delayedRegistrationRequests DelayedRegistrationRequest[]
   gpsFallbackRequests         GpsFallbackRequest[]
+  enrollmentAuthRequests      EnrollmentAuthRequest[]
   gpsAlerts                   GpsAlert[]
   notices                     Notice[]
   engineLockRequests          EngineLockRequest[]
@@ -180,6 +181,8 @@ model Person {
   delayedRegistrationsResolved DelayedRegistrationRequest[] @relation("DelayedRegistrationResolvedBy")
   gpsFallbackRequested         GpsFallbackRequest[]         @relation("GpsFallbackRequestedBy")
   gpsFallbackResolved          GpsFallbackRequest[]         @relation("GpsFallbackResolvedBy")
+  enrollmentAuthRequested      EnrollmentAuthRequest[]      @relation("EnrollmentAuthRequestedBy")
+  enrollmentAuthResolved       EnrollmentAuthRequest[]      @relation("EnrollmentAuthResolvedBy")
   commercialRequestsReviewed   CommercialRequest[]          @relation("CommercialRequestReviewedBy")
   landingContentUpdates        LandingContent[]             @relation("LandingContentUpdatedBy")
   noticesAsAuthor              Notice[]                     @relation("NoticeAuthor")
@@ -437,6 +440,7 @@ model Vehicle {
   delayedRegistrationsRequested DelayedRegistrationRequest[] @relation("DelayedRegistrationRequesting")
   delayedRegistrationsBlocking  DelayedRegistrationRequest[] @relation("DelayedRegistrationBlockedBy")
   gpsFallbackRequests           GpsFallbackRequest[]
+  enrollmentAuthRequests        EnrollmentAuthRequest[]
   gpsAlerts                     GpsAlert[]
   engineLockRequests            EngineLockRequest[]
 
@@ -696,19 +700,22 @@ model OperationalConfig {
   organization   Organization @relation(fields: [organizationId], references: [id])
 
   // JULI_PUNO ('ruta de ida' = origen -> destino) / PUNO_JULI ('ruta de vuelta' = destino -> origen).
-  minTripMinutesOutbound   Int  @default(90)
-  minTripMinutesReturn     Int  @default(90)
+  minTripMinutesOutbound   Int     @default(90)
+  minTripMinutesReturn     Int     @default(90)
   // Tiempo MAXIMO esperado de viaje (20 sept 2026), solo informativo: pasado
   // este tiempo, un viaje que sigue "En curso" aparece como "Llegada sin
   // confirmar". No bloquea, no cierra ni avisa por correo. null = sin configurar.
   maxTripMinutesOutbound   Int?
   maxTripMinutesReturn     Int?
-  gpsRadiusMeters          Int  @default(300)
+  gpsRadiusMeters          Int     @default(300)
   // Antiguedad maxima (min) de la ultima señal del GPS del vehiculo para tomarla como valida.
   // Pasado ese tiempo el equipo se considera SIN SEÑAL (ver GpsFallbackRequest).
-  gpsMaxAgeMinutes         Int  @default(5)
-  timeoutMinutes           Int  @default(15)
-  anomalySpeedThresholdKmh Int  @default(100)
+  gpsMaxAgeMinutes         Int     @default(5)
+  // Autorizacion del administrador para inscribir a un CONDUCTOR cuyo historial no se puede confirmar
+  // (sin viajes, o su ultimo viaje no calza con el terminal donde esta). Solo Super Admin lo cambia.
+  enrollmentAuthRequired   Boolean @default(true)
+  timeoutMinutes           Int     @default(15)
+  anomalySpeedThresholdKmh Int     @default(100)
 
   // Nombre y direccion visibles de cada terminal -- esto es lo que el Super
   // Admin configura por asociacion (paso 2 del wizard "Nueva asociacion").
@@ -1052,6 +1059,56 @@ model DelayedRegistrationRequest {
 
   @@index([organizationId, status])
   @@map("delayed_registration_requests")
+}
+
+enum EnrollmentAuthType {
+  // La unidad nunca tuvo un viaje completado.
+  SIN_HISTORIAL
+  // Su ultimo viaje termino en un terminal distinto al que dice estar (o no hubo viaje entre medio).
+  NO_COINCIDE
+}
+
+enum EnrollmentAuthStatus {
+  PENDIENTE
+  AUTORIZADO
+  RECHAZADO
+  // Ya se uso para inscribirse.
+  CONSUMIDO
+  EXPIRADO
+}
+
+/// (20 sept 2026) El conductor presiona el "Inscribirme" de siempre; si el sistema no puede confirmar de
+/// donde viene la unidad (sin historial, o historial que no calza con el terminal donde esta) NO entra:
+/// se crea esta solicitud sola y el administrador autoriza (motivo obligatorio) o rechaza. Al inscribirse
+/// con la autorizacion la unidad entra al FINAL de la cola y se avisa a todos con el motivo.
+model EnrollmentAuthRequest {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id])
+
+  route RouteDir
+
+  requestedById String
+  requestedBy   Person @relation("EnrollmentAuthRequestedBy", fields: [requestedById], references: [id])
+
+  type   EnrollmentAuthType
+  status EnrollmentAuthStatus @default(PENDIENTE)
+
+  resolvedById     String?
+  resolvedBy       Person?   @relation("EnrollmentAuthResolvedBy", fields: [resolvedById], references: [id])
+  resolvedAt       DateTime?
+  // Motivo que escribe el administrador (obligatorio al autorizar); lo ven todos los conductores.
+  resolutionReason String?
+  consumedAt       DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, status])
+  @@index([vehicleId, route, status])
+  @@map("enrollment_auth_requests")
 }
 
 enum GpsFallbackStatus {
