@@ -694,6 +694,11 @@ model OperationalConfig {
   // JULI_PUNO ('ruta de ida' = origen -> destino) / PUNO_JULI ('ruta de vuelta' = destino -> origen).
   minTripMinutesOutbound   Int @default(90)
   minTripMinutesReturn     Int @default(90)
+  // Tiempo MAXIMO esperado de viaje (20 sept 2026), solo informativo: pasado
+  // este tiempo, un viaje que sigue "En curso" aparece como "Llegada sin
+  // confirmar". No bloquea, no cierra ni avisa por correo. null = sin configurar.
+  maxTripMinutesOutbound   Int?
+  maxTripMinutesReturn     Int?
   gpsRadiusMeters          Int @default(300)
   timeoutMinutes           Int @default(15)
   anomalySpeedThresholdKmh Int @default(100)

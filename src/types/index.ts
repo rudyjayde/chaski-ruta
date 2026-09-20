@@ -107,6 +107,10 @@ export interface Trip {
   manifestId?: string;
   gpsStatus: 'SIN_GPS' | 'REGISTRO_MOVIL' | 'GPS_PRO_DEMO';
   incidentNote?: string;
+  // Llegada sin confirmar: sigue "en curso" pasado el tiempo maximo esperado (solo informativo).
+  arrivalUnconfirmed?: boolean;
+  overdueMinutes?: number;
+  driverPhone?: string;
   scheduledDepartureISO?: string;
   actualDepartureISO?: string;
   scheduledArrivalISO?: string;

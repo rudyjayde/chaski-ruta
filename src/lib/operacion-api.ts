@@ -241,6 +241,8 @@ interface RawTrip {
   actualArrival: string | null;
   gpsStatus: string;
   incidentNote: string | null;
+  arrivalUnconfirmed?: boolean;
+  overdueMinutes?: number;
   vehicle: RawVehicle;
   driver: RawPerson;
   manifest?: { id: string } | null;
@@ -312,6 +314,9 @@ function mapTrip(raw: RawTrip): Trip {
     manifestId: raw.manifest?.id,
     gpsStatus: mapGpsStatus(raw.gpsStatus),
     incidentNote: raw.incidentNote ?? undefined,
+    arrivalUnconfirmed: raw.arrivalUnconfirmed ?? false,
+    overdueMinutes: raw.overdueMinutes ?? 0,
+    driverPhone: raw.driver?.phone ?? undefined,
     scheduledDepartureISO: raw.scheduledDeparture ?? undefined,
     actualDepartureISO: raw.actualDeparture ?? undefined,
     scheduledArrivalISO: raw.scheduledArrival ?? undefined,
@@ -330,8 +335,9 @@ export async function fetchQueue(route: RouteDir): Promise<QueueEntry[]> {
 // lat/lng: ubicacion del celular al momento de "Inscribirme" (§3.3), chequeo
 // puntual (nunca rastreo continuo). Confirma la llegada como parte del mismo
 // paso -- ya no existe un boton "Marcar llegada" ni "Confirmar llegada" separados.
-export async function joinQueue(route: RouteDir, vehicleId: string, deviceId?: string, isRelocation?: boolean, lat?: number, lng?: number): Promise<void> {
-  await request(`/queues/${route}/join`, { method: 'POST', body: JSON.stringify({ vehicleId, deviceId, isRelocation, lat, lng }) });
+export async function joinQueue(route: RouteDir, vehicleId: string, deviceId?: string, isRelocation?: boolean, lat?: number, lng?: number): Promise<{ movedToEnd: boolean }> {
+  const res = await request<{ movedToEnd?: boolean } | undefined>(`/queues/${route}/join`, { method: 'POST', body: JSON.stringify({ vehicleId, deviceId, isRelocation, lat, lng }) });
+  return { movedToEnd: Boolean(res?.movedToEnd) };
 }
 
 export async function confirmArrival(entryId: string, lat: number, lng: number): Promise<void> {
@@ -1454,6 +1460,9 @@ export async function fetchGlobalAudit(): Promise<AuditEntry[]> {
 export interface OperationalConfig {
   minTripMinutesOutbound: number;
   minTripMinutesReturn: number;
+  // Tiempo maximo esperado de viaje (solo informativo); null = sin configurar.
+  maxTripMinutesOutbound: number | null;
+  maxTripMinutesReturn: number | null;
   gpsRadiusMeters: number;
   timeoutMinutes: number;
   anomalySpeedThresholdKmh: number;

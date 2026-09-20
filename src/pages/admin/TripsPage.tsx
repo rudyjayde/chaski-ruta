@@ -213,6 +213,11 @@ export default function TripsPage() {
                   <span className={`text-[11px] px-2 py-0.5 rounded font-medium ${STATUS_STYLE[t.status].cls}`}>
                     {STATUS_STYLE[t.status].label}
                   </span>
+                  {t.status === 'ACTIVO' && t.arrivalUnconfirmed && (
+                    <span className="ml-1.5 text-[11px] px-2 py-0.5 rounded font-medium bg-warn/10 text-warn whitespace-nowrap" title={`Lleva ${t.overdueMinutes} min más del tiempo máximo esperado`}>
+                      Llegada sin confirmar
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1.5">

@@ -939,6 +939,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
     gpsRadiusMeters: 300,
     minTripMinutesOutbound: 90,
     minTripMinutesReturn: 90,
+    maxTripMinutesOutbound: null as number | null,
+    maxTripMinutesReturn: null as number | null,
   });
   const [opSaving, setOpSaving] = useState(false);
   const [opError, setOpError] = useState('');
@@ -1094,6 +1096,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           gpsRadiusMeters: cfg.gpsRadiusMeters ?? 300,
           minTripMinutesOutbound: cfg.minTripMinutesOutbound ?? 90,
           minTripMinutesReturn: cfg.minTripMinutesReturn ?? 90,
+          maxTripMinutesOutbound: cfg.maxTripMinutesOutbound ?? null,
+          maxTripMinutesReturn: cfg.maxTripMinutesReturn ?? null,
         });
       })
       .catch(() => setOpConfig(null));
@@ -1123,6 +1127,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           gpsRadiusMeters: opForm.gpsRadiusMeters,
           minTripMinutesOutbound: opForm.minTripMinutesOutbound,
           minTripMinutesReturn: opForm.minTripMinutesReturn,
+          maxTripMinutesOutbound: opForm.maxTripMinutesOutbound,
+          maxTripMinutesReturn: opForm.maxTripMinutesReturn,
         },
         org.id,
       );
@@ -1399,6 +1405,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 gpsRadiusMeters: opConfig.gpsRadiusMeters ?? 300,
                 minTripMinutesOutbound: opConfig.minTripMinutesOutbound ?? 90,
                 minTripMinutesReturn: opConfig.minTripMinutesReturn ?? 90,
+                maxTripMinutesOutbound: opConfig.maxTripMinutesOutbound ?? null,
+                maxTripMinutesReturn: opConfig.maxTripMinutesReturn ?? null,
               });
             }
           }}
@@ -1776,6 +1784,33 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                       <p className="text-sm text-t1">{opForm.minTripMinutesReturn} min</p>
                     )}
                   </div>
+                </div>
+              </div>
+
+              <div className="border-t border-border pt-5">
+                <p className="text-sm font-semibold text-t1 mb-1">Tiempo máximo esperado de viaje</p>
+                <p className="text-xs text-t2 mb-3">
+                  Solo informativo: pasado este tiempo, un viaje que sigue "en curso" aparece como "Llegada sin confirmar" para el administrador y el conductor. No bloquea, no cierra el viaje ni cambia la cola. Déjalo vacío si no quieres usarlo.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {([['maxTripMinutesOutbound', 'Ida (min)'], ['maxTripMinutesReturn', 'Vuelta (min)']] as const).map(([key, label]) => (
+                    <div key={key}>
+                      <label className="block text-xs font-medium text-t1 mb-1">{label}</label>
+                      {editingOp ? (
+                        <input
+                          type="number"
+                          min={10}
+                          max={1440}
+                          placeholder="Sin configurar"
+                          value={opForm[key] ?? ''}
+                          onChange={e => setOpForm(v => ({ ...v, [key]: e.target.value === '' ? null : Number(e.target.value) }))}
+                          className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                      ) : (
+                        <p className="text-sm text-t1">{opForm[key] != null ? `${opForm[key]} min` : 'Sin configurar'}</p>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -2178,6 +2213,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 ['Radio GPS de terminal', `${opForm.gpsRadiusMeters} m`],
                 ['Tiempo mínimo — ida', `${opForm.minTripMinutesOutbound} min`],
                 ['Tiempo mínimo — vuelta', `${opForm.minTripMinutesReturn} min`],
+                ['Tiempo máximo esperado — ida / vuelta', `${opForm.maxTripMinutesOutbound ?? '—'} / ${opForm.maxTripMinutesReturn ?? '—'} min`],
                 ['Rutas adicionales', routes.length > 0 ? routes.map(r => `${r.origin} → ${r.destination}`).join(', ') : '—'],
                 ['Empresas integrantes', companies.length > 0 ? companies.map(co => co.name).join(', ') : '—'],
                 ['Plan', org.plan],

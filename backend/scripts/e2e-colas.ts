@@ -279,6 +279,9 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     check('la autorización queda consumida (RESUELTO)', drAfter?.status === 'RESUELTO', drAfter?.status);
     r = await join(4, 'PUNO_JULI', PUNO);
     check('u4 (el predecesor) también puede inscribirse después', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    check('REGLA: u4 llegó tarde (u5 ya fue autorizada antes) y el sistema se lo avisa (entra al final)', r.json.movedToEnd === true, `movedToEnd=${r.json.movedToEnd}`);
+    const qLate = await list('PUNO_JULI');
+    check('REGLA: u4 quedó al FINAL de la cola, detrás de u5 (aunque salió antes)', qLate.length >= 2 && qLate[qLate.length - 1].vehicleId === u[4].id && qLate.findIndex((e) => e.vehicleId === u[5].id) < qLate.findIndex((e) => e.vehicleId === u[4].id), qLate.map((e) => (e.vehicleId === u[4].id ? 'u4' : e.vehicleId === u[5].id ? 'u5' : '?')).join(' '));
 
     head('F2. "No saldré ahora" libera al que viene detrás');
     await wipeOps();
@@ -565,6 +568,24 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
       check('sin terminales en el mapa, el conductor no puede inscribirse y ve un mensaje claro', r.status === 400 && /todavia no tienen ubicacion/i.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
       check('ese intento tampoco ata el celular', (await prisma.person.findUnique({ where: { id: bareDrv.id } }))?.boundDeviceId === null);
     }
+    // ─ "Llegada sin confirmar": solo informativo, con tiempo maximo configurado por el Super Admin ─
+    const ovTrip = await prisma.trip.create({ data: { organizationId: orgA.id, vehicleId: dvV.id, driverId: dvD.id, route: 'JULI_PUNO', status: 'ACTIVO', scheduledDeparture: new Date(Date.now() - 30 * 60000), actualDeparture: new Date(Date.now() - 30 * 60000), scheduledArrival: new Date(Date.now() + 60000) } as any });
+    const tripOf = async () => ((await call(T.admin, 'GET', '/trips')).json as any[]).find((t) => t.id === ovTrip.id);
+    let tv = await tripOf();
+    check('sin tiempo máximo configurado, ningún viaje aparece como "llegada sin confirmar"', tv && tv.arrivalUnconfirmed === false, JSON.stringify({ f: tv?.arrivalUnconfirmed }));
+    r = await call(T.admin, 'POST', '/operational-config', { maxTripMinutesOutbound: 10 });
+    check('un administrador NO puede cambiar el tiempo máximo (solo Super Admin)', r.status === 403, `HTTP ${r.status}`);
+    r = await call(TS, 'POST', `/operational-config?organizationId=${orgA.id}`, { maxTripMinutesOutbound: 10 });
+    check('el Super Admin configura el tiempo máximo esperado', r.status === 201 && r.json.maxTripMinutesOutbound === 10, `HTTP ${r.status} ${msg(r)}`);
+    tv = await tripOf();
+    check('pasado el tiempo máximo, el viaje en curso aparece como "llegada sin confirmar" (con minutos de retraso)', tv?.arrivalUnconfirmed === true && tv.overdueMinutes >= 19 && tv.status === 'ACTIVO', JSON.stringify({ f: tv?.arrivalUnconfirmed, m: tv?.overdueMinutes }));
+    check('es solo informativo: el viaje sigue ACTIVO y nada se bloquea ni se cierra', tv?.status === 'ACTIVO');
+    const dvTrips = ((await call(dvT, 'GET', '/trips')).json as any[]).find((t) => t.id === ovTrip.id);
+    check('el conductor también ve su viaje como "llegada sin confirmar"', dvTrips?.arrivalUnconfirmed === true);
+    r = await call(TS, 'POST', `/operational-config?organizationId=${orgA.id}`, { maxTripMinutesOutbound: null });
+    tv = await tripOf();
+    check('con el tiempo máximo en blanco vuelve a no aparecer', r.status === 201 && tv?.arrivalUnconfirmed === false, `HTTP ${r.status} ${msg(r)}`);
+    await prisma.trip.delete({ where: { id: ovTrip.id } });
     await prisma.person.delete({ where: { id: superP.id } }).catch(() => null);
 
     // ═════════ J. CONSISTENCIA FINAL ═════════

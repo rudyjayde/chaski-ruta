@@ -603,6 +603,9 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
   const [returnActionBusy, setReturnActionBusy] = useState<'join' | 'later' | 'delayed' | null>(null);
   const [returnActionError, setReturnActionError] = useState('');
   const [returnActionNotice, setReturnActionNotice] = useState('');
+  // Aviso persistente cuando entra al final de la cola porque otra unidad fue autorizada antes.
+  const [movedToEndNotice, setMovedToEndNotice] = useState('');
+  const MOVED_TO_END = 'Otra unidad fue autorizada antes que tú, así que entras al final de la cola.';
 
   const myCode = user?.code ?? '';
 
@@ -716,7 +719,8 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
     navigator.geolocation.getCurrentPosition(
       async pos => {
         try {
-          await joinQueue(returnRoute, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
+          const joined = await joinQueue(returnRoute, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
+          if (joined.movedToEnd) setMovedToEndNotice(MOVED_TO_END);
           await reload();
         } catch (err) {
           setReturnActionError(err instanceof Error ? err.message : 'No se pudo inscribir la unidad');
@@ -750,7 +754,8 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
     navigator.geolocation.getCurrentPosition(
       async pos => {
         try {
-          await joinQueue(nextRoute, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
+          const joined = await joinQueue(nextRoute, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
+          if (joined.movedToEnd) setMovedToEndNotice(MOVED_TO_END);
           await reload();
         } catch (err) {
           setReturnActionError(err instanceof Error ? err.message : 'No se pudo inscribir la unidad');
@@ -861,18 +866,26 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
           )}
         </div>
 
+        {movedToEndNotice && (
+          <div className="bg-warn/10 text-warn text-xs px-3 py-2 rounded-lg flex items-center gap-2 mb-3">
+            <AlertCircle size={13} /> {movedToEndNotice}
+          </div>
+        )}
         {myTrip ? (
           <div className="space-y-3">
             <div className="bg-ok/5 border border-ok/20 rounded-lg p-3 flex items-start gap-2">
               <CheckCircle size={15} className="text-ok mt-0.5" />
               <div>
                 <p className="text-sm font-semibold text-ok">
-                  {myTrip.status === 'ACTIVO' ? 'Viaje en curso' : 'Manifiesto preparado'} — código {myTrip.code}
+                  {myTrip.status === 'ACTIVO' ? (myTrip.arrivalUnconfirmed ? 'Llegada sin confirmar' : 'Viaje en curso') : 'Manifiesto preparado'} — código {myTrip.code}
                 </p>
                 <p className="text-xs text-t2 mt-1">
                   {routeLabel(myTrip.route, org)}
                   {myTrip.manifestId ? ' · manifiesto abierto' : ' · sin manifiesto abierto todavía'}
                 </p>
+                {myTrip.status === 'ACTIVO' && myTrip.arrivalUnconfirmed && (
+                  <p className="text-xs text-warn mt-1">Ya deberías haber llegado. Inscríbete cuando estés en el terminal.</p>
+                )}
                 {returnEligibleAt !== null && minutesUntilReturnEligible !== null && minutesUntilReturnEligible > 0 && (
                   <div className="mt-2">
                     <p className="text-xs text-t2">Para poder inscribirte en la cola de regreso:</p>
@@ -1059,6 +1072,7 @@ function DriverQueue() {
   const enroll = useEnrollDevice(profile);
   const code = user?.code ?? '';
   const [errorMsg, setErrorMsg] = useState('');
+  const [moveNotice, setMoveNotice] = useState('');
   const [queueJP, setQueueJP] = useState<QueueEntry[]>([]);
   const [queuePJ, setQueuePJ] = useState<QueueEntry[]>([]);
   const [myVehicleId, setMyVehicleId] = useState<string | null>(null);
@@ -1111,7 +1125,8 @@ function DriverQueue() {
     navigator.geolocation.getCurrentPosition(
       async pos => {
         try {
-          await joinQueue(route, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
+          const joined = await joinQueue(route, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
+          if (joined.movedToEnd) setMoveNotice('Otra unidad fue autorizada antes que tú, así que entras al final de la cola.');
           await reload();
         } catch (err) {
           setErrorMsg(err instanceof Error ? err.message : 'No se pudo inscribir la unidad');
@@ -1182,6 +1197,11 @@ function DriverQueue() {
         </div>
       </div>
 
+      {moveNotice && (
+        <div className="mb-3 p-3 bg-warn/10 text-warn text-xs rounded-lg flex items-center gap-2">
+          <AlertCircle size={13} /> {moveNotice}
+        </div>
+      )}
       {errorMsg && (
         <div className="px-4 py-2 bg-danger/5 border border-danger/20 rounded-lg text-xs text-danger">{errorMsg}</div>
       )}

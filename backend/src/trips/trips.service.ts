@@ -34,7 +34,22 @@ export class TripsService {
       include: { vehicle: true, driver: { select: PERSON_TRIP_SELECT }, manifest: true },
       orderBy: { createdAt: 'desc' },
     });
-    return isStaff(actor) ? trips : trips.map((t) => ({ ...t, driver: redactPerson(t.driver, actor) }));
+    // "Llegada sin confirmar" (20 sept 2026): estado solo informativo. Un viaje
+    // ACTIVO que lleva mas que el tiempo maximo esperado de su sentido y sigue
+    // sin inscripcion de retorno. No bloquea ni cierra nada; sin tiempo maximo
+    // configurado nunca aparece.
+    const cfg = await this.prisma.operationalConfig.findUnique({
+      where: { organizationId },
+      select: { maxTripMinutesOutbound: true, maxTripMinutesReturn: true },
+    });
+    const now = Date.now();
+    const flagged = trips.map((t) => {
+      const max = t.route === 'JULI_PUNO' ? cfg?.maxTripMinutesOutbound : cfg?.maxTripMinutesReturn;
+      const departedAt = t.actualDeparture?.getTime();
+      const overdue = t.status === 'ACTIVO' && max && departedAt ? Math.floor((now - departedAt - max * 60000) / 60000) : 0;
+      return { ...t, arrivalUnconfirmed: overdue > 0, overdueMinutes: overdue > 0 ? overdue : 0 };
+    });
+    return isStaff(actor) ? flagged : flagged.map((t) => ({ ...t, driver: redactPerson(t.driver, actor) }));
   }
 
   private async findOwnedTrip(organizationId: string, actor: JwtPayload, id: string) {

@@ -256,6 +256,22 @@ Mientras falten, los conductores **no pueden inscribirse en colas** y ven un
 mensaje claro; el panel del Super Admin muestra un aviso. Las coordenadas de los
 terminales, y no el texto de la dirección, son lo que mide el radio GPS.
 
+**Quien llega tarde entra al final de la cola (20 de septiembre de 2026):** si
+una unidad se ausenta y OTRA que salió después que ella ya fue autorizada (por
+"inscripción retrasada") y está en la cola de retorno, cuando la primera por fin
+se inscribe pierde su turno y **entra al final de la cola**, con la hora real de
+su inscripción. Cuenta como si hubiera tocado "No saldré ahora" y se hubiera
+vuelto a inscribir más tarde. El conductor ve un aviso claro.
+
+**Llegada sin confirmar (20 de septiembre de 2026):** el Super Admin puede
+configurar por asociación un **tiempo máximo esperado de viaje** (ida y vuelta,
+opcional). Un viaje que sigue "en curso" pasado ese tiempo aparece como
+**"Llegada sin confirmar"** en Viajes, en el Inicio del administrador (con
+conductor y teléfono) y en la pantalla del conductor. Es **solo informativo**: no
+bloquea a nadie, no cierra el viaje, no cambia la cola y no manda correos. Sin
+tiempo máximo configurado no aparece. Se quita solo cuando el conductor se
+inscribe de retorno.
+
 **Celular registrado para inscribirse (20 de septiembre de 2026):** la inscripción
 en cola se hace **solo desde el celular registrado del conductor** (el único
 aparato con GPS confiable). Ese celular se registra **solo cuando la primera

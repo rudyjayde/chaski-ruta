@@ -4,6 +4,9 @@ import { IsNumber, IsOptional, IsString, Min, Max, MaxLength } from 'class-valid
 export class UpdateOperationalConfigDto {
   @IsOptional() @IsNumber() @Min(10) @Max(600) minTripMinutesOutbound?: number;
   @IsOptional() @IsNumber() @Min(10) @Max(600) minTripMinutesReturn?: number;
+  // Tiempo maximo esperado (solo informativo); null lo deja sin configurar.
+  @IsOptional() @IsNumber() @Min(10) @Max(1440) maxTripMinutesOutbound?: number | null;
+  @IsOptional() @IsNumber() @Min(10) @Max(1440) maxTripMinutesReturn?: number | null;
   @IsOptional() @IsNumber() @Min(50) @Max(2000) gpsRadiusMeters?: number;
   @IsOptional() @IsNumber() @Min(1) @Max(240) timeoutMinutes?: number;
   @IsOptional() @IsNumber() @Min(30) @Max(200) anomalySpeedThresholdKmh?: number;

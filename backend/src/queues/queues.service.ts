@@ -461,7 +461,29 @@ export class QueuesService {
     // null a proposito para que recomputeOrder use registeredAt -- el
     // instante de este mismo paso de "Inscribirme", justo cuando se confirmo
     // la evidencia GPS de arriba.
-    const chainDepartureAt = verifiedRelocation ? null : lastOppositeTrip?.actualDeparture ?? null;
+    let chainDepartureAt = verifiedRelocation ? null : lastOppositeTrip?.actualDeparture ?? null;
+    // Regla de Jayde (20 sept 2026): si esta unidad se ausento y OTRA que salio
+    // DESPUES que ella ya esta en esta cola (porque el administrador autorizo su
+    // "inscripcion retrasada"), esta unidad perdio su turno: entra al FINAL de
+    // la cola, con la hora en que de verdad se inscribe -- igual que si hubiera
+    // tocado "No saldre ahora" y se hubiera vuelto a inscribir mas tarde.
+    let movedToEnd = false;
+    if (chainDepartureAt) {
+      const ahead = await this.prisma.queueEntry.findFirst({
+        where: {
+          organizationId,
+          route,
+          vehicleId: { not: vehicle.id },
+          status: { notIn: ['AUSENTE', 'RETIRADO'] },
+          chainDepartureAt: { gt: chainDepartureAt },
+        },
+        select: { id: true },
+      });
+      if (ahead) {
+        chainDepartureAt = null;
+        movedToEnd = true;
+      }
+    }
 
     const created = await this.prisma.$transaction(async (tx) => {
       // Completa el viaje activo (si lo hay) como parte de este mismo paso —
@@ -550,7 +572,8 @@ export class QueuesService {
       });
     }
 
-    return this.prisma.queueEntry.findUnique({ where: { id: created.id } });
+    const finalEntry = await this.prisma.queueEntry.findUnique({ where: { id: created.id } });
+    return { ...finalEntry, movedToEnd };
   }
 
   /**

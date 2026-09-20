@@ -492,7 +492,7 @@ export default function OperationsCenter({ onNavigate }: Props) {
                 </div>
               </div>
             )}
-            {!activeRelocation && !incidentManifest && !nextToCall && !(isPRO && offlineDevice) && (
+            {!activeRelocation && !incidentManifest && !nextToCall && !(isPRO && offlineDevice) && !trips.some(t => t.arrivalUnconfirmed) && licenseAlerts.length === 0 && missingLicenses === 0 && (
               <p className="text-sm text-t2 py-2">Sin alertas ni decisiones pendientes por ahora.</p>
             )}
             {nextToCall && (
@@ -506,6 +506,29 @@ export default function OperationsCenter({ onNavigate }: Props) {
                     className="mt-2.5 px-3 py-1.5 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary-h transition-colors"
                   >
                     Llamar siguiente
+                  </button>
+                </div>
+              </div>
+            )}
+            {trips.some(t => t.arrivalUnconfirmed) && (
+              <div className="flex items-start gap-3 p-3.5 rounded-lg border border-warn/30 bg-warn/5">
+                <AlertTriangle size={16} className="text-warn mt-0.5 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-t1">Llegada sin confirmar</p>
+                  <p className="text-xs text-t2 mt-0.5">Ya pasó el tiempo máximo esperado y siguen "en curso". Solo es un aviso: no bloquea nada.</p>
+                  <ul className="mt-1.5 space-y-1">
+                    {trips.filter(t => t.arrivalUnconfirmed).slice(0, 5).map(t => (
+                      <li key={t.id} className="text-sm text-t2 flex items-center justify-between gap-2">
+                        <span className="truncate">Unidad {t.code} · {t.driverName}{t.driverPhone ? ` · ${t.driverPhone}` : ''} · {routeLabel(t.route, org)}</span>
+                        <span className="text-[11px] px-2 py-0.5 rounded font-medium whitespace-nowrap bg-warn/10 text-warn">+{t.overdueMinutes} min</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    onClick={() => onNavigate('viajes')}
+                    className="flex items-center gap-1 mt-2.5 px-3 py-1.5 text-sm font-medium text-t1 border border-border rounded-lg bg-white hover:bg-hover transition-colors"
+                  >
+                    Ver viajes <ArrowRight size={13} />
                   </button>
                 </div>
               </div>
