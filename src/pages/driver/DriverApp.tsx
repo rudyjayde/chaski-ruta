@@ -540,8 +540,36 @@ function blobToDataUrl(blob: Blob) {
 }
 
 // ─── Inicio ───────────────────────────────────────────────────────────────────
+// Cuenta regresiva del tiempo minimo para inscribirse en la cola de regreso:
+// un reloj digital que baja cada segundo (mm:ss, o h:mm:ss si falta mas de una
+// hora). Al llegar a 00:00 avisa al padre para que muestre el boton de
+// inscripcion. Se calcula con la hora que guardo el servidor al marcar salida,
+// asi que no se desfasa si el conductor cierra y vuelve a abrir la aplicacion.
+function ReturnCountdown({ targetMs, onDone }: { targetMs: number; onDone: () => void }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const left = Math.max(0, targetMs - now);
+  const finished = left === 0;
+  useEffect(() => { if (finished) onDone(); }, [finished]); // eslint-disable-line react-hooks/exhaustive-deps
+  const totalSeconds = Math.ceil(left / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const sec = totalSeconds % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const text = h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+  return (
+    <p className="font-mono tabular-nums text-3xl font-semibold text-t1 mt-1" role="timer" aria-label={`Faltan ${text} para poder inscribirte en la cola de regreso`}>
+      {text}
+    </p>
+  );
+}
+
 function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
   const { user } = useAuth();
+  const [, forceTick] = useState(0); // para re-dibujar cuando el temporizador llega a 00:00
   const { profile, company, org, hasVehicleGPS } = useDriverContext();
   const { wallets } = useDriverWallets(user?.email ?? user?.code ?? '', profile?.name ?? user?.name ?? '', profile?.phone ?? '');
   const [showWalletQr, setShowWalletQr] = useState(false);
@@ -826,10 +854,11 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
                   {routeLabel(myTrip.route, org)}
                   {myTrip.manifestId ? ' · manifiesto abierto' : ' · sin manifiesto abierto todavía'}
                 </p>
-                {minutesUntilReturnEligible !== null && minutesUntilReturnEligible > 0 && (
-                  <p className="text-xs text-t2 mt-1">
-                    Faltan {minutesUntilReturnEligible} min para poder inscribirte en la cola de regreso
-                  </p>
+                {returnEligibleAt !== null && minutesUntilReturnEligible !== null && minutesUntilReturnEligible > 0 && (
+                  <div className="mt-2">
+                    <p className="text-xs text-t2">Para poder inscribirte en la cola de regreso:</p>
+                    <ReturnCountdown targetMs={returnEligibleAt} onDone={() => forceTick(n => n + 1)} />
+                  </div>
                 )}
               </div>
             </div>
