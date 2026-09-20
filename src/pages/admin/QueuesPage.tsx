@@ -367,7 +367,8 @@ export default function QueuesPage() {
     }
   };
 
-  const alreadyQueuedCodes = new Set(rawEntries.map(e => e.code));
+  // Una unidad AUSENTE o RETIRADA ya no esta en la cola: puede volver a inscribirse.
+  const alreadyQueuedCodes = new Set(rawEntries.filter(e => e.status !== 'AUSENTE' && e.status !== 'RETIRADO').map(e => e.code));
 
   return (
     <div className="flex flex-col h-full">
@@ -677,7 +678,7 @@ export default function QueuesPage() {
                 <p className="text-sm text-muted italic py-6 text-center">Cargando vehículos…</p>
               ) : (
                 vehicles
-                  .filter(v => !alreadyQueuedCodes.has(v.code))
+                  .filter(v => v.status === 'ACTIVO' && !alreadyQueuedCodes.has(v.code))
                   .map(v => (
                     <button
                       key={v.id}
@@ -692,8 +693,8 @@ export default function QueuesPage() {
                     </button>
                   ))
               )}
-              {vehicles.length > 0 && vehicles.filter(v => !alreadyQueuedCodes.has(v.code)).length === 0 && (
-                <p className="text-sm text-muted italic py-6 text-center">Todas las unidades ya están en esta cola.</p>
+              {vehicles.length > 0 && vehicles.filter(v => v.status === 'ACTIVO' && !alreadyQueuedCodes.has(v.code)).length === 0 && (
+                <p className="text-sm text-muted italic py-6 text-center">No hay unidades activas disponibles para inscribir (todas están en esta cola o desactivadas).</p>
               )}
             </div>
           </div>

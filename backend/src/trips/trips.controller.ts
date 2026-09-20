@@ -24,7 +24,7 @@ export class TripsController {
     @Query('status') status?: string,
   ) {
     const orgId = resolveOrgId(user, organizationId);
-    return this.trips.findMany(orgId, route, status);
+    return this.trips.findMany(orgId, user, route, status);
   }
 
   @Get(':id')

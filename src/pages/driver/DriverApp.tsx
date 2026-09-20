@@ -1000,18 +1000,35 @@ function DriverQueue() {
   const myEntryPJ = queuePJ.find(entry => entry.code === code) ?? null;
   const isActiveEntry = (entry: QueueEntry | null) => Boolean(entry && entry.status !== 'AUSENTE' && entry.status !== 'RETIRADO');
 
-  const handleJoin = async (route: 'JULI_PUNO' | 'PUNO_JULI') => {
+  // El servidor exige la ubicacion del celular en el mismo paso de "Inscribirme" (confirma que la
+  // unidad esta en el terminal). Antes este boton no la enviaba y siempre respondia 400: la primera
+  // inscripcion de la jornada, que solo puede hacerse desde aqui, no funcionaba.
+  const handleJoin = (route: 'JULI_PUNO' | 'PUNO_JULI') => {
     if (!myVehicleId) return;
     setErrorMsg('');
     setJoiningRoute(route);
-    try {
-      await joinQueue(route, myVehicleId, getOrCreateDeviceId());
-      await reload();
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'No se pudo inscribir la unidad');
-    } finally {
+    if (!navigator.geolocation) {
+      setErrorMsg('Este navegador no puede obtener tu ubicación');
       setJoiningRoute(null);
+      return;
     }
+    navigator.geolocation.getCurrentPosition(
+      async pos => {
+        try {
+          await joinQueue(route, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
+          await reload();
+        } catch (err) {
+          setErrorMsg(err instanceof Error ? err.message : 'No se pudo inscribir la unidad');
+        } finally {
+          setJoiningRoute(null);
+        }
+      },
+      () => {
+        setErrorMsg('No se pudo obtener tu ubicación — revisa los permisos del navegador');
+        setJoiningRoute(null);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
+    );
   };
 
   const handleConfirmArrival = (entry: QueueEntry) => {
@@ -1811,7 +1828,7 @@ function DriverManifest() {
 
       {!justClosed && !myTrip && (
         <div className="bg-surface border border-border rounded-lg p-6 text-center">
-          <p className="text-sm text-t2">No tienes un viaje activo en este momento. Sal de la cola para comenzar un viaje y poder abrir tu manifiesto.</p>
+          <p className="text-sm text-t2">No tienes un viaje preparado. Cuando tu unidad esté LLAMANDO en la cola, pulsa «Preparar manifiesto» en Inicio para abrirlo aquí.</p>
         </div>
       )}
 

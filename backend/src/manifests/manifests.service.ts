@@ -9,6 +9,7 @@ import { CorrectManifestDto } from './dto/correct-manifest.dto';
 import { DigitizeSuggestDto } from './dto/digitize-suggest.dto';
 import { AnthropicService } from '../ai/anthropic.service';
 import { MailService } from '../mail/mail.service';
+import { nextSequenceNumber } from '../common/sequence';
 
 // El hash de la contraseña NUNCA debe llegar al navegador (mismo criterio
 // que people.service.ts / vehicles.service.ts) -- select explicito en vez
@@ -55,15 +56,11 @@ export class ManifestsService {
    * entonces siempre recalcula el mismo numero ya usado, chocando con la
    * restriccion unica de `number` una y otra vez sin arreglarse solo).
    */
-  private async nextNumber(organizationId: string) {
-    const year = new Date().getFullYear();
-    const prefix = `MAN-${year}-`;
-    const last = await this.prisma.manifest.findFirst({
-      where: { organizationId, number: { startsWith: prefix } },
-      orderBy: { number: 'desc' },
-    });
-    const lastSeq = last ? parseInt(last.number.slice(prefix.length), 10) || 0 : 0;
-    return `${prefix}${String(lastSeq + 1).padStart(4, '0')}`;
+  private async nextNumber() {
+    // El numero es unico en TODO el sistema: se calcula sobre el maximo de todas
+    // las asociaciones (ver common/sequence.ts). Antes solo miraba la propia
+    // asociacion y la segunda asociacion fallaba con error 500 al abrir su primer manifiesto.
+    return nextSequenceNumber(this.prisma, 'manifests', 'number', `MAN-${new Date().getFullYear()}-`);
   }
 
   /**
@@ -87,7 +84,7 @@ export class ManifestsService {
     capacity: number;
   }) {
     for (let attempt = 0; attempt < 5; attempt++) {
-      const number = await this.nextNumber(data.organizationId);
+      const number = await this.nextNumber();
       try {
         return await this.prisma.manifest.create({ data: { ...data, number }, include: this.include });
       } catch (err: any) {
@@ -150,6 +147,10 @@ export class ManifestsService {
     }
     if (actor.role === 'CONDUCTOR' && manifest.driverId !== actor.sub) {
       throw new ForbiddenException('No es tu manifiesto');
+    }
+    // El manifiesto lleva el DNI de los pasajeros: un socio solo ve los de SUS unidades.
+    if (actor.role === 'SOCIO' && manifest.vehicle.partnerId !== actor.sub) {
+      throw new ForbiddenException('Este manifiesto no es de una de tus unidades');
     }
     return manifest;
   }
@@ -555,7 +556,7 @@ Reglas estrictas:
       });
     }
     return this.prisma.manifest.findMany({
-      where: { organizationId },
+      where: { organizationId, ...(actor.role === 'SOCIO' ? { vehicle: { partnerId: actor.sub } } : {}) },
       include: this.include,
       orderBy: { createdAt: 'desc' },
     });

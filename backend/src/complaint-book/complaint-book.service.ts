@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
+import { nextSequenceNumber } from '../common/sequence';
 
 @Injectable()
 export class ComplaintBookService {
@@ -24,9 +25,10 @@ export class ComplaintBookService {
 
     const year = new Date().getFullYear();
     const prefix = `RC-${year}-`;
-    const entry = await this.prisma.$transaction(async tx => {
-      const count = await tx.complaintBookEntry.count({ where: { number: { startsWith: prefix } } });
-      const number = `${prefix}${String(count + 1).padStart(4, '0')}`;
+    // El numero (RC-año-####) se calcula sobre el maximo ya usado (no un conteo,
+    // que se desincroniza con huecos) y se reintenta si dos reclamos chocan a la vez.
+    const createOnce = () => this.prisma.$transaction(async tx => {
+      const number = await nextSequenceNumber(tx as never, 'complaint_book_entries', 'number', prefix);
       return tx.complaintBookEntry.create({
         data: {
           number,
@@ -46,6 +48,11 @@ export class ComplaintBookService {
         },
       });
     });
+    let entry = await createOnce().catch((err) => err);
+    for (let attempt = 0; attempt < 4 && (entry as { code?: string })?.code === 'P2002'; attempt++) {
+      entry = await createOnce().catch((err) => err);
+    }
+    if (entry instanceof Error || (entry as { code?: string })?.code) throw entry;
 
     // Best-effort -- el reclamo ya quedo guardado arriba, asi que un correo
     // fallido nunca lo pierde (ver MailService.sendComplaintConfirmation /

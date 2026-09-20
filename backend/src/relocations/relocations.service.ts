@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtPayload } from '../auth/jwt.strategy';
 import { CreateRelocationDto } from './dto/create-relocation.dto';
+import { nextSequenceNumber } from '../common/sequence';
 
 // El hash de la contraseña NUNCA debe llegar al navegador (mismo criterio
 // que people.service.ts / vehicles.service.ts) -- select explicito en vez
@@ -32,24 +33,31 @@ export class RelocationsService {
   }
 
   async create(organizationId: string, actor: JwtPayload, dto: CreateRelocationDto) {
-    const year = new Date().getFullYear();
-    const count = await this.prisma.relocationOrder.count({ where: { organizationId } });
-    const internalOrder = `ORD-REL-${year}-${String(count + 1).padStart(4, '0')}`;
-
-    const order = await this.prisma.relocationOrder.create({
-      data: {
-        organizationId,
-        status: 'PROPUESTA',
-        fromTerminal: dto.fromTerminal,
-        toTerminal: dto.toTerminal,
-        reason: dto.reason,
-        windowLabel: dto.windowLabel,
-        compensation: dto.compensation,
-        internalOrder,
-        units: { create: dto.vehicleIds.map((vehicleId) => ({ vehicleId })) },
-      },
-      include: { units: { include: { vehicle: { include: { currentDriver: { select: PERSON_NAME_SELECT } } } } } },
-    });
+    // internalOrder es unico en TODO el sistema (no por asociacion): se calcula
+    // sobre el maximo global y se reintenta si dos ordenes chocan a la vez.
+    let order;
+    for (let attempt = 0; ; attempt++) {
+      const internalOrder = await nextSequenceNumber(this.prisma, 'relocation_orders', 'internalOrder', `ORD-REL-${new Date().getFullYear()}-`);
+      try {
+        order = await this.prisma.relocationOrder.create({
+          data: {
+            organizationId,
+            status: 'PROPUESTA',
+            fromTerminal: dto.fromTerminal,
+            toTerminal: dto.toTerminal,
+            reason: dto.reason,
+            windowLabel: dto.windowLabel,
+            compensation: dto.compensation,
+            internalOrder,
+            units: { create: dto.vehicleIds.map((vehicleId) => ({ vehicleId })) },
+          },
+          include: { units: { include: { vehicle: { include: { currentDriver: { select: PERSON_NAME_SELECT } } } } } },
+        });
+        break;
+      } catch (err) {
+        if ((err as { code?: string }).code !== 'P2002' || attempt >= 4) throw err;
+      }
+    }
 
     await this.prisma.auditEntry.create({
       data: {

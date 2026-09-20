@@ -804,6 +804,11 @@ model Trip {
   gpsStatus    GpsStatus @default(SIN_GPS)
   incidentNote String?
 
+  // Cadena de predecesores: se llena cuando la unidad que hizo este viaje de ida
+  // declaro "no saldre ahora" (o ya resolvio su regreso). Asi deja de bloquear a
+  // las unidades que salieron despues (plan-flujo-colas-hardware.md §3).
+  returnHandledAt DateTime?
+
   // Cadena de predecesores (§3.5): referencia al viaje que abrió el cupo que
   // este vehículo ocupa al re-inscribirse en la cola de regreso.
   predecessorTripId String?

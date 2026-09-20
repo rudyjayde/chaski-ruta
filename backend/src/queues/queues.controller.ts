@@ -29,7 +29,7 @@ export class QueuesController {
   @Get(':route')
   list(@CurrentUser() user: JwtPayload, @Param('route') route: string, @Query('organizationId') organizationId?: string) {
     const orgId = resolveOrgId(user, organizationId);
-    return this.queues.list(orgId, parseRoute(route));
+    return this.queues.list(orgId, parseRoute(route), user);
   }
 
   // El propio conductor (o un administrador en su nombre) inscribe la unidad.

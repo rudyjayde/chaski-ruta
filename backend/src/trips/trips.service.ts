@@ -6,6 +6,7 @@ import { AlertTripDto } from './dto/alert-trip.dto';
 import { CompleteTripDto } from './dto/complete-trip.dto';
 import { ResolveIncidentDto } from './dto/resolve-incident.dto';
 import { CancelTripDto } from './dto/cancel-trip.dto';
+import { isStaff, redactPerson } from '../common/redact';
 
 // El hash de la contraseña NUNCA debe llegar al navegador (mismo criterio
 // que people.service.ts / vehicles.service.ts) -- select explicito en vez
@@ -19,25 +20,33 @@ export class TripsService {
     private gps: GpsService,
   ) {}
 
-  findMany(organizationId: string, route?: string, status?: string) {
-    return this.prisma.trip.findMany({
+  // El conductor ve SUS viajes, el socio los de SUS unidades y el administrador todos. Antes cualquier
+  // rol recibia todos los viajes de la asociacion, con el DNI y el correo de cada conductor.
+  async findMany(organizationId: string, actor: JwtPayload, route?: string, status?: string) {
+    const trips = await this.prisma.trip.findMany({
       where: {
         organizationId,
         ...(route ? { route: route as any } : {}),
         ...(status ? { status: status as any } : {}),
+        ...(actor.role === 'CONDUCTOR' ? { driverId: actor.sub } : {}),
+        ...(actor.role === 'SOCIO' ? { vehicle: { partnerId: actor.sub } } : {}),
       },
       include: { vehicle: true, driver: { select: PERSON_TRIP_SELECT }, manifest: true },
       orderBy: { createdAt: 'desc' },
     });
+    return isStaff(actor) ? trips : trips.map((t) => ({ ...t, driver: redactPerson(t.driver, actor) }));
   }
 
   private async findOwnedTrip(organizationId: string, actor: JwtPayload, id: string) {
-    const trip = await this.prisma.trip.findUnique({ where: { id } });
+    const trip = await this.prisma.trip.findUnique({ where: { id }, include: { vehicle: { select: { partnerId: true } } } });
     if (!trip || trip.organizationId !== organizationId) {
       throw new NotFoundException('Viaje no encontrado');
     }
     if (actor.role === 'CONDUCTOR' && trip.driverId !== actor.sub) {
       throw new ForbiddenException('No es tu viaje');
+    }
+    if (actor.role === 'SOCIO' && trip.vehicle.partnerId !== actor.sub) {
+      throw new ForbiddenException('Este viaje no es de una de tus unidades');
     }
     return trip;
   }

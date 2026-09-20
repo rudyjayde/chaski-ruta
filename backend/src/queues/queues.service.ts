@@ -6,6 +6,7 @@ import { JoinQueueDto } from './dto/join-queue.dto';
 import { ConfirmArrivalDto } from './dto/confirm-arrival.dto';
 import { AdvanceQueueDto } from './dto/advance-queue.dto';
 import { OverrideQueueDto } from './dto/override-queue.dto';
+import { redactPerson } from '../common/redact';
 
 type RouteDir = 'JULI_PUNO' | 'PUNO_JULI';
 
@@ -23,6 +24,10 @@ const ADVANCE_ORDER = ['INSCRITO', 'LLAMADO', 'EN_TERMINAL', 'EMBARCANDO', 'LIST
 // opcional (el administrador los puede seguir usando si quiere trazabilidad
 // mas fina), pero dejan de ser un requisito bloqueante para "Marcar salida".
 const SELF_SERVICE_STATUSES = new Set(ADVANCE_ORDER.slice(1)); // LLAMADO en adelante
+
+// Cuanto hacia atras se mira para la cadena de predecesores (una jornada de trabajo). Es un
+// limite razonable, no una cifra del documento maestro.
+const PREDECESSOR_WINDOW_HOURS = 18;
 
 function opposite(route: RouteDir): RouteDir {
   return route === 'JULI_PUNO' ? 'PUNO_JULI' : 'JULI_PUNO';
@@ -55,8 +60,8 @@ export class QueuesService {
     return this.prisma.operationalConfig.create({ data: { organizationId } });
   }
 
-  async list(organizationId: string, route: RouteDir) {
-    return this.prisma.queueEntry.findMany({
+  async list(organizationId: string, route: RouteDir, actor: JwtPayload) {
+    const entries = await this.prisma.queueEntry.findMany({
       where: { organizationId, route },
       include: {
         vehicle: { include: { company: true, partner: { select: PERSON_QUEUE_SELECT } } },
@@ -64,6 +69,12 @@ export class QueuesService {
       },
       orderBy: { position: 'asc' },
     });
+    // Socios y conductores ven la cola (nombres y codigos), no los datos personales de los demas.
+    return entries.map((e) => ({
+      ...e,
+      driver: redactPerson(e.driver, actor),
+      vehicle: { ...e.vehicle, partner: redactPerson(e.vehicle.partner, actor) },
+    }));
   }
 
   private async demoteToBack(entryId: string, newStatus: 'INSCRITO' | 'AUSENTE') {
@@ -196,6 +207,14 @@ export class QueuesService {
     if (!vehicle || vehicle.organizationId !== organizationId) {
       throw new NotFoundException('Vehiculo no encontrado en esta asociacion');
     }
+    // Una unidad desactivada (taller, etc.) o dada de baja no opera: no puede entrar a la cola.
+    if (vehicle.status !== 'ACTIVO') {
+      throw new ForbiddenException(
+        vehicle.status === 'BAJA'
+          ? `La unidad ${vehicle.code} esta dada de baja -- no puede inscribirse`
+          : `La unidad ${vehicle.code} esta desactivada -- reactivala antes de inscribirla en la cola`,
+      );
+    }
 
     // Solo el conductor asignado, o un administrador de la asociacion, pueden inscribir la unidad.
     if (actor.role === 'CONDUCTOR' && vehicle.currentDriverId !== actor.sub) {
@@ -255,7 +274,10 @@ export class QueuesService {
     const existing = await this.prisma.queueEntry.findUnique({
       where: { organizationId_route_vehicleId: { organizationId, route, vehicleId: vehicle.id } },
     });
-    if (existing) {
+    // Una entrada AUSENTE o RETIRADA (intervencion del administrador) es historia, no una
+    // inscripcion vigente: se reemplaza al volver a inscribirse. Antes la unidad quedaba
+    // bloqueada con "ya esta inscrita" y no podia volver a la cola.
+    if (existing && !['AUSENTE', 'RETIRADO'].includes(existing.status)) {
       throw new BadRequestException('Esta unidad ya esta inscrita en esta cola');
     }
 
@@ -267,13 +289,15 @@ export class QueuesService {
     // direccion exacta. Si marca la casilla sin tener una orden asi, se ignora
     // el flag y sigue el flujo normal de abajo (con sus candados de siempre) --
     // nadie se autoriza solo.
-    const fromTerminal = route === 'JULI_PUNO' ? 'JULI' : 'PUNO';
-    const toTerminal = route === 'JULI_PUNO' ? 'PUNO' : 'JULI';
+    // La orden dice DE donde salen las unidades y A donde van. Al llegar al terminal destino
+    // (la orden.toTerminal), la unidad se inscribe en la cola que sale de ese terminal.
+    const queueOrigin = route === 'JULI_PUNO' ? 'JULI' : 'PUNO';
+    const queueDestination = route === 'JULI_PUNO' ? 'PUNO' : 'JULI';
     const verifiedRelocation = dto.isRelocation
       ? await this.prisma.relocationUnit.findFirst({
           where: {
             vehicleId: vehicle.id,
-            relocationOrder: { organizationId, status: 'EN_TRASLADO', fromTerminal, toTerminal },
+            relocationOrder: { organizationId, status: 'EN_TRASLADO', fromTerminal: queueDestination, toTerminal: queueOrigin },
           },
         })
       : null;
@@ -419,6 +443,7 @@ export class QueuesService {
           data: { status: 'COMPLETADO', actualArrival: new Date(), gpsStatus: tripGpsStatus },
         });
       }
+      if (existing) await tx.queueEntry.delete({ where: { id: existing.id } });
       return tx.queueEntry.create({
         data: {
           organizationId,
@@ -572,6 +597,21 @@ export class QueuesService {
   async declareLater(organizationId: string, actor: JwtPayload, entryId: string) {
     const entry = await this.findOwnedEntry(organizationId, actor, entryId);
     await this.withdrawFromQueue(entry.id);
+    // Cadena de predecesores (§3.5): declarar "no saldre ahora" RESUELVE la situacion de esta
+    // unidad para las que salieron despues -- deja de bloquearlas. Se marca el viaje de ida que
+    // la trajo (el que fijo su lugar en la cola, chainDepartureAt).
+    if (entry.chainDepartureAt) {
+      await this.prisma.trip.updateMany({
+        where: {
+          organizationId,
+          vehicleId: entry.vehicleId,
+          route: opposite(entry.route as RouteDir),
+          status: 'COMPLETADO',
+          actualDeparture: entry.chainDepartureAt,
+        },
+        data: { returnHandledAt: new Date() },
+      });
+    }
     await this.prisma.auditEntry.create({
       data: {
         organizationId,
@@ -605,6 +645,8 @@ export class QueuesService {
       await this.demoteToBack(entry.id, 'INSCRITO');
     } else {
       await this.prisma.queueEntry.update({ where: { id: entry.id }, data: { status: dto.action } });
+      // La cola no puede quedarse sin nadie LLAMADO si todavia hay unidades esperando.
+      await this.maybeAutoPromote(entry.organizationId, entry.route as RouteDir);
     }
 
     await this.prisma.auditEntry.create({
@@ -720,6 +762,8 @@ export class QueuesService {
     });
 
     await this.recomputeOrder(organizationId, entry.route as RouteDir);
+    // plan-flujo-colas-hardware.md §2.4: al salir una unidad, la siguiente pasa sola a LLAMADO.
+    await this.maybeAutoPromote(organizationId, entry.route as RouteDir);
     await this.prisma.auditEntry.create({
       data: {
         organizationId,
@@ -748,12 +792,15 @@ export class QueuesService {
     myDeparture: Date,
     myVehicleId: string,
   ) {
+    // Solo cuenta la jornada en curso: una unidad que termino su ultimo viaje ayer y no volvio a
+    // inscribirse NO debe bloquear a las de hoy para siempre (antes no habia limite de tiempo).
+    const windowStart = new Date(myDeparture.getTime() - PREDECESSOR_WINDOW_HOURS * 3600_000);
     const earlierArrivals = await this.prisma.trip.findMany({
       where: {
         organizationId,
         route: opposite(route),
         status: 'COMPLETADO',
-        actualDeparture: { lt: myDeparture },
+        actualDeparture: { lt: myDeparture, gte: windowStart },
         vehicleId: { not: myVehicleId },
       },
       orderBy: { actualDeparture: 'asc' },
@@ -767,6 +814,8 @@ export class QueuesService {
     for (const t of earlierArrivals) latestByVehicle.set(t.vehicleId, t);
 
     for (const trip of latestByVehicle.values()) {
+      // La unidad ya declaro "no saldre ahora" para este viaje: quedo resuelta, no bloquea.
+      if (trip.returnHandledAt) continue;
       const [pendingEntry, activeTrip, completedTrip] = await Promise.all([
         this.prisma.queueEntry.findFirst({ where: { organizationId, route, vehicleId: trip.vehicleId } }),
         this.prisma.trip.findFirst({ where: { organizationId, route, vehicleId: trip.vehicleId, status: 'ACTIVO' } }),

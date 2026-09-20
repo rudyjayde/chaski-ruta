@@ -23,13 +23,13 @@ export class VehiclesController {
   @Get()
   findAll(@CurrentUser() user: JwtPayload, @Query('organizationId') organizationId?: string, @Query('route') route?: string) {
     const orgId = resolveOrgId(user, organizationId);
-    return this.vehicles.findAll(orgId, route);
+    return this.vehicles.findAll(orgId, route, user);
   }
 
   @Get(':id')
   findOne(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Query('organizationId') organizationId?: string) {
     const orgId = resolveOrgId(user, organizationId);
-    return this.vehicles.findOne(orgId, id);
+    return this.vehicles.findOne(orgId, id, user);
   }
 
   // Alta de unidades: solo administrador de la asociacion o Super Admin.

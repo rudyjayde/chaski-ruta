@@ -10,6 +10,7 @@ import { SetGpsDeviceDto } from './dto/set-gps-device.dto';
 import { SetGpsVehicularPlanDto } from './dto/set-gps-vehicular-plan.dto';
 import { SetMaintenanceDto } from './dto/set-maintenance.dto';
 import { JwtPayload } from '../auth/jwt.strategy';
+import { isStaff, redactPerson } from '../common/redact';
 
 // El hash de la contraseña NUNCA debe llegar al navegador (mismo criterio
 // que people.service.ts) -- Vehicle incluye partner/currentDriver como
@@ -40,8 +41,21 @@ const PERSON_SAFE_SELECT = {
 export class VehiclesService {
   constructor(private prisma: PrismaService) {}
 
-  findAll(organizationId: string, route?: string) {
-    return this.prisma.vehicle.findMany({
+  // Socios y conductores ven la flota (codigos, placas, nombres) pero no el DNI, celular ni correo de los
+  // demas, ni el equipo GPS de unidades ajenas. Antes recibian todo de todos.
+  private forActor<T extends { partner: any; currentDriver: any; partnerId: string | null; currentDriverId: string | null }>(vehicle: T, actor?: JwtPayload): T {
+    if (!actor || isStaff(actor)) return vehicle;
+    const own = vehicle.partnerId === actor.sub || vehicle.currentDriverId === actor.sub;
+    return {
+      ...vehicle,
+      partner: redactPerson(vehicle.partner, actor),
+      currentDriver: redactPerson(vehicle.currentDriver, actor),
+      ...(own ? {} : { traccarDeviceId: null, simOperator: null, simNumber: null }),
+    };
+  }
+
+  async findAll(organizationId: string, route?: string, actor?: JwtPayload) {
+    const vehicles = await this.prisma.vehicle.findMany({
       where: {
         organizationId,
         ...(route ? { OR: [{ routeAssignment: route as any }, { routeAssignment: 'AMBAS' }] } : {}),
@@ -49,9 +63,10 @@ export class VehiclesService {
       include: { company: true, partner: { select: PERSON_SAFE_SELECT }, currentDriver: { select: PERSON_SAFE_SELECT }, plateHistory: true },
       orderBy: { code: 'asc' },
     });
+    return vehicles.map((v) => this.forActor(v, actor));
   }
 
-  async findOne(organizationId: string, id: string) {
+  async findOne(organizationId: string, id: string, actor?: JwtPayload) {
     const vehicle = await this.prisma.vehicle.findUnique({
       where: { id },
       include: { company: true, partner: { select: PERSON_SAFE_SELECT }, currentDriver: { select: PERSON_SAFE_SELECT }, plateHistory: true },
@@ -60,7 +75,7 @@ export class VehiclesService {
     if (vehicle.organizationId !== organizationId) {
       throw new ForbiddenException('No tienes acceso a este vehiculo');
     }
-    return vehicle;
+    return this.forActor(vehicle, actor);
   }
 
   async create(organizationId: string, dto: CreateVehicleDto) {
@@ -123,6 +138,23 @@ export class VehiclesService {
     }
   }
 
+  // Una unidad con viaje en curso o en una cola no se puede desactivar ni dar de baja.
+  private async assertNotOperating(vehicleId: string, code: string, action: string) {
+    const [activeTrip, activeQueue] = await Promise.all([
+      this.prisma.trip.findFirst({ where: { vehicleId, status: { in: ['PROGRAMADO', 'ACTIVO'] } }, select: { id: true } }),
+      this.prisma.queueEntry.findFirst({
+        where: { vehicleId, status: { notIn: ['SALIO', 'AUSENTE', 'RETIRADO'] } },
+        select: { id: true },
+      }),
+    ]);
+    if (activeTrip) {
+      throw new ConflictException(`La unidad ${code} tiene un viaje en curso. Termínalo o cancélalo antes de ${action}.`);
+    }
+    if (activeQueue) {
+      throw new ConflictException(`La unidad ${code} está en una cola. Sácala de la cola antes de ${action}.`);
+    }
+  }
+
   private throwRetiredMatch(vehicleId: string, message: string): never {
     throw new ConflictException({ message, code: 'UNIDAD_DE_BAJA', vehicleId });
   }
@@ -136,19 +168,7 @@ export class VehiclesService {
     const vehicle = await this.findOne(organizationId, vehicleId);
     if (vehicle.status === 'BAJA') throw new BadRequestException('Esta unidad ya está dada de baja.');
 
-    const [activeTrip, activeQueue] = await Promise.all([
-      this.prisma.trip.findFirst({ where: { vehicleId, status: { in: ['PROGRAMADO', 'ACTIVO'] } }, select: { id: true } }),
-      this.prisma.queueEntry.findFirst({
-        where: { vehicleId, status: { notIn: ['SALIO', 'AUSENTE', 'RETIRADO'] } },
-        select: { id: true },
-      }),
-    ]);
-    if (activeTrip) {
-      throw new ConflictException(`La unidad ${vehicle.code} tiene un viaje en curso. Termínalo o cancélalo antes de darla de baja.`);
-    }
-    if (activeQueue) {
-      throw new ConflictException(`La unidad ${vehicle.code} está en una cola. Sácala de la cola antes de darla de baja.`);
-    }
+    await this.assertNotOperating(vehicleId, vehicle.code, 'darla de baja');
 
     const updated = await this.prisma.vehicle.update({
       where: { id: vehicleId },
@@ -282,6 +302,7 @@ export class VehiclesService {
   async deactivate(organizationId: string, actor: JwtPayload, vehicleId: string, dto: DeactivateVehicleDto) {
     const vehicle = await this.findOne(organizationId, vehicleId);
     if (vehicle.status === 'BAJA') throw new BadRequestException('Esta unidad está dada de baja; restáurala primero.');
+    await this.assertNotOperating(vehicleId, vehicle.code, 'desactivarla');
     const updated = await this.prisma.vehicle.update({
       where: { id: vehicleId },
       data: { status: 'INACTIVO' },
