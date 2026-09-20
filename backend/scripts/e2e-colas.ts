@@ -667,5 +667,5 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
   const bad = results.filter((x) => !x.ok);
   console.log(`\n══════ RESUMEN: ${results.length - bad.length} bien, ${bad.length} con falla ══════`);
   for (const b of bad) console.log(`  ✗ [${b.section}] ${b.label}${b.detail ? ` → ${b.detail}` : ''}`);
-  process.exit(0);
+  process.exit(bad.length > 0 ? 1 : 0); // codigo de salida distinto de 0 si algo fallo (lo usa el CI)
 })().catch((e) => { console.error('ERROR', e); process.exit(1); });

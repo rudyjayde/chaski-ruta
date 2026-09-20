@@ -1,0 +1,72 @@
+# Verificacion automatica en cada push y cada pull request. NO usa ningun secreto real:
+# corre contra una base PostgreSQL temporal que GitHub crea y destruye en cada corrida.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (compila, migraciones desde cero y pruebas de colas)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: chaski_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Solo valores de mentira para la prueba. El script e2e se niega a correr si la base no es localhost.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/chaski_ci
+      JWT_SECRET: ci-secreto-de-prueba-no-real
+      JWT_EXPIRES_IN: 7d
+      GOOGLE_CLIENT_ID: ci-no-real
+      GOOGLE_CLIENT_SECRET: ci-no-real
+      GOOGLE_CALLBACK_URL: http://localhost/auth/google/callback
+      FRONTEND_URL: http://localhost
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Aplicar TODAS las migraciones sobre una base vacia
+        run: npx prisma migrate deploy
+      - name: Compilar
+        run: npx tsc --noEmit -p .
+      - name: Pruebas de punta a punta (colas, viajes, manifiestos, permisos, sesiones)
+        run: npx ts-node --transpile-only scripts/e2e-colas.ts
+
+  frontend:
+    name: Web (compila)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build
