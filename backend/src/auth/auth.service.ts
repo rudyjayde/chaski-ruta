@@ -86,7 +86,7 @@ export class AuthService {
       );
     }
 
-    const usable = matches.filter((p) => p.status !== 'SUSPENDIDO');
+    const usable = matches.filter((p) => !['SUSPENDIDO', 'ELIMINADO'].includes(p.status));
     if (usable.length === 0) {
       throw new UnauthorizedException('Tu cuenta esta suspendida. Contacta a tu administrador.');
     }
@@ -124,7 +124,7 @@ export class AuthService {
     }
 
     const matches = await this.prisma.person.findMany({ where: { email: google.email } });
-    const usable = matches.filter((p) => p.status !== 'SUSPENDIDO');
+    const usable = matches.filter((p) => !['SUSPENDIDO', 'ELIMINADO'].includes(p.status));
 
     if (usable.length === 1) {
       return this.activateAndIssue(usable[0].id, google.googleId);
@@ -153,7 +153,7 @@ export class AuthService {
       include: { organization: true },
     });
     return people
-      .filter((p) => p.status !== 'SUSPENDIDO')
+      .filter((p) => !['SUSPENDIDO', 'ELIMINADO'].includes(p.status))
       .map((p) => ({
         id: p.id,
         role: p.role,
@@ -170,7 +170,7 @@ export class AuthService {
     if (!person || person.email !== payload.email) {
       throw new UnauthorizedException('Ese perfil no corresponde a este correo. Vuelve a iniciar sesion.');
     }
-    if (person.status === 'SUSPENDIDO') {
+    if (['SUSPENDIDO', 'ELIMINADO'].includes(person.status)) {
       throw new UnauthorizedException('Tu cuenta esta suspendida. Contacta a tu administrador.');
     }
     // Sin googleId: vino de un login por contraseña (loginWithPassword ya la
@@ -209,7 +209,7 @@ export class AuthService {
   > {
     const normalized = email.trim().toLowerCase();
     const matches = await this.prisma.person.findMany({
-      where: { email: normalized, status: { not: 'SUSPENDIDO' } },
+      where: { email: normalized, status: { notIn: ['SUSPENDIDO', 'ELIMINADO'] } },
     });
     const withPassword = matches.filter((p) => p.passwordHash);
     const reference = withPassword[0];
@@ -235,7 +235,7 @@ export class AuthService {
   async requestPasswordReset(email: string): Promise<void> {
     const normalized = email.trim().toLowerCase();
     const person = await this.prisma.person.findFirst({
-      where: { email: normalized, status: { not: 'SUSPENDIDO' } },
+      where: { email: normalized, status: { notIn: ['SUSPENDIDO', 'ELIMINADO'] } },
     });
     if (!person) return;
 
@@ -253,7 +253,7 @@ export class AuthService {
     // Si ese correo ya tiene contraseña (p. ej. un socio al que ahora se le da
     // de alta tambien como conductor) no hace falta ofrecerle crearla otra vez.
     const existing = await this.prisma.person.findFirst({
-      where: { email: normalized, status: { not: 'SUSPENDIDO' }, passwordHash: { not: null } },
+      where: { email: normalized, status: { notIn: ['SUSPENDIDO', 'ELIMINADO'] }, passwordHash: { not: null } },
       select: { id: true },
     });
     if (existing) return undefined;
@@ -262,7 +262,7 @@ export class AuthService {
 
   private async issuePasswordToken(normalizedEmail: string, expiresIn: string): Promise<string> {
     const people = await this.prisma.person.findMany({
-      where: { email: normalizedEmail, status: { not: 'SUSPENDIDO' } },
+      where: { email: normalizedEmail, status: { notIn: ['SUSPENDIDO', 'ELIMINADO'] } },
       select: { passwordHash: true },
     });
     return this.jwt.sign(
@@ -280,7 +280,7 @@ export class AuthService {
   async resetPassword(token: string, password: string): Promise<void> {
     const payload = this.verifyResetToken(token);
     const people = await this.prisma.person.findMany({
-      where: { email: payload.email, status: { not: 'SUSPENDIDO' } },
+      where: { email: payload.email, status: { notIn: ['SUSPENDIDO', 'ELIMINADO'] } },
     });
     if (people.length === 0) {
       throw new UnauthorizedException('No se encontro una cuenta activa para este enlace.');
@@ -290,7 +290,7 @@ export class AuthService {
     }
     const passwordHash = await bcrypt.hash(password, 10);
     await this.prisma.person.updateMany({
-      where: { email: payload.email, status: { not: 'SUSPENDIDO' } },
+      where: { email: payload.email, status: { notIn: ['SUSPENDIDO', 'ELIMINADO'] } },
       data: { passwordHash, status: 'ACTIVO' },
     });
   }
@@ -355,7 +355,7 @@ export class AuthService {
         `No existe una persona de prueba con correo "${email}" y rol ${role}. Siembrala primero en prisma/seed.ts.`,
       );
     }
-    if (person.status === 'SUSPENDIDO') {
+    if (['SUSPENDIDO', 'ELIMINADO'].includes(person.status)) {
       throw new UnauthorizedException('Esa cuenta de prueba esta suspendida.');
     }
     return this.issueToken(person);

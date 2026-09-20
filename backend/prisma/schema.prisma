@@ -44,6 +44,9 @@ enum PersonStatus {
   ACTIVO
   PENDIENTE
   SUSPENDIDO
+  // Eliminada (20 sept 2026): sale de las listas y no puede entrar; el registro
+  // se conserva como historial. Volver a crear a la persona genera una cuenta nueva.
+  ELIMINADO
 }
 
 /// Una asociacion de transporte cliente de CHASKI AI (ej. ATIPCAR).

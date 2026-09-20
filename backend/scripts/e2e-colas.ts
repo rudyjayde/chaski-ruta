@@ -471,6 +471,39 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     check('el directorio trae terminal ("Terminal Zonal Puno") y ruta ("Puno") por separado', !!dirR && dirR.terminalOriginName === 'Terminal Zonal Puno' && dirR.routeOriginName === 'Puno' && dirR.routeDestinationName === 'Juliaca', dirR ? JSON.stringify({ t: dirR.terminalOriginName, r: dirR.routeOriginName }) : 'sin asociación (¿estado?)');
     const upd = await call(TS, 'POST', `/operational-config?organizationId=${rn.json.id}`, { routeOriginName: 'Puno Centro' });
     check('el Super Admin puede cambiar el nombre de la ruta sin tocar el del terminal', upd.status === 201 && upd.json.routeOriginName === 'Puno Centro' && upd.json.terminalOriginName === 'Terminal Zonal Puno', `HTTP ${upd.status} ${msg(upd)}`);
+    // ─ Eliminar personas (administrador / socio / conductor) ─
+    const pe = (email: string, role: string, extra: any = {}) => call(TS, 'POST', `/people?organizationId=${orgA.id}`, { name: 'Persona Prueba', email, role, ...extra });
+    const admEmail = `e2e.${stamp}.eladm@example.test`;
+    const a1 = await pe(admEmail, 'ADMINISTRADOR');
+    check('se registra un administrador adicional', a1.status === 201, `HTTP ${a1.status} ${msg(a1)}`);
+    r = await call(T.admin, 'POST', `/people/${a1.json.id}/delete`, { reason: 'x' });
+    check('un administrador NO puede eliminar a otro administrador (solo Super Admin)', r.status === 403, `HTTP ${r.status} ${msg(r)}`);
+    r = await call(TS, 'POST', `/people/${a1.json.id}/delete?organizationId=${orgA.id}`, {});
+    check('eliminar exige motivo', r.status === 400, `HTTP ${r.status}`);
+    r = await call(TS, 'POST', `/people/${a1.json.id}/delete?organizationId=${orgA.id}`, { reason: 'ya no trabaja' });
+    check('el Super Admin elimina al administrador', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    const plist = (await call(T.admin, 'GET', '/people')).json as any[];
+    check('el eliminado ya no aparece en Personas', !plist.some((x) => x.id === a1.json.id));
+    const oldRow = await prisma.person.findUnique({ where: { id: a1.json.id } });
+    check('su registro se conserva (estado ELIMINADO)', oldRow?.status === 'ELIMINADO' && oldRow.email.startsWith(admEmail), `${oldRow?.status}`);
+    const a2 = await pe(admEmail, 'ADMINISTRADOR', { name: 'Admin Nuevo' });
+    check('REGLA: con el mismo correo se crea una cuenta NUEVA (otro registro, pendiente)', a2.status === 201 && a2.json.id !== a1.json.id && a2.json.status === 'PENDIENTE', `HTTP ${a2.status} ${msg(a2)}`);
+    r = await call(TS, 'POST', `/people/${a1.json.id}/delete?organizationId=${orgA.id}`, { reason: 'otra vez' });
+    check('eliminar dos veces se rechaza', r.status === 404, `HTTP ${r.status}`);
+
+    r = await call(T.admin, 'POST', `/people/${drivers[3].id}/delete`, { reason: 'prueba' });
+    check('no se elimina a un conductor con unidad asignada', r.status === 409, `HTTP ${r.status} ${msg(r)}`);
+    r = await call(T.admin, 'POST', `/people/${partners[3].id}/delete`, { reason: 'prueba' });
+    check('no se elimina a un socio con unidades a su nombre', r.status === 409, `HTTP ${r.status} ${msg(r)}`);
+    r = await call(T.admin, 'POST', `/people/${adminA.id}/delete`, { reason: 'yo' });
+    check('nadie se elimina a sí mismo', r.status === 403, `HTTP ${r.status}`);
+    const dEmail = `e2e.${stamp}.eldrv@example.test`;
+    const drvN1 = await call(T.admin, 'POST', '/people', { name: 'Conductor Libre', email: dEmail, role: 'CONDUCTOR', dni: '87651277', license: 'Q77777777', licenseCategory: 'A-IIIa', licenseIssuedAt: '2024-01-01', licenseExpiry: '2030-01-01' });
+    check('el administrador registra un conductor', drvN1.status === 201, `HTTP ${drvN1.status} ${msg(drvN1)}`);
+    r = await call(T.admin, 'POST', `/people/${drvN1.json.id}/delete`, { reason: 'renunció' });
+    check('el administrador SÍ puede eliminar a un conductor sin unidad', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    const drvN2 = await call(T.admin, 'POST', '/people', { name: 'Conductor Libre', email: dEmail, role: 'CONDUCTOR', dni: '87651277', license: 'Q77777777', licenseCategory: 'A-IIIa', licenseIssuedAt: '2024-01-01', licenseExpiry: '2030-01-01' });
+    check('REGLA: se vuelve a registrar el mismo conductor (mismo correo, DNI y licencia) como nuevo', drvN2.status === 201 && drvN2.json.id !== drvN1.json.id, `HTTP ${drvN2.status} ${msg(drvN2)}`);
     await prisma.person.delete({ where: { id: superP.id } }).catch(() => null);
 
     // ═════════ J. CONSISTENCIA FINAL ═════════

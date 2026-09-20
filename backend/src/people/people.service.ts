@@ -4,6 +4,8 @@ import { CreatePersonDto } from './dto/create-person.dto';
 import { UpdatePersonStatusDto } from './dto/update-person-status.dto';
 import { UpdateLicenseDto } from './dto/update-license.dto';
 import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
+import { DeletePersonDto } from './dto/delete-person.dto';
+import { Prisma } from '@prisma/client';
 import { isValidDocument, licenseDatesProblem } from '../common/validators';
 import { JwtPayload } from '../auth/jwt.strategy';
 import { MailService } from '../mail/mail.service';
@@ -68,7 +70,7 @@ export class PeopleService {
   // proposito, por eso se excluyen las cuentas del mismo correo.
   private async assertDniFree(organizationId: string | null, dni: string, email: string, documentType = 'DNI') {
     const owner = await this.prisma.person.findFirst({
-      where: { organizationId, dni, NOT: { email } },
+      where: { organizationId, dni, NOT: { email }, status: { not: 'ELIMINADO' } },
       select: { name: true },
     });
     const label = documentType === 'CE' ? 'El carné de extranjería' : 'El DNI';
@@ -77,7 +79,7 @@ export class PeopleService {
 
   findAll(organizationId: string) {
     return this.prisma.person.findMany({
-      where: { organizationId },
+      where: { organizationId, status: { not: 'ELIMINADO' } },
       orderBy: [{ role: 'asc' }, { name: 'asc' }],
       select: PeopleService.SAFE_SELECT,
     });
@@ -85,7 +87,7 @@ export class PeopleService {
 
   async findOne(organizationId: string, id: string) {
     const person = await this.prisma.person.findUnique({ where: { id }, select: PeopleService.SAFE_SELECT });
-    if (!person || person.organizationId !== organizationId) {
+    if (!person || person.organizationId !== organizationId || person.status === 'ELIMINADO') {
       throw new NotFoundException('Persona no encontrada');
     }
     return person;
@@ -198,6 +200,69 @@ export class PeopleService {
     });
 
     return person;
+  }
+
+  /**
+   * Eliminar una cuenta (20 sept 2026): distinto de suspender (que se puede
+   * revertir). La persona sale de las listas y no puede entrar; su registro y
+   * todo lo que hizo (viajes, manifiestos, auditoria) se conservan como
+   * historial hasta este dia. Los datos que la base exige unicos en todo el
+   * sistema (correo, licencia, WhatsApp) se marcan con "~E<fecha>" para que la
+   * misma persona pueda volver a registrarse despues como una cuenta NUEVA,
+   * con historial nuevo. Administrador y Super Admin eliminan socios y
+   * conductores; solo Super Admin elimina administradores. Se rechaza si tiene
+   * viajes en curso, esta en una cola o tiene unidades a su cargo.
+   */
+  async remove(organizationId: string, actor: JwtPayload, personId: string, dto: DeletePersonDto) {
+    const person = await this.findOne(organizationId, personId);
+    if (person.id === actor.sub) throw new ForbiddenException('No puedes eliminar tu propia cuenta.');
+    if (person.role === 'ADMINISTRADOR' && actor.role !== 'SUPERADMIN') {
+      throw new ForbiddenException('Solo Super Admin puede eliminar una cuenta de Administrador.');
+    }
+
+    if (person.role === 'CONDUCTOR') {
+      const [openTrips, queued, units] = await Promise.all([
+        this.prisma.trip.count({ where: { organizationId, driverId: personId, status: { in: ['PROGRAMADO', 'ACTIVO'] } } }),
+        this.prisma.queueEntry.count({ where: { organizationId, driverId: personId } }),
+        this.prisma.vehicle.findMany({ where: { organizationId, currentDriverId: personId, status: { not: 'BAJA' } }, select: { code: true }, orderBy: { code: 'asc' } }),
+      ]);
+      if (openTrips > 0) throw new ConflictException(`${person.name} tiene un viaje en curso. Termínalo o cancélalo antes de eliminarlo.`);
+      if (queued > 0) throw new ConflictException(`${person.name} está en una cola. Sácalo de la cola antes de eliminarlo.`);
+      if (units.length > 0) {
+        throw new ConflictException(`${person.name} todavía tiene asignada la unidad ${units.map((u) => u.code).join(', ')}. Cámbiale el conductor a esa unidad primero.`);
+      }
+    }
+    if (person.role === 'SOCIO') {
+      const units = await this.prisma.vehicle.findMany({ where: { organizationId, partnerId: personId, status: { not: 'BAJA' } }, select: { code: true }, orderBy: { code: 'asc' } });
+      if (units.length > 0) {
+        throw new ConflictException(`${person.name} todavía tiene unidades a su nombre (${units.map((u) => u.code).join(', ')}). Cámbialas de socio o dalas de baja primero.`);
+      }
+    }
+
+    const tag = `~E${Date.now()}`;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.person.update({ where: { id: personId }, data: { status: 'ELIMINADO', boundDeviceId: null, boundDeviceSetAt: null } });
+      await tx.$executeRaw(Prisma.sql`
+        UPDATE "people" SET
+          "email" = "email" || ${tag},
+          "license" = CASE WHEN "license" IS NULL THEN NULL ELSE "license" || ${tag} END,
+          "whatsappPhone" = CASE WHEN "whatsappPhone" IS NULL THEN NULL ELSE "whatsappPhone" || ${tag} END
+        WHERE "id" = ${personId}`);
+      await tx.auditEntry.create({
+        data: {
+          organizationId,
+          actorId: actor.sub,
+          actorRole: actor.role,
+          action: 'ELIMINAR_PERSONA',
+          resource: `${person.role} ${person.name}`,
+          resourceId: personId,
+          before: `${person.status} · correo ${person.email}`,
+          after: 'ELIMINADO',
+          reason: dto.reason,
+        },
+      });
+    });
+    return { ok: true, name: person.name };
   }
 
   /** Activar o suspender una cuenta, con auditoria y motivo obligatorio para suspender. */

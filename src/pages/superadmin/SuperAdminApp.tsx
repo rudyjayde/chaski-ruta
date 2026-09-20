@@ -12,7 +12,7 @@ import GPSOverviewPage from './GPSOverviewPage';
 import PassengerProfilesPage from './PassengerProfilesPage';
 import type { AuditEntry } from '../../types';
 import {
-  fetchOrganizations, updateOrganization, createOrganization, deleteOrganization, uploadImage,
+  fetchOrganizations, updateOrganization, createOrganization, deleteOrganization, deletePerson, uploadImage,
   fetchGlobalAudit,
   fetchPeople, createPerson, updatePersonStatus,
   fetchOperationalConfig, updateOperationalConfig,
@@ -773,7 +773,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
     setRemovingAdminId(removeAdminTarget.id);
     setRemoveAdminError('');
     try {
-      await updatePersonStatus(removeAdminTarget.id, 'SUSPENDIDO', removeAdminReason.trim(), org.id);
+      await deletePerson(removeAdminTarget.id, removeAdminReason.trim(), org.id);
       setRemoveAdminTarget(null);
       setRemoveAdminReason('');
       reloadAdmins();
@@ -2142,19 +2142,19 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
       {removeAdminTarget && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Eliminar administrador">
           <div className="bg-surface rounded-lg shadow-xl w-full max-w-sm p-6">
-            <h3 className="text-sm font-semibold text-t1 mb-1">Dar de baja a {removeAdminTarget.name}</h3>
-            <p className="text-xs text-t2 mb-4">Su historial queda intacto. Se requiere motivo.</p>
+            <h3 className="text-sm font-semibold text-t1 mb-1">Eliminar a {removeAdminTarget.name}</h3>
+            <p className="text-xs text-t2 mb-4">Deja de aparecer y no podrá volver a entrar; su historial hasta hoy se conserva. Si lo registras de nuevo con el mismo correo, empieza como una cuenta nueva. Se requiere motivo.</p>
             <textarea
               value={removeAdminReason}
               onChange={e => setRemoveAdminReason(e.target.value)}
-              placeholder="Motivo de la baja…"
+              placeholder="Motivo de la eliminación…"
               className="w-full min-h-20 px-3 py-2 border border-border rounded-lg text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-primary"
             />
             {removeAdminError && <p className="text-xs text-danger mb-3">{removeAdminError}</p>}
             <div className="flex gap-3 justify-end">
               <button onClick={() => { setRemoveAdminTarget(null); setRemoveAdminReason(''); setRemoveAdminError(''); }} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-hover">Cancelar</button>
               <button onClick={confirmRemoveAdmin} disabled={!removeAdminReason.trim() || removingAdminId === removeAdminTarget.id} className="px-4 py-2 text-sm bg-danger text-white rounded-lg hover:bg-danger/80 disabled:opacity-50">
-                {removingAdminId === removeAdminTarget.id ? 'Dando de baja…' : 'Dar de baja'}
+                {removingAdminId === removeAdminTarget.id ? 'Eliminando…' : 'Eliminar'}
               </button>
             </div>
           </div>

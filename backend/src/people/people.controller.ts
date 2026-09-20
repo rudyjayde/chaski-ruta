@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@ne
 import { PeopleService } from './people.service';
 import { CreatePersonDto } from './dto/create-person.dto';
 import { UpdatePersonStatusDto } from './dto/update-person-status.dto';
+import { DeletePersonDto } from './dto/delete-person.dto';
 import { UpdateLicenseDto } from './dto/update-license.dto';
 import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -58,6 +59,19 @@ export class PeopleController {
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreatePersonDto, @Query('organizationId') organizationId?: string) {
     const orgId = resolveOrgId(user, organizationId);
     return this.people.create(orgId, user, dto);
+  }
+
+  // Eliminar una cuenta (baja definitiva: el historial se conserva; volver a crearla
+  // genera una cuenta nueva). Administrador: socios y conductores; Super Admin: tambien administradores.
+  @Post(':id/delete')
+  remove(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: DeletePersonDto,
+    @Query('organizationId') organizationId?: string,
+  ) {
+    const orgId = resolveOrgId(user, organizationId);
+    return this.people.remove(orgId, user, id, dto);
   }
 
   // Activar/suspender una cuenta ya existente, con auditoria.

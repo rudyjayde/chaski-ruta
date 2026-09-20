@@ -801,6 +801,14 @@ export async function updatePersonLicense(
   );
 }
 
+// Eliminar una cuenta (baja definitiva; el historial se conserva). Motivo obligatorio.
+export async function deletePerson(personId: string, reason: string, organizationId?: string): Promise<void> {
+  await request<{ ok: boolean }>(
+    organizationId ? `/people/${personId}/delete?organizationId=${encodeURIComponent(organizationId)}` : `/people/${personId}/delete`,
+    { method: 'POST', body: JSON.stringify({ reason }) },
+  );
+}
+
 export async function updatePersonStatus(personId: string, status: 'ACTIVO' | 'SUSPENDIDO', reason?: string, organizationId?: string): Promise<Person> {
   return request<Person>(
     organizationId ? `/people/${personId}/status?organizationId=${encodeURIComponent(organizationId)}` : `/people/${personId}/status`,

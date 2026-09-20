@@ -14,7 +14,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import {
   fetchPeople, createPerson, type CreatePersonInput,
   fetchVehicles, fetchCompanies, type CompanyOption,
-  changeVehiclePartner, changeVehicleDriver, updatePersonStatus, updatePersonLicense, resetPersonDevice,
+  changeVehiclePartner, changeVehicleDriver, updatePersonStatus, deletePerson, updatePersonLicense, resetPersonDevice,
 } from '../../lib/operacion-api';
 import {
   PHONE_ERROR, LICENSE_ERROR, dniInputProps, phoneInputProps, sanitizePhone, sanitizeLicense,
@@ -634,7 +634,7 @@ function LicenseModal({ person, onClose, onSaved }: { person: Person; onClose: (
   );
 }
 
-function PersonDetail({ person, onClose, onLink, onStatusChanged }: { person: Person; onClose: () => void; onLink: () => void; onStatusChanged: (message: string) => void }) {
+function PersonDetail({ person, canDelete, onClose, onLink, onStatusChanged }: { person: Person; canDelete: boolean; onClose: () => void; onLink: () => void; onStatusChanged: (message: string) => void }) {
   const { org } = useAdminDemo();
   const [showLicense, setShowLicense] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -662,6 +662,24 @@ function PersonDetail({ person, onClose, onLink, onStatusChanged }: { person: Pe
 
   const [showSuspendModal, setShowSuspendModal] = useState(false);
   const [suspendReason, setSuspendReason] = useState('');
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteReason, setDeleteReason] = useState('');
+
+  const confirmDelete = async () => {
+    if (!deleteReason.trim()) return;
+    setBusy(true);
+    setError('');
+    try {
+      await deletePerson(person.id, deleteReason.trim());
+      setShowDeleteModal(false);
+      setDeleteReason('');
+      onStatusChanged(`${person.name} fue eliminado. Su historial se conserva.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo eliminar la cuenta.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const confirmSuspend = async () => {
     if (!suspendReason.trim()) return;
@@ -748,6 +766,15 @@ function PersonDetail({ person, onClose, onLink, onStatusChanged }: { person: Pe
             {busy ? 'Guardando…' : person.status === 'SUSPENDIDO' ? 'Reactivar cuenta' : 'Suspender cuenta'}
           </button>
         )}
+        {canDelete && (
+          <button
+            onClick={() => { setError(''); setShowDeleteModal(true); }}
+            disabled={busy}
+            className="w-full h-9 rounded-lg text-sm font-medium border border-danger/40 text-danger hover:bg-danger/5 disabled:opacity-50"
+          >
+            Eliminar
+          </button>
+        )}
       </div>
 
       {showLicense && (
@@ -756,6 +783,30 @@ function PersonDetail({ person, onClose, onLink, onStatusChanged }: { person: Pe
           onClose={() => setShowLicense(false)}
           onSaved={(message) => { setShowLicense(false); onStatusChanged(message); }}
         />
+      )}
+
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4" role="dialog" aria-modal="true" aria-label="Eliminar cuenta">
+          <div className="bg-surface rounded-lg shadow-xl w-full max-w-sm p-6">
+            <h3 className="text-sm font-semibold text-t1 mb-1">Eliminar a {person.name}</h3>
+            <p className="text-xs text-t2 mb-4">
+              Deja de aparecer en las listas y no podrá volver a entrar. Su historial hasta hoy se conserva. Si después lo registras de nuevo con el mismo correo, empieza como una cuenta nueva. A diferencia de suspender, esto no se revierte. Se requiere motivo.
+            </p>
+            <textarea
+              value={deleteReason}
+              onChange={e => setDeleteReason(e.target.value)}
+              placeholder="Motivo de la eliminación…"
+              className="w-full min-h-20 px-3 py-2 border border-border rounded-lg text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            {error && <p className="text-xs text-danger mb-3">{error}</p>}
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => { setShowDeleteModal(false); setDeleteReason(''); setError(''); }} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-hover">Cancelar</button>
+              <button onClick={confirmDelete} disabled={!deleteReason.trim() || busy} className="px-4 py-2 text-sm bg-danger text-white rounded-lg hover:bg-danger/80 disabled:opacity-50">
+                {busy ? 'Eliminando…' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showSuspendModal && (
@@ -1004,6 +1055,7 @@ export default function PeoplePage() {
         {selected && (
           <PersonDetail
             person={selected}
+            canDelete={selected.role !== 'ADMINISTRADOR' || isSuperAdmin}
             onClose={() => setSelected(null)}
             onLink={() => setLinking(selected)}
             onStatusChanged={(message) => { setSelected(null); refresh(message); }}

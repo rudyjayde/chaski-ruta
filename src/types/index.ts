@@ -217,7 +217,7 @@ export interface Person {
   role: 'CONDUCTOR' | 'SOCIO' | 'ADMINISTRADOR';
   company?: string;
   code?: string;
-  status: 'ACTIVO' | 'PENDIENTE' | 'SUSPENDIDO';
+  status: 'ACTIVO' | 'PENDIENTE' | 'SUSPENDIDO' | 'ELIMINADO';
   linkedUnit?: string;
   boundDeviceId?: string | null;
   // Licencia de conducir (solo conductores): "Q12345678", categoria y fecha
