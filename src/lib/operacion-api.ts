@@ -1662,6 +1662,18 @@ export async function resolveDelayedRegistrationRequest(id: string, resolution: 
   return mapDelayedRegistrationRequest(raw);
 }
 
+// ─── Detectar en cual terminal esta el celular (Inicio del conductor sin historial) ───────────────
+export interface DetectedTerminal {
+  // Ruta que SALE del terminal donde esta el celular; null = no esta dentro del radio de ninguno.
+  route: RouteDir | null;
+  terminalName: string;
+  distanceMeters: number | null;
+}
+
+export async function detectTerminal(lat: number, lng: number): Promise<DetectedTerminal> {
+  return request<DetectedTerminal>(`/queues/detect/terminal?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`);
+}
+
 // ─── GPS del vehiculo sin señal: pedir usar el GPS del celular ────────────────
 export type GpsFallbackStatus = 'PENDIENTE' | 'AUTORIZADO' | 'RECHAZADO' | 'EXPIRADO';
 

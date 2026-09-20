@@ -192,4 +192,22 @@ export class QueuesController {
     const orgId = resolveOrgId(user, organizationId);
     return this.queues.resolveGpsFallbackRequest(orgId, user, id, dto.approve);
   }
+  // En cual terminal esta el celular del conductor (Inicio sin historial). Dos segmentos a proposito:
+  // un solo segmento chocaria con GET :route.
+  @Get('detect/terminal')
+  @Roles('CONDUCTOR')
+  detectTerminal(
+    @CurrentUser() user: JwtPayload,
+    @Query('lat') lat: string,
+    @Query('lng') lng: string,
+    @Query('organizationId') organizationId?: string,
+  ) {
+    const la = Number(lat);
+    const lo = Number(lng);
+    if (!Number.isFinite(la) || !Number.isFinite(lo) || Math.abs(la) > 90 || Math.abs(lo) > 180) {
+      throw new BadRequestException('Ubicacion invalida');
+    }
+    const orgId = resolveOrgId(user, organizationId);
+    return this.queues.detectTerminal(orgId, la, lo);
+  }
 }

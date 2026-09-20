@@ -764,6 +764,39 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     gpsSvc.traccarFetch = realTraccarFetch;
     await prisma.person.delete({ where: { id: superO.id } }).catch(() => null);
 
+    // ═════════ P. UNIDAD SIN HISTORIAL: DETECTAR EL TERMINAL Y EXIGIR ESTAR AHI ═════════
+    head('P. Unidad sin historial y terminal detectado');
+    const pD = await mk(orgA.id, 'CONDUCTOR', 'Conductor Sin Historial', 44);
+    const pV = await prisma.vehicle.create({ data: { organizationId: orgA.id, code: 'PD44', companyId: coA.id, vehicleType: 'HIACE', plate: `PD${stamp.slice(-1)}-444`, model: 'Toyota Hiace', year: 2024, currentDriverId: pD.id } });
+    const pT = await tok(pD);
+    const pJoin = (route: string, gps: { lat: number; lng: number }) => call(pT, 'POST', `/queues/${route}/join`, { vehicleId: pV.id, deviceId: 'nohist-dev', ...gps });
+    const detect = (token: string, gps: { lat: number; lng: number }) => call(token, 'GET', `/queues/detect/terminal?lat=${gps.lat}&lng=${gps.lng}`);
+
+    r = await detect(pT, JULI);
+    check('con el celular en el primer terminal se detecta la ruta que sale de ahí', r.status === 200 && r.json.route === 'JULI_PUNO' && r.json.terminalName === 'Juli', JSON.stringify(r.json));
+    r = await detect(pT, PUNO);
+    check('con el celular en el segundo terminal se detecta la ruta de retorno', r.status === 200 && r.json.route === 'PUNO_JULI' && r.json.terminalName === 'Puno', JSON.stringify(r.json));
+    r = await detect(pT, FAR);
+    check('lejos de los dos terminales no se detecta ninguno (route null)', r.status === 200 && r.json.route === null, JSON.stringify(r.json));
+    r = await call(pT, 'GET', '/queues/detect/terminal?lat=abc&lng=1');
+    check('una ubicación inválida da error (400)', r.status === 400, `HTTP ${r.status}`);
+    r = await detect(T.admin, JULI);
+    check('solo el conductor usa la detección (administrador 403)', r.status === 403, `HTTP ${r.status}`);
+    const pO = await mk(orgO.id, 'CONDUCTOR', 'Conductor Otra Asoc', 43);
+    r = await detect(await tok(pO), JULI);
+    check('una asociación sin terminales en el mapa no detecta nada (route null)', r.status === 200 && r.json.route === null, JSON.stringify(r.json));
+
+    r = await pJoin('PUNO_JULI', JULI);
+    check('sin historial, elegir Puno → Juli estando en Juli se rechaza por distancia al terminal de PUNO (403, con su nombre)', r.status === 403 && /terminal Puno/.test(msg(r)) && /radio/.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    r = await pJoin('JULI_PUNO', PUNO);
+    check('y elegir Juli → Puno estando en Puno se rechaza mencionando el terminal Juli (403)', r.status === 403 && /terminal Juli/.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    r = await pJoin('PUNO_JULI', PUNO);
+    check('sin historial y estando en el terminal de Puno se inscribe directo en Puno → Juli, sin pedir excepción', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    const pPos = await prisma.queueEntry.findFirst({ where: { organizationId: orgA.id, route: 'PUNO_JULI', vehicleId: pV.id } });
+    const lastRegistered = await prisma.queueEntry.findMany({ where: { organizationId: orgA.id, route: 'PUNO_JULI', status: { notIn: ['AUSENTE', 'RETIRADO'] } }, orderBy: { position: 'desc' }, take: 1 });
+    check('queda registrada al final de la cola (sin hora de salida anterior)', !!pPos && lastRegistered[0]?.id === pPos.id, `pos ${pPos?.position}`);
+    await prisma.queueEntry.deleteMany({ where: { organizationId: orgA.id, vehicleId: pV.id } });
+
     // ═════════ J. CONSISTENCIA FINAL ═════════
     head('J. Consistencia de datos');
     await prisma.queueEntry.deleteMany({ where: { organizationId: orgA.id } });

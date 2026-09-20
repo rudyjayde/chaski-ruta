@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { SatelliteDish, Hourglass, CheckCircle2, XCircle } from 'lucide-react';
+import { SatelliteDish, Hourglass, XCircle } from 'lucide-react';
 import { fetchMyGpsFallback, requestGpsFallback, type MyGpsFallback } from '../lib/operacion-api';
 
 const REFRESH_MS = 20000;
@@ -7,7 +7,8 @@ const REFRESH_MS = 20000;
 /**
  * Aviso del conductor cuando el GPS fisico de su vehiculo no tiene señal (equipo malogrado o
  * desconectado). No cambia solo al celular: pide autorizacion al administrador, que la aprueba o
- * rechaza. No muestra nada si la unidad no tiene GPS fisico o el equipo esta reportando bien.
+ * rechaza. No muestra nada si la unidad no tiene GPS fisico, el equipo esta reportando bien o ya
+ * esta autorizado (eso llega como aviso en la campanita).
  */
 export default function GpsFallbackNotice() {
   const [state, setState] = useState<MyGpsFallback | null>(null);
@@ -44,23 +45,9 @@ export default function GpsFallbackNotice() {
   };
 
   const status = state.request?.status ?? null;
-  const until = state.request?.authorizedUntil
-    ? new Date(state.request.authorizedUntil).toLocaleString('es-PE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
-    : '';
-
-  if (status === 'AUTORIZADO') {
-    return (
-      <div className="border border-ok/40 bg-ok/5 rounded-lg p-4 flex items-start gap-3">
-        <CheckCircle2 size={18} className="text-ok mt-0.5 flex-shrink-0" />
-        <div>
-          <p className="text-sm font-semibold text-t1">Tu administrador autorizó usar el GPS de tu celular</p>
-          <p className="text-xs text-t2 mt-0.5">
-            Ya puedes inscribirte. Debes estar dentro del radio del terminal. Vale hasta {until} o hasta que el GPS de tu vehículo vuelva a reportar. Repara el equipo cuanto antes.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  // Autorizado: no ocupa espacio en el Inicio. El conductor ya recibio el aviso en la campanita y
+  // puede inscribirse; si la autorizacion vence o el equipo falla otra vez, este aviso vuelve solo.
+  if (status === 'AUTORIZADO') return null;
 
   if (status === 'PENDIENTE') {
     return (

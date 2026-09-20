@@ -354,6 +354,10 @@ export class QueuesService {
     // Sin ubicacion de los terminales no hay contra que medir la distancia: el
     // conductor no puede inscribirse hasta que el Super Admin marque el mapa.
     const terminalLocated = terminal.lat != null && terminal.lng != null;
+    // Nombre del terminal desde el que sale ESTA cola, para que el rechazo por distancia diga a cual
+    // terminal se refiere (si el conductor eligio la direccion equivocada lo entiende al instante).
+    const terminalNameOfRoute = (route === 'JULI_PUNO' ? config.terminalOriginName : config.terminalDestinationName)?.trim();
+    const terminalRef = terminalNameOfRoute ? `del terminal ${terminalNameOfRoute}` : 'del terminal';
     if (!terminalLocated && actor.role === 'CONDUCTOR') {
       throw new BadRequestException(TERMINAL_SIN_UBICACION);
     }
@@ -389,7 +393,7 @@ export class QueuesService {
       const distance = terminalLocated ? distanceMeters(hardwarePosition.lat, hardwarePosition.lng, terminal.lat as number, terminal.lng as number) : 0;
       if (terminalLocated && distance > config.gpsRadiusMeters) {
         throw new ForbiddenException(
-          `El GPS del vehiculo indica que esta a ${Math.round(distance)}m del terminal -- fuera del radio permitido (${config.gpsRadiusMeters}m). Acercate al terminal para poder inscribirte.`,
+          `El GPS del vehiculo indica que esta a ${Math.round(distance)}m ${terminalRef} -- fuera del radio permitido (${config.gpsRadiusMeters}m). Acercate al terminal para poder inscribirte.`,
         );
       }
       evidence = 'PRESENCIA_TERMINAL';
@@ -400,7 +404,7 @@ export class QueuesService {
       const distance = terminalLocated ? distanceMeters(dto.lat, dto.lng, terminal.lat as number, terminal.lng as number) : 0;
       if (terminalLocated && distance > config.gpsRadiusMeters) {
         throw new ForbiddenException(
-          `Tu ubicacion esta a ${Math.round(distance)}m del terminal -- fuera del radio permitido (${config.gpsRadiusMeters}m). Acercate al terminal para poder inscribirte.`,
+          `Tu ubicacion esta a ${Math.round(distance)}m ${terminalRef} -- fuera del radio permitido (${config.gpsRadiusMeters}m). Acercate al terminal para poder inscribirte.`,
         );
       }
       evidence = 'PRESENCIA_TERMINAL';
@@ -1222,5 +1226,27 @@ export class QueuesService {
         : `Tu administrador rechazo la solicitud de usar el GPS de tu celular (unidad ${request.vehicle.code}). Comunicate con el.`,
     );
     return updated;
+  }
+  /**
+   * En cual terminal esta el celular (sin historial la unidad no sabe donde esta). Solo informativo:
+   * inscribirse siempre vuelve a validar la distancia. Devuelve route = null si no esta dentro del
+   * radio de ningun terminal (o los terminales no tienen ubicacion en el mapa).
+   */
+  async detectTerminal(organizationId: string, lat: number, lng: number) {
+    const config = await this.getConfig(organizationId);
+    const candidates = (
+      [
+        { route: 'JULI_PUNO' as RouteDir, lat: config.terminalOriginLat, lng: config.terminalOriginLng, name: config.terminalOriginName },
+        { route: 'PUNO_JULI' as RouteDir, lat: config.terminalDestinationLat, lng: config.terminalDestinationLng, name: config.terminalDestinationName },
+      ] as const
+    )
+      .filter((c) => c.lat != null && c.lng != null)
+      .map((c) => ({ route: c.route, name: c.name?.trim() ?? '', distance: distanceMeters(lat, lng, c.lat as number, c.lng as number) }))
+      .filter((c) => c.distance <= config.gpsRadiusMeters)
+      .sort((a, b) => a.distance - b.distance);
+    const best = candidates[0];
+    return best
+      ? { route: best.route, terminalName: best.name, distanceMeters: Math.round(best.distance) }
+      : { route: null, terminalName: '', distanceMeters: null };
   }
 }

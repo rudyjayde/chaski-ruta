@@ -16,7 +16,7 @@ import type { Passenger, PaymentMethod, Person, Unit, QueueEntry, Manifest, Trip
 import {
   fetchQueue, fetchVehicles, joinQueue, confirmArrival, declareLater, getOrCreateDeviceId,
   fetchTrips, fetchManifests, openManifest, addManifestPassenger, closeManifest, digitizeManifest, digitizeSuggest,
-  prepareTripForEntry, departQueueEntry, createDelayedRegistrationRequest,
+  prepareTripForEntry, departQueueEntry, createDelayedRegistrationRequest, detectTerminal, type DetectedTerminal,
   fetchMyPersonProfile, fetchMyOrganization, type Organization,
   fetchNotices, type Notice,
   fetchGpsLive, fetchGpsDevices, fetchGpsHistory, routeLabelShort, routeLabel, routeEnds, reportGpsAlert,
@@ -602,6 +602,11 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
   // Acciones de la cola de regreso, disparadas desde Inicio (§2 pasos 7-10):
   // "Inscribirme" contextual, "No saldré ahora" e "Inscripción retrasada".
   const [returnActionBusy, setReturnActionBusy] = useState<'join' | 'later' | 'delayed' | null>(null);
+  // Direccion en la que se esta inscribiendo desde Inicio (para mostrar "Inscribiendo…" solo en ese boton).
+  const [joinTarget, setJoinTarget] = useState<RouteDir | null>(null);
+  // Terminal detectado con el GPS del celular (solo cuando la unidad no tiene historial).
+  const [detected, setDetected] = useState<DetectedTerminal | null>(null);
+  const [showBothRoutes, setShowBothRoutes] = useState(false);
   const [returnActionError, setReturnActionError] = useState('');
   const [returnActionNotice, setReturnActionNotice] = useState('');
   // Aviso persistente cuando entra al final de la cola porque otra unidad fue autorizada antes.
@@ -691,6 +696,31 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
   const nextRouteLabel = routeLabel(nextRoute, org);
   const nextEnds = routeEnds(nextRoute, org);
   const inferredTerminal = nextEnds.origin || (atOrigin ? 'el origen' : 'el destino');
+  // Sin ningun viaje ni inscripcion previa el sistema NO sabe en que terminal esta la unidad (una unidad
+  // nueva puede empezar en cualquiera): no se asume el origen, se ofrecen las dos direcciones.
+  const locationKnown = Boolean(myTrip || activeEntryRoute || lastCompletedTrip);
+  const otherRoute: RouteDir = nextRoute === 'JULI_PUNO' ? 'PUNO_JULI' : 'JULI_PUNO';
+  const otherRouteLabel = routeLabel(otherRoute, org);
+  // Ruta detectada por el GPS (una sola opcion). Si el GPS no la da o el conductor pide verlas, van las dos.
+  const detectedRoute: RouteDir | null = !locationKnown && !showBothRoutes ? detected?.route ?? null : null;
+
+  useEffect(() => {
+    if (locationKnown || !myVehicleId || !enroll.allowed || !navigator.geolocation) return;
+    let cancelled = false;
+    navigator.geolocation.getCurrentPosition(
+      async pos => {
+        try {
+          const d = await detectTerminal(pos.coords.latitude, pos.coords.longitude);
+          if (!cancelled) setDetected(d);
+        } catch {
+          // Sin deteccion se muestran las dos rutas, como antes.
+        }
+      },
+      () => undefined,
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
+    );
+    return () => { cancelled = true; };
+  }, [locationKnown, myVehicleId, enroll.allowed]);
   const destinationFor = nextEnds.destination || (atOrigin ? 'el destino' : 'el origen');
 
   // Datos derivados de la cola activa del conductor — se calculan una sola vez
@@ -741,12 +771,13 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
   // apretar OTRO "Inscribirme" -- dos clics para una sola accion. Ahora
   // inscribe directo en la direccion sugerida (nextRoute), con el mismo GPS
   // que pide la pantalla Cola.
-  const handleJoinNext = () => {
+  const handleJoinNext = (route: RouteDir = nextRoute) => {
     if (!myVehicleId) return;
     if (!enroll.allowed) { setReturnActionError(enroll.message); return; }
     setReturnActionError('');
     setReturnActionNotice('');
     setReturnActionBusy('join');
+    setJoinTarget(route);
     if (!navigator.geolocation) {
       setReturnActionError('No se pudo obtener tu ubicación — revisa los permisos del navegador');
       setReturnActionBusy(null);
@@ -755,7 +786,7 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
     navigator.geolocation.getCurrentPosition(
       async pos => {
         try {
-          const joined = await joinQueue(nextRoute, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
+          const joined = await joinQueue(route, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
           if (joined.movedToEnd) setMovedToEndNotice(MOVED_TO_END);
           await reload();
         } catch (err) {
@@ -859,8 +890,8 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
       <div className="bg-surface border border-border rounded-lg p-5 space-y-4">
         <div className="flex items-center gap-2">
           <MapPin size={15} className="text-t2" />
-          <span className="text-xs text-t2">{myTrip ? 'En ruta' : `Estás en ${inferredTerminal}`}</span>
-          {!myTrip && (
+          <span className="text-xs text-t2">{myTrip ? 'En ruta' : locationKnown ? `Estás en ${inferredTerminal}` : detectedRoute ? `Estás en ${detected?.terminalName || 'el terminal'}` : 'Elige desde qué terminal sales'}</span>
+          {!myTrip && locationKnown && (
             <>
               <ArrowRight size={13} className="text-muted" />
               <span className="text-xs text-t2">Destino: {destinationFor}</span>
@@ -1025,15 +1056,58 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
           </div>
         ) : (
           <div className="space-y-3">
-            <p className="text-sm text-t2">No estás inscrito en ninguna cola. Puedes anotarte para el siguiente turno.</p>
+            <p className="text-sm text-t2">
+              {locationKnown
+                ? 'No estás inscrito en ninguna cola. Puedes anotarte para el siguiente turno.'
+                : detectedRoute
+                  ? `Todavía no tienes viajes registrados. Con tu ubicación detectamos que estás en ${detected?.terminalName || 'un terminal'}: anótate en la cola que sale de ahí.`
+                  : 'Todavía no tienes viajes registrados. Elige desde qué terminal sales y anótate en esa cola: debes estar ahí con tu celular.'}
+            </p>
             {!enroll.allowed && <p className="text-xs text-warn">{enroll.message}</p>}
-            <button
-              onClick={handleJoinNext}
-              disabled={returnActionBusy !== null || !enroll.allowed}
-              className="px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors flex items-center gap-2 disabled:opacity-50"
-            >
-              <Plus size={14} /> {returnActionBusy === 'join' ? 'Inscribiendo…' : `Inscribirme en ${nextRouteLabel}`}
-            </button>
+            {locationKnown ? (
+              <>
+                <button
+                  onClick={() => handleJoinNext(nextRoute)}
+                  disabled={returnActionBusy !== null || !enroll.allowed}
+                  className="px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors flex items-center gap-2 disabled:opacity-50"
+                >
+                  <Plus size={14} /> {returnActionBusy === 'join' && joinTarget === nextRoute ? 'Inscribiendo…' : `Inscribirme en ${nextRouteLabel}`}
+                </button>
+                <button
+                  onClick={() => handleJoinNext(otherRoute)}
+                  disabled={returnActionBusy !== null || !enroll.allowed}
+                  className="text-xs text-primary hover:underline disabled:opacity-50"
+                >
+                  {returnActionBusy === 'join' && joinTarget === otherRoute ? 'Inscribiendo…' : `¿Estás en el otro terminal? Inscribirme en ${otherRouteLabel}`}
+                </button>
+              </>
+            ) : detectedRoute ? (
+              <>
+                <button
+                  onClick={() => handleJoinNext(detectedRoute)}
+                  disabled={returnActionBusy !== null || !enroll.allowed}
+                  className="px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors flex items-center gap-2 disabled:opacity-50"
+                >
+                  <Plus size={14} /> {returnActionBusy === 'join' && joinTarget === detectedRoute ? 'Inscribiendo…' : `Inscribirme en ${routeLabel(detectedRoute, org)}`}
+                </button>
+                <button onClick={() => setShowBothRoutes(true)} className="text-xs text-primary hover:underline">
+                  ¿No estás ahí? Ver las dos rutas
+                </button>
+              </>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {([nextRoute, otherRoute] as const).map(r => (
+                  <button
+                    key={r}
+                    onClick={() => handleJoinNext(r)}
+                    disabled={returnActionBusy !== null || !enroll.allowed}
+                    className="px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <Plus size={14} /> {returnActionBusy === 'join' && joinTarget === r ? 'Inscribiendo…' : `Inscribirme en ${routeLabel(r, org)}`}
+                  </button>
+                ))}
+              </div>
+            )}
             {returnActionError && (
               <div className="bg-danger/10 text-danger text-xs px-3 py-2 rounded-lg flex items-center gap-2">
                 <AlertCircle size={13} /> {returnActionError}
