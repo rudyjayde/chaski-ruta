@@ -19,10 +19,12 @@ if (!/@(localhost|127\.0\.0\.1)[:\/]/.test(dbUrl)) {
 
 import 'reflect-metadata';
 process.env.RESEND_API_KEY = '';
+process.env.JWT_STATUS_CACHE_MS = '0'; // sin memoria: cada peticion revisa el estado real de la persona
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 import { AuthService } from '../src/auth/auth.service';
+import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { validationExceptionFactory } from '../src/common/validation-messages';
 import { hasValidRucCheckDigit } from '../src/common/validators';
@@ -587,6 +589,40 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     check('con el tiempo máximo en blanco vuelve a no aparecer', r.status === 201 && tv?.arrivalUnconfirmed === false, `HTTP ${r.status} ${msg(r)}`);
     await prisma.trip.delete({ where: { id: ovTrip.id } });
     await prisma.person.delete({ where: { id: superP.id } }).catch(() => null);
+
+    // ═════════ N. SESIONES YA ABIERTAS ═════════
+    head('N. Sesiones ya abiertas');
+    const sesP = await mk(orgA.id, 'CONDUCTOR', 'Sesion Prueba', 88);
+    const sesT = await tok(sesP);
+    r = await call(sesT, 'GET', '/people/me');
+    check('una persona activa con sesión abierta entra normalmente', r.status === 200, `HTTP ${r.status}`);
+    await prisma.person.update({ where: { id: sesP.id }, data: { status: 'SUSPENDIDO' } });
+    r = await call(sesT, 'GET', '/people/me');
+    check('al suspenderla, su sesión ya abierta deja de funcionar (401)', r.status === 401, `HTTP ${r.status}`);
+    await prisma.person.update({ where: { id: sesP.id }, data: { status: 'ACTIVO' } });
+    r = await call(sesT, 'GET', '/people/me');
+    check('al reactivarla, la misma sesión vuelve a funcionar', r.status === 200, `HTTP ${r.status}`);
+    await prisma.person.update({ where: { id: sesP.id }, data: { status: 'ELIMINADO' } });
+    r = await call(sesT, 'GET', '/people/me');
+    check('al eliminarla, su sesión ya abierta deja de funcionar (401)', r.status === 401, `HTTP ${r.status}`);
+    await prisma.person.delete({ where: { id: sesP.id } });
+    r = await call(sesT, 'GET', '/people/me');
+    check('si la persona ya no existe, su sesión no sirve (401)', r.status === 401, `HTTP ${r.status}`);
+    await prisma.organization.update({ where: { id: orgA.id }, data: { status: 'ELIMINADA' } });
+    r = await call(T.admin, 'GET', '/people/me');
+    check('al eliminar la asociación, las sesiones de sus usuarios dejan de funcionar (401)', r.status === 401, `HTTP ${r.status}`);
+    await prisma.organization.update({ where: { id: orgA.id }, data: { status: 'ACTIVA' } });
+    r = await call(T.admin, 'GET', '/people/me');
+    check('con la asociación activa otra vez, el administrador vuelve a entrar', r.status === 200, `HTTP ${r.status}`);
+    const jwtSvc = app.get(JwtService);
+    const resetLike = jwtSvc.sign({ purpose: 'reset-password', email: 'x@example.test' });
+    r = await call(resetLike, 'GET', '/manifests');
+    check('un enlace de restablecer contraseña NO sirve como sesión (401)', r.status === 401, `HTTP ${r.status}`);
+    const visitorTok = jwtSvc.sign({ sub: 'visitante-falso', role: 'VISITOR', email: 'v@example.test' });
+    r = await call(visitorTok, 'GET', '/visitor-auth/me');
+    check('la sesión de un visitante de la landing sigue funcionando', r.status === 200, `HTTP ${r.status}`);
+    r = await call(visitorTok, 'GET', '/people/me');
+    check('y un visitante no entra a rutas de personas (rol)', r.status === 403 || r.status === 401, `HTTP ${r.status}`);
 
     // ═════════ J. CONSISTENCIA FINAL ═════════
     head('J. Consistencia de datos');
