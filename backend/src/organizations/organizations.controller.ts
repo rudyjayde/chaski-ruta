@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@ne
 import { OrganizationsService } from './organizations.service';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
+import { DeleteOrganizationDto } from './dto/delete-organization.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -65,6 +66,13 @@ export class OrganizationsController {
   @Roles('SUPERADMIN')
   update(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: UpdateOrganizationDto) {
     return this.orgs.update(id, user, dto);
+  }
+
+  // Solo Super Admin: baja de la asociacion completa (el historial se conserva).
+  @Post(':id/delete')
+  @Roles('SUPERADMIN')
+  remove(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: DeleteOrganizationDto) {
+    return this.orgs.remove(id, user, dto);
   }
 
   // Checklist real de onboarding de esta asociacion (ver organizations.service.ts).

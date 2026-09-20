@@ -12,7 +12,7 @@ import GPSOverviewPage from './GPSOverviewPage';
 import PassengerProfilesPage from './PassengerProfilesPage';
 import type { AuditEntry } from '../../types';
 import {
-  fetchOrganizations, updateOrganization, createOrganization, uploadImage,
+  fetchOrganizations, updateOrganization, createOrganization, deleteOrganization, uploadImage,
   fetchGlobalAudit,
   fetchPeople, createPerson, updatePersonStatus,
   fetchOperationalConfig, updateOperationalConfig,
@@ -33,7 +33,7 @@ import {
 } from '../../lib/operacion-api';
 import { fetchLandingContent, type LandingContentData, type LandingFleetItem, type LandingFleetShowcase } from '../../lib/landing-content-api';
 import type { Person, Unit } from '../../types';
-import { PHONE_ERROR, phoneInputProps, sanitizePhone, isValidOptionalPhone, RUC_ERROR, rucInputProps, sanitizeRuc, isValidRuc, IMEI_ERROR, sanitizeImei, isValidOptionalImei } from '../../lib/validators';
+import { PHONE_ERROR, phoneInputProps, sanitizePhone, isValidOptionalPhone, RUC_ERROR, rucInputProps, sanitizeRuc, isValidRuc, IMEI_ERROR, sanitizeImei, isValidOptionalImei, capitalizeWords } from '../../lib/validators';
 
 // Redimensiona la imagen ANTES de convertirla a data URI -- una foto real de
 // varios MB facilmente supera el limite del body del backend (y se ve exactamente
@@ -94,6 +94,7 @@ const ORG_STATUS_STYLE: Record<string, string> = {
   EN_CONFIGURACION: 'bg-warn/10 text-warn',
   SUSPENDIDA: 'bg-danger/10 text-danger',
   CON_INCIDENCIA: 'bg-accent/20 text-accent',
+  ELIMINADA: 'bg-border text-muted',
 };
 
 function field(label: string, value: string, mono = false) {
@@ -336,6 +337,30 @@ function SAOrganizations({ onNew, onEnterAsAdmin }: { onNew: () => void; onEnter
     }
   };
 
+  // Eliminar asociacion completa (baja: el historial se conserva). Pide motivo
+  // y que se escriba el nombre exacto, para que no se haga por un clic sin querer.
+  const [showDeleteOrg, setShowDeleteOrg] = useState(false);
+  const [deleteOrgReason, setDeleteOrgReason] = useState('');
+  const [deleteOrgConfirm, setDeleteOrgConfirm] = useState('');
+  const [deleteOrgError, setDeleteOrgError] = useState('');
+  const [deletingOrg, setDeletingOrg] = useState(false);
+  const closeDeleteOrg = () => { setShowDeleteOrg(false); setDeleteOrgReason(''); setDeleteOrgConfirm(''); setDeleteOrgError(''); };
+  const confirmDeleteOrg = async () => {
+    if (!selected || !deleteOrgReason.trim() || deleteOrgConfirm.trim() !== selected.name) return;
+    setDeletingOrg(true);
+    setDeleteOrgError('');
+    try {
+      await deleteOrganization(selected.id, deleteOrgReason.trim());
+      closeDeleteOrg();
+      setSelectedId(null);
+      setVersion(v => v + 1);
+    } catch (err) {
+      setDeleteOrgError(err instanceof Error ? err.message : 'No se pudo eliminar la asociación.');
+    } finally {
+      setDeletingOrg(false);
+    }
+  };
+
   if (editingOrgFull) {
     return (
       <EditOrgWizard
@@ -416,6 +441,12 @@ function SAOrganizations({ onNew, onEnterAsAdmin }: { onNew: () => void; onEnter
               className="w-full flex items-center justify-center gap-2 h-9 mb-5 rounded-lg text-sm font-medium border border-primary/30 text-primary hover:bg-primary/5"
             >
               <Pencil size={14} /> Editar asociación
+            </button>
+            <button
+              onClick={() => setShowDeleteOrg(true)}
+              className="w-full flex items-center justify-center gap-2 h-9 mb-5 -mt-3 rounded-lg text-sm font-medium border border-danger/30 text-danger hover:bg-danger/5"
+            >
+              Eliminar asociación
             </button>
 
             <div className="space-y-5 text-sm">
@@ -534,6 +565,40 @@ function SAOrganizations({ onNew, onEnterAsAdmin }: { onNew: () => void; onEnter
           </aside>
         )}
       </div>
+
+      {showDeleteOrg && selected && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Eliminar asociación">
+          <div className="bg-surface rounded-lg shadow-xl w-full max-w-md p-6">
+            <h3 className="text-sm font-semibold text-t1 mb-1">Eliminar {selected.name}</h3>
+            <p className="text-xs text-t2 mb-4">
+              La asociación deja de aparecer en el listado, en el portal y en los avisos, y todas sus cuentas quedan suspendidas: nadie de ahí podrá volver a entrar. Su historial (viajes, manifiestos, pasajeros, personas, unidades y auditoría) se conserva tal como estaba hasta hoy. Solo se puede eliminar si no tiene viajes en curso ni unidades en cola.
+            </p>
+            <textarea
+              value={deleteOrgReason}
+              onChange={e => setDeleteOrgReason(e.target.value)}
+              placeholder="Motivo (ej. la asociación dejó el servicio)…"
+              className="w-full min-h-20 px-3 py-2 border border-border rounded-lg text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            <label className="block text-xs text-t2 mb-1">Para confirmar, escribe el nombre exacto: <strong className="text-t1">{selected.name}</strong></label>
+            <input
+              value={deleteOrgConfirm}
+              onChange={e => setDeleteOrgConfirm(e.target.value)}
+              className="w-full h-9 px-3 border border-border rounded-lg text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            {deleteOrgError && <p className="text-xs text-danger mb-3">{deleteOrgError}</p>}
+            <div className="flex gap-3 justify-end">
+              <button onClick={closeDeleteOrg} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-hover">Cancelar</button>
+              <button
+                onClick={confirmDeleteOrg}
+                disabled={!deleteOrgReason.trim() || deleteOrgConfirm.trim() !== selected.name || deletingOrg}
+                className="px-4 py-2 text-sm bg-danger text-white rounded-lg hover:bg-danger/80 disabled:opacity-50"
+              >
+                {deletingOrg ? 'Eliminando…' : 'Eliminar asociación'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1255,7 +1320,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                   {editingInfo ? (
                     <input
                       value={infoForm[f.key]}
-                      onChange={e => setInfoForm(v => ({ ...v, [f.key]: f.key === 'contactPhone' ? sanitizePhone(e.target.value) : f.key === 'ruc' ? sanitizeRuc(e.target.value) : e.target.value }))}
+                      onChange={e => setInfoForm(v => ({ ...v, [f.key]: f.key === 'contactPhone' ? sanitizePhone(e.target.value) : f.key === 'ruc' ? sanitizeRuc(e.target.value) : f.key === 'legalRepName' ? capitalizeWords(e.target.value) : e.target.value }))}
                       {...(f.key === 'contactPhone' ? phoneInputProps : f.key === 'ruc' ? rucInputProps : {})}
                       placeholder={f.placeholder}
                       className={`w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary ${f.mono ? 'font-mono' : ''}`}
@@ -1338,7 +1403,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                     <label className="block text-sm font-medium text-t1 mb-1">Nombre del administrador *</label>
                     <input
                       value={swapName}
-                      onChange={e => setSwapName(e.target.value)}
+                      onChange={e => setSwapName(capitalizeWords(e.target.value))}
                       placeholder="Nombre completo"
                       className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                     />
@@ -1382,25 +1447,26 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 <p className="text-sm font-semibold text-t1 mb-2">Terminal 1 — Punto de salida de la ruta de ida</p>
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-sm font-medium text-t1 mb-1">Nombre del terminal *</label>
+                    <label className="block text-sm font-medium text-t1 mb-1">Nombre corto (para Rutas habilitadas) *</label>
                     {editingOp ? (
                       <input
                         value={opForm.terminalOriginName}
                         onChange={e => setOpForm(v => ({ ...v, terminalOriginName: e.target.value }))}
-                        placeholder="Terminal Zonal Juli"
+                        placeholder="Juli"
                         className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                       />
                     ) : (
                       <p className="text-sm text-t1">{opForm.terminalOriginName || '—'}</p>
                     )}
+                    <p className="text-xs text-t2 mt-1">Corto, ej. "Juli" — se usa para armar la ruta ("Juli → Puno"). El nombre completo del terminal va en Dirección.</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-t1 mb-1">Dirección</label>
+                    <label className="block text-sm font-medium text-t1 mb-1">Dirección (nombre completo del terminal)</label>
                     {editingOp ? (
                       <input
                         value={opForm.terminalOriginAddress}
                         onChange={e => setOpForm(v => ({ ...v, terminalOriginAddress: e.target.value }))}
-                        placeholder="Jr. Terminal 123, Juli"
+                        placeholder="Terminal Zonal Juli, Jr. Terminal 123"
                         className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                       />
                     ) : (
@@ -1430,25 +1496,26 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 <p className="text-sm font-semibold text-t1 mb-2">Terminal 2 — Punto de salida de la ruta de vuelta</p>
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-sm font-medium text-t1 mb-1">Nombre del terminal *</label>
+                    <label className="block text-sm font-medium text-t1 mb-1">Nombre corto (para Rutas habilitadas) *</label>
                     {editingOp ? (
                       <input
                         value={opForm.terminalDestinationName}
                         onChange={e => setOpForm(v => ({ ...v, terminalDestinationName: e.target.value }))}
-                        placeholder="Terminal Zonal Puno"
+                        placeholder="Puno"
                         className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                       />
                     ) : (
                       <p className="text-sm text-t1">{opForm.terminalDestinationName || '—'}</p>
                     )}
+                    <p className="text-xs text-t2 mt-1">Corto, ej. "Puno" — se usa para armar la ruta ("Puno → Juli"). El nombre completo del terminal va en Dirección.</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-t1 mb-1">Dirección</label>
+                    <label className="block text-sm font-medium text-t1 mb-1">Dirección (nombre completo del terminal)</label>
                     {editingOp ? (
                       <input
                         value={opForm.terminalDestinationAddress}
                         onChange={e => setOpForm(v => ({ ...v, terminalDestinationAddress: e.target.value }))}
-                        placeholder="Terminal Terrestre, Puno"
+                        placeholder="Terminal Terrestre de Puno"
                         className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                       />
                     ) : (
@@ -1549,8 +1616,10 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
               </div>
 
               <div className="border-t border-border pt-5">
-                <p className="text-sm font-semibold text-t1 mb-1">Rutas de operación adicionales</p>
-                <p className="text-xs text-t2 mb-3">La ruta de ida y de vuelta ya están cubiertas por Terminal 1 y Terminal 2. Agrega aquí cualquier recorrido extra.</p>
+                <p className="text-sm font-semibold text-t1 mb-1">Paradas adicionales</p>
+                <p className="text-xs text-t2 mb-3">
+                  La ruta de ida y de vuelta ya están cubiertas por Terminal 1 y Terminal 2 — esas dos son las que aparecen en "Rutas habilitadas". Esto de aquí es solo informativo: paradas intermedias por las que pasa la unidad, para que el pasajero no se confunda. No crea una cola de salida nueva.
+                </p>
                 {routes.length > 0 && (
                   <div className="border border-border rounded-lg divide-y divide-border mb-3">
                     {routes.map(r => (
@@ -2564,7 +2633,7 @@ function NewOrgWizard({
             ].map(f => (
               <div key={f.key}>
                 <label className="block text-sm font-medium text-t1 mb-1">{f.label}</label>
-                <input value={(form as unknown as Record<string, string>)[f.key]} onChange={e => set(f.key, f.key === 'phone' ? sanitizePhone(e.target.value) : f.key === 'ruc' ? sanitizeRuc(e.target.value) : e.target.value)}
+                <input value={(form as unknown as Record<string, string>)[f.key]} onChange={e => set(f.key, f.key === 'phone' ? sanitizePhone(e.target.value) : f.key === 'ruc' ? sanitizeRuc(e.target.value) : f.key === 'legalRep' ? capitalizeWords(e.target.value) : e.target.value)}
                   {...(f.key === 'phone' ? phoneInputProps : f.key === 'ruc' ? rucInputProps : {})}
                   placeholder={f.placeholder}
                   className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
@@ -2653,7 +2722,7 @@ function NewOrgWizard({
             ].map(f => (
               <div key={f.key}>
                 <label className="block text-sm font-medium text-t1 mb-1">{f.label}</label>
-                <input type={f.type ?? 'text'} value={(form as unknown as Record<string, string>)[f.key]} onChange={e => set(f.key, f.key === 'adminPhone' ? sanitizePhone(e.target.value) : e.target.value)}
+                <input type={f.type ?? 'text'} value={(form as unknown as Record<string, string>)[f.key]} onChange={e => set(f.key, f.key === 'adminPhone' ? sanitizePhone(e.target.value) : f.key === 'adminName' ? capitalizeWords(e.target.value) : e.target.value)}
                   {...(f.key === 'adminPhone' ? phoneInputProps : {})}
                   placeholder={f.placeholder}
                   className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
@@ -2678,12 +2747,13 @@ function NewOrgWizard({
               </div>
               <div className="grid md:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-t1 mb-1">Nombre del terminal</label>
-                  <input value={form.terminal1} onChange={event => set('terminal1', event.target.value)} placeholder="Terminal Terrestre Juli"
+                  <label className="block text-sm font-medium text-t1 mb-1">Nombre corto (para Rutas habilitadas)</label>
+                  <input value={form.terminal1} onChange={event => set('terminal1', event.target.value)} placeholder="Juli"
                     className="w-full h-9 px-3 border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                  <p className="text-xs text-t2 mt-1">Corto, ej. "Juli" — arma la ruta ("Juli → Puno"). El nombre completo va en Dirección.</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-t1 mb-1">Dirección</label>
+                  <label className="block text-sm font-medium text-t1 mb-1">Dirección (nombre completo del terminal)</label>
                   <input value={form.terminal1Address} onChange={event => set('terminal1Address', event.target.value)} placeholder="Escribe o selecciona en el mapa"
                     className="w-full h-9 px-3 border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
                 </div>
@@ -2703,12 +2773,13 @@ function NewOrgWizard({
               </div>
               <div className="grid md:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-t1 mb-1">Nombre del terminal</label>
-                  <input value={form.terminal2} onChange={event => set('terminal2', event.target.value)} placeholder="Terminal Zonal Puno"
+                  <label className="block text-sm font-medium text-t1 mb-1">Nombre corto (para Rutas habilitadas)</label>
+                  <input value={form.terminal2} onChange={event => set('terminal2', event.target.value)} placeholder="Puno"
                     className="w-full h-9 px-3 border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                  <p className="text-xs text-t2 mt-1">Corto, ej. "Puno" — arma la ruta ("Puno → Juli"). El nombre completo va en Dirección.</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-t1 mb-1">Dirección</label>
+                  <label className="block text-sm font-medium text-t1 mb-1">Dirección (nombre completo del terminal)</label>
                   <input value={form.terminal2Address} onChange={event => set('terminal2Address', event.target.value)} placeholder="Escribe o selecciona en el mapa"
                     className="w-full h-9 px-3 border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
                 </div>
@@ -2908,18 +2979,15 @@ function NewOrgWizard({
           currentAddress={mapTarget === 'terminal1' ? form.terminal1Address : form.terminal2Address}
           onClose={() => setMapTarget(null)}
           onSelect={location => {
+            // Solo la direccion se llena con lo que dice Google Maps (QA 20
+            // sept 2026): el nombre de Maps suele ser largo ("Terminal Zonal
+            // Sur de Puno") y NO es el nombre corto que arma "Rutas
+            // habilitadas" -- ese lo escribe el Super Admin a mano. Antes se
+            // pisaba sin querer con el nombre de Maps.
             if (mapTarget === 'terminal1') {
-              setForm(current => ({
-                ...current,
-                terminal1: location.name,
-                terminal1Address: location.address,
-              }));
+              setForm(current => ({ ...current, terminal1Address: location.address }));
             } else {
-              setForm(current => ({
-                ...current,
-                terminal2: location.name,
-                terminal2Address: location.address,
-              }));
+              setForm(current => ({ ...current, terminal2Address: location.address }));
             }
             setMapTarget(null);
           }}

@@ -25,6 +25,7 @@ import { AppModule } from '../src/app.module';
 import { AuthService } from '../src/auth/auth.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { validationExceptionFactory } from '../src/common/validation-messages';
+import { hasValidRucCheckDigit } from '../src/common/validators';
 
 const JULI = { lat: -16.2035, lng: -69.4597 };
 const PUNO = { lat: -15.8402, lng: -70.0219 };
@@ -379,6 +380,17 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     const autoV2 = await call(T.admin, 'POST', '/vehicles', { companyId: coA.id, vehicleType: 'HIACE', plate: `ZZ${stamp.slice(-1)}-002`, model: 'Toyota Hiace', year: 2024 });
     check('REGLA: la siguiente unidad automática sigue el correlativo', Number(autoV2.json.code) === Number(autoV1.json.code) + 1, `código ${autoV1.json.code} → ${autoV2.json.code}`);
 
+    const otroV = await call(T.admin, 'POST', '/vehicles', { companyId: coA.id, vehicleType: 'OTRO', plate: `ZZ${stamp.slice(-1)}-003`, model: 'Kia Grand Carnival', year: 2024 });
+    check('una unidad con marca "Otro" (texto libre) se registra', otroV.status === 201 && otroV.json.vehicleType === 'OTRO' && otroV.json.model === 'Kia Grand Carnival', `HTTP ${otroV.status} ${msg(otroV)} tipo=${otroV.json.vehicleType}`);
+    const wrongType = await call(T.admin, 'POST', '/vehicles', { companyId: coA.id, vehicleType: 'MASTER', plate: `ZZ${stamp.slice(-1)}-004`, model: 'Toyota Hiace', year: 2024 });
+    check('marca del catálogo con tipo que no corresponde se sigue rechazando', wrongType.status === 400, `HTTP ${wrongType.status} ${msg(wrongType)}`);
+    const catA4 = await call(T.admin, 'POST', '/people', { name: 'Conductor Categoria A4', email: `e2e.${stamp}.a4@example.test`, role: 'CONDUCTOR', dni: '87651235', license: 'Q12345679', licenseCategory: 'A-IV', licenseIssuedAt: '2024-01-01', licenseExpiry: '2030-01-01' });
+    check('la categoría A-IV (materiales peligrosos) se acepta', catA4.status === 201, `HTTP ${catA4.status} ${msg(catA4)}`);
+    const catA1 = await call(T.admin, 'POST', '/people', { name: 'Conductor Categoria A1', email: `e2e.${stamp}.a1@example.test`, role: 'CONDUCTOR', dni: '87651236', license: 'Q12345680', licenseCategory: 'A-I', licenseIssuedAt: '2024-01-01', licenseExpiry: '2030-01-01' });
+    check('la categoría A-I también se acepta (catálogo completo de la clase A)', catA1.status === 201, `HTTP ${catA1.status} ${msg(catA1)}`);
+    const dirOrgs = ((await call(T.d[0], 'GET', '/organizations/directory')).json as any[]).find((o) => o.id === orgA.id);
+    check('el directorio público de asociaciones trae la dirección completa de cada terminal', dirOrgs && 'terminalOriginAddress' in dirOrgs && 'terminalDestinationAddress' in dirOrgs, dirOrgs ? Object.keys(dirOrgs).join(',') : 'la asociación no aparece');
+
     const expDriver = await mk(orgA.id, 'CONDUCTOR', 'Conductor Vencido', 99);
     const expVehicle = await prisma.vehicle.create({ data: { organizationId: orgA.id, code: `EXV${stamp.slice(-2)}`, companyId: coA.id, vehicleType: 'HIACE', plate: `EX${stamp.slice(-1)}-999`, model: 'Toyota Hiace', year: 2024, currentDriverId: expDriver.id } });
     await prisma.person.update({ where: { id: expDriver.id }, data: { license: 'Q99999999', licenseCategory: 'A-IIIa', licenseIssuedAt: new Date('2020-01-01'), licenseExpiry: new Date('2021-01-01') } });
@@ -388,6 +400,69 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     await prisma.person.update({ where: { id: expDriver.id }, data: { licenseExpiry: new Date(Date.now() + 365 * 86400000) } });
     const joinRenewed = await call(expTok, 'POST', '/queues/JULI_PUNO/join', { vehicleId: expVehicle.id, deviceId: 'dev-exp', ...JULI });
     check('con la licencia renovada, la unidad ya se puede inscribir', joinRenewed.status === 201, `HTTP ${joinRenewed.status} ${msg(joinRenewed)}`);
+
+    // ═════════ L. ELIMINAR ASOCIACION COMPLETA (baja, historial se conserva) ═════════
+    head('L. Eliminar una asociación completa');
+    const superP = await prisma.person.create({ data: { organizationId: null, name: 'Super E2E', email: `e2e.${stamp}.super@example.test`, role: 'SUPERADMIN', status: 'ACTIVO' } });
+    const TS = await tok(superP);
+    await join(0, 'JULI_PUNO', JULI);
+    r = await call(TS, 'POST', `/organizations/${orgA.id}/delete`, { reason: 'prueba' });
+    check('no se puede eliminar una asociación con unidades en cola', r.status === 409, `HTTP ${r.status} ${msg(r)}`);
+    await prisma.queueEntry.deleteMany({ where: { organizationId: orgA.id } });
+    r = await call(T.adminB, 'POST', `/organizations/${orgB.id}/delete`, { reason: 'x' });
+    check('un administrador NO puede eliminar su asociación (solo Super Admin)', r.status === 403, `HTTP ${r.status}`);
+    r = await call(TS, 'POST', `/organizations/${orgB.id}/delete`, {});
+    check('eliminar exige un motivo', r.status === 400, `HTTP ${r.status} ${msg(r)}`);
+    r = await call(TS, 'POST', `/organizations/${orgB.id}/delete`, { reason: 'la asociación dejó el servicio' });
+    check('el Super Admin elimina la asociación con motivo', r.status === 201 && r.json.ok === true, `HTTP ${r.status} ${msg(r)}`);
+    const listAfter = (await call(TS, 'GET', '/organizations')).json as any[];
+    check('la asociación eliminada ya no aparece en el listado', !listAfter.some((o) => o.id === orgB.id) && listAfter.some((o) => o.id === orgA.id));
+    const dirAfter = (await call(T.d[0], 'GET', '/organizations/directory')).json as any[];
+    check('tampoco aparece en el portal (directorio)', !dirAfter.some((o) => o.id === orgB.id));
+    const kept = await prisma.vehicle.count({ where: { organizationId: orgB.id } });
+    const orgBRow = await prisma.organization.findUnique({ where: { id: orgB.id } });
+    check('REGLA: sus datos se conservan (unidades, asociación) con estado ELIMINADA', kept === 1 && orgBRow?.status === 'ELIMINADA', `unidades=${kept} estado=${orgBRow?.status}`);
+    const stillActive = await prisma.person.count({ where: { organizationId: orgB.id, status: { not: 'SUSPENDIDO' } } });
+    check('todas sus cuentas quedan suspendidas', stillActive === 0, `${stillActive} activas`);
+    const aud = await prisma.auditEntry.count({ where: { organizationId: orgB.id, action: 'ELIMINAR_ASOCIACION' } });
+    check('queda registrada en Auditoría con el motivo', aud === 1, `${aud} registros`);
+    r = await call(TS, 'POST', `/organizations/${orgB.id}/delete`, { reason: 'otra vez' });
+    check('eliminar dos veces se rechaza', r.status === 409, `HTTP ${r.status} ${msg(r)}`);
+    // Volver a crear con los MISMOS datos: debe quedar como si nunca hubiera existido
+    let ruc = '';
+    for (let n = 0; n < 1000 && !ruc; n++) {
+      const c = `20${stamp}${String(n).padStart(3, '0')}`.slice(0, 10);
+      for (let d = 0; d < 10; d++) if (hasValidRucCheckDigit(`${c}${d}`)) { ruc = `${c}${d}`; break; }
+    }
+    const orgC = await prisma.organization.create({ data: { name: `ZZ E2E C ${stamp}`, ruc, status: 'ACTIVA', plan: 'PRO' } });
+    orgIds.push(orgC.id);
+    await prisma.operationalConfig.create({ data: { organizationId: orgC.id } });
+    const coC = await prisma.company.create({ data: { organizationId: orgC.id, name: 'ZZ Empresa C' } });
+    const adminC = await mk(orgC.id, 'ADMINISTRADOR', 'Admin C', 0);
+    const drvC = await mk(orgC.id, 'CONDUCTOR', 'Conductor C', 1);
+    await prisma.person.update({ where: { id: drvC.id }, data: { license: 'Q55555555', licenseCategory: 'A-IIIa', whatsappPhone: `9${stamp}77` } });
+    await prisma.vehicle.create({ data: { organizationId: orgC.id, code: '001', companyId: coC.id, vehicleType: 'HIACE', plate: 'ABC-123', model: 'Toyota Hiace', year: 2024, currentDriverId: drvC.id, traccarDeviceId: `IMEI-E2E-${stamp}` } });
+    r = await call(TS, 'POST', `/organizations/${orgC.id}/delete`, { reason: 'prueba de recreación' });
+    check('se elimina la asociación C (con RUC, GPS, licencia y WhatsApp)', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    const cAfter = await prisma.organization.findUnique({ where: { id: orgC.id } });
+    check('su historial sigue ahí (asociación, personas y unidades)', !!cAfter && (await prisma.person.count({ where: { organizationId: orgC.id } })) === 2 && (await prisma.vehicle.count({ where: { organizationId: orgC.id } })) === 1);
+    r = await call(TS, 'POST', '/organizations', { name: `ZZ E2E C nueva ${stamp}`, ruc, adminName: 'Admin C Nuevo', adminEmail: adminC.email, plan: 'PRO', terminalOriginName: 'Juli', terminalDestinationName: 'Puno' });
+    check('REGLA: se puede crear otra asociación con el MISMO RUC y el MISMO correo de administrador', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    if (r.json.id) orgIds.push(r.json.id);
+    const newC = r.json.id as string;
+    const newAdmin = newC ? await prisma.person.findFirst({ where: { organizationId: newC, role: 'ADMINISTRADOR' } }) : null;
+    const T2 = newAdmin ? await tok(newAdmin) : '';
+    const newCo = newC ? (await call(TS, 'POST', `/companies?organizationId=${newC}`, { name: 'ZZ Empresa C' })).json : ({} as any);
+    r = await call(T2, 'POST', '/vehicles', { companyId: newCo.id, vehicleType: 'HIACE', plate: 'ABC-123', model: 'Toyota Hiace', year: 2024 });
+    check('la nueva asociación puede registrar la MISMA placa, y su primera unidad es la 001', r.status === 201 && r.json.code === '001', `HTTP ${r.status} ${msg(r)} codigo=${r.json.code}`);
+    r = await call(T2, 'POST', '/people', { name: 'Conductor C Nuevo', email: drvC.email, role: 'CONDUCTOR', dni: '87651299', license: 'Q55555555', licenseCategory: 'A-IIIa', licenseIssuedAt: '2024-01-01', licenseExpiry: '2030-01-01' });
+    check('puede registrar al mismo conductor (mismo correo y misma licencia) como si fuera nuevo', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    const newVeh = newC ? await prisma.vehicle.findFirst({ where: { organizationId: newC } }) : null;
+    const reuseGps = newVeh ? await prisma.vehicle.update({ where: { id: newVeh.id }, data: { traccarDeviceId: `IMEI-E2E-${stamp}` } }).then(() => true).catch(() => false) : false;
+    check('el mismo equipo GPS se puede volver a usar en la asociación nueva', reuseGps);
+    const nuevaVacia = newC ? (await prisma.trip.count({ where: { organizationId: newC } })) + (await prisma.manifest.count({ where: { organizationId: newC } })) : -1;
+    check('la asociación nueva arranca sin viajes ni manifiestos del historial anterior', nuevaVacia === 0, `${nuevaVacia}`);
+    await prisma.person.delete({ where: { id: superP.id } }).catch(() => null);
 
     // ═════════ J. CONSISTENCIA FINAL ═════════
     head('J. Consistencia de datos');

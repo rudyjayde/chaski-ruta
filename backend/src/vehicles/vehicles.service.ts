@@ -92,7 +92,10 @@ export class VehiclesService {
   }
 
   async create(organizationId: string, dto: CreateVehicleDto) {
-    if (VEHICLE_TYPE_BY_MODEL[dto.model] !== dto.vehicleType) {
+    // "Otro" (QA 20 sept 2026): marca/modelo fuera del catalogo, se acepta el
+    // texto tal cual. Para las tres del catalogo, se sigue exigiendo que
+    // marca+modelo y tipo correspondan (evita elegir "Toyota Hiace" con tipo MASTER).
+    if (dto.vehicleType !== 'OTRO' && VEHICLE_TYPE_BY_MODEL[dto.model] !== dto.vehicleType) {
       throw new BadRequestException('El tipo de vehículo no corresponde a la marca y modelo elegidos.');
     }
 

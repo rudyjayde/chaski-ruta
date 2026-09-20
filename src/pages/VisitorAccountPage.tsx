@@ -4,7 +4,7 @@ import {
   getVisitorToken, setVisitorToken, clearVisitorToken, fetchVisitorMe, registerVisitor, loginVisitor, visitorGoogleLoginUrl,
   type VisitorMe, type CommercialRequestStatus,
 } from '../lib/visitor-auth-api';
-import { passwordProblem } from '../lib/validators';
+import { passwordProblem, capitalizeWords } from '../lib/validators';
 
 const STATUS_LABEL: Record<CommercialRequestStatus, string> = {
   NUEVA: 'Recibida',
@@ -84,7 +84,7 @@ function VisitorAuthForm({ onAuthenticated }: { onAuthenticated: () => void }) {
         {mode === 'register' && (
           <input
             value={name}
-            onChange={e => setName(e.target.value)}
+            onChange={e => setName(capitalizeWords(e.target.value))}
             placeholder="Tu nombre"
             className="w-full h-10 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
           />

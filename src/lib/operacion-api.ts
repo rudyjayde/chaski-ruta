@@ -881,6 +881,8 @@ export interface OrganizationDirectoryEntry {
   logoUrl?: string | null;
   terminalOriginName: string;
   terminalDestinationName: string;
+  terminalOriginAddress?: string | null;
+  terminalDestinationAddress?: string | null;
 }
 
 // ─── Etiquetas de ruta/terminal por asociacion ──────────────────────────────
@@ -929,6 +931,12 @@ export async function createOrganization(input: CreateOrganizationInput): Promis
 
 export async function updateOrganization(id: string, patch: { name?: string; ruc?: string; city?: string; legalRepName?: string; contactPhone?: string; contactEmail?: string; driverLiveMapEnabled?: boolean; status?: Organization['status']; logoUrl?: string; plan?: Organization['plan']; reason?: string; gpsVehicularGraceDays?: number }): Promise<Organization> {
   return request<Organization>(`/organizations/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+}
+
+// Eliminar una asociacion completa: es una baja, no un borrado -- el historial
+// se conserva. Solo Super Admin; motivo obligatorio.
+export async function deleteOrganization(id: string, reason: string): Promise<void> {
+  await request<{ ok: boolean }>(`/organizations/${id}/delete`, { method: 'POST', body: JSON.stringify({ reason }) });
 }
 
 /**

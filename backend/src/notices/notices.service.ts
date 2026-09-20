@@ -41,7 +41,7 @@ export class NoticesService {
       throw new NotFoundException('No se encontró tu cuenta para firmar el aviso.');
     }
     const targetOrgs = await this.prisma.organization.findMany({
-      where: dto.organizationIds && dto.organizationIds.length > 0 ? { id: { in: dto.organizationIds } } : {},
+      where: { status: { not: 'ELIMINADA' }, ...(dto.organizationIds && dto.organizationIds.length > 0 ? { id: { in: dto.organizationIds } } : {}) },
       select: { id: true, name: true },
     });
     if (targetOrgs.length === 0) {

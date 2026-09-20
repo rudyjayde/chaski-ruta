@@ -123,12 +123,11 @@ export const IsOptionalDocumentNumber = (typeField = 'documentType') =>
   applyDecorators(skipEmpty(), IsDocumentNumber(typeField));
 
 // ─── Categoria de licencia de conducir ──────────────────────────────────────
-// Categorias profesionales del MTC que aplican a transporte de personas
-// (Sprinter/Hiace/Master, ruta interprovincial) -- supuesto acordado con
-// Jayde (a confirmar): se listan las 3 categorias A-III (transporte de
-// personas y mercancias); A-I/A-IIa/A-IIb son de vehiculos particulares y no
-// habilitan a conducir una unidad de la asociacion.
-export const LICENSE_CATEGORIES = ['A-IIIa', 'A-IIIb', 'A-IIIc'] as const;
+// Todo el catalogo de la clase A del MTC (Jayde, 20 sept 2026: se decidio no
+// filtrar por si "aplica" o no al negocio -- el sistema no debe impedir
+// registrar a un conductor por su categoria, esa evaluacion la hace el
+// administrador de la asociacion, no una validacion de formulario).
+export const LICENSE_CATEGORIES = ['A-I', 'A-IIa', 'A-IIb', 'A-IIIa', 'A-IIIb', 'A-IIIc', 'A-IV'] as const;
 export type LicenseCategory = (typeof LICENSE_CATEGORIES)[number];
 export const LICENSE_CATEGORY_MESSAGE = `La categoría debe ser una de: ${LICENSE_CATEGORIES.join(', ')}`;
 

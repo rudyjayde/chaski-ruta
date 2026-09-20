@@ -2,7 +2,7 @@
 // tiene UN solo modelo, y de ahi sale el tipo de vehiculo. Mismo catalogo que
 // backend/src/vehicles/vehicle-catalog.ts -- agregar una marca nueva = agregar
 // una fila en los dos.
-export type VehicleTypeCode = 'SPRINTER' | 'HIACE' | 'MASTER';
+export type VehicleTypeCode = 'SPRINTER' | 'HIACE' | 'MASTER' | 'OTRO';
 
 export interface VehicleBrand {
   brand: string;

@@ -27,7 +27,7 @@ export type EvidenceType =
   | 'VEHICULO_VERIFICADO'
   | 'SIN_EVIDENCIA';
 
-export type VehicleType = 'SPRINTER' | 'HIACE' | 'MASTER';
+export type VehicleType = 'SPRINTER' | 'HIACE' | 'MASTER' | 'OTRO';
 export type RouteDir = 'JULI_PUNO' | 'PUNO_JULI';
 export type ManifestStatus = 'BORRADOR' | 'CERRADO' | 'CON_INCIDENCIA' | 'CORREGIDO';
 export type TripStatus = 'PROGRAMADO' | 'ACTIVO' | 'COMPLETADO' | 'CON_INCIDENCIA' | 'CANCELADO';
@@ -247,7 +247,7 @@ export interface Organization {
   id: string;
   name: string;
   ruc: string;
-  status: 'ACTIVA' | 'EN_CONFIGURACION' | 'SUSPENDIDA' | 'CON_INCIDENCIA';
+  status: 'ACTIVA' | 'EN_CONFIGURACION' | 'SUSPENDIDA' | 'CON_INCIDENCIA' | 'ELIMINADA';
   plan: string;
   modules: string[];
   adminEmail: string;

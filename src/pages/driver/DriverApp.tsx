@@ -683,6 +683,40 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
     );
   };
 
+  // "Inscribirme" desde Inicio cuando NO hay viaje activo ni cola (QA 20 sept
+  // 2026): antes este boton solo llevaba a la pantalla Cola, donde habia que
+  // apretar OTRO "Inscribirme" -- dos clics para una sola accion. Ahora
+  // inscribe directo en la direccion sugerida (nextRoute), con el mismo GPS
+  // que pide la pantalla Cola.
+  const handleJoinNext = () => {
+    if (!myVehicleId) return;
+    setReturnActionError('');
+    setReturnActionNotice('');
+    setReturnActionBusy('join');
+    if (!navigator.geolocation) {
+      setReturnActionError('No se pudo obtener tu ubicación — revisa los permisos del navegador');
+      setReturnActionBusy(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      async pos => {
+        try {
+          await joinQueue(nextRoute, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
+          await reload();
+        } catch (err) {
+          setReturnActionError(err instanceof Error ? err.message : 'No se pudo inscribir la unidad');
+        } finally {
+          setReturnActionBusy(null);
+        }
+      },
+      () => {
+        setReturnActionError('No se pudo obtener tu ubicación — revisa los permisos del navegador');
+        setReturnActionBusy(null);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
+    );
+  };
+
   // "No saldré ahora" (§2 paso 9): no existe un estado "pendiente de decidir"
   // aparte -- se inscribe (confirmando la misma evidencia GPS que pediria
   // "Inscribirme") y de inmediato se retira con declareLater(), dejando el
@@ -926,11 +960,17 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
           <div className="space-y-3">
             <p className="text-sm text-t2">No estás inscrito en ninguna cola. Puedes anotarte para el siguiente turno.</p>
             <button
-              onClick={() => onNavigate('cola')}
-              className="px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors flex items-center gap-2"
+              onClick={handleJoinNext}
+              disabled={returnActionBusy !== null}
+              className="px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors flex items-center gap-2 disabled:opacity-50"
             >
-              <Plus size={14} /> Inscribirme en {nextRouteLabel}
+              <Plus size={14} /> {returnActionBusy === 'join' ? 'Inscribiendo…' : `Inscribirme en ${nextRouteLabel}`}
             </button>
+            {returnActionError && (
+              <div className="bg-danger/10 text-danger text-xs px-3 py-2 rounded-lg flex items-center gap-2">
+                <AlertCircle size={13} /> {returnActionError}
+              </div>
+            )}
           </div>
         )}
       </div>

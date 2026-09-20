@@ -205,6 +205,12 @@ export default function AssociationPortal({ onEnterAssociation, onLogout }: Prop
                   <OrgAvatar name={other.name} logoUrl={other.logoUrl} size={72} />
                   <p className="text-sm font-semibold text-t1 mt-3">{other.name}</p>
                   <p className="text-xs text-t2 mt-1">Información disponible</p>
+                  <div className="mt-2 space-y-0.5">
+                    {[other.terminalOriginAddress?.trim() || other.terminalOriginName, other.terminalDestinationAddress?.trim() || other.terminalDestinationName].map((terminal, i) => (
+                      <p key={i} className="text-xs text-t2">{terminal}</p>
+                    ))}
+                  </div>
+                  <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mt-3">Rutas habilitadas</p>
                   <RouteBadges routes={corridorRoutes(other.terminalOriginName, other.terminalDestinationName)} />
                   <span className="mt-4 h-9 px-3 border border-border rounded-md text-sm font-medium text-t1 inline-flex items-center justify-center gap-2">
                     Ver información

@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "OrgStatus" ADD VALUE 'ELIMINADA';

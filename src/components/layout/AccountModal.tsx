@@ -6,7 +6,7 @@ import {
   PHONE_ERROR, LICENSE_ERROR, dniInputProps, phoneInputProps, sanitizePhone, sanitizeLicense,
   isValidOptionalPhone, isValidLicense, licenseExpiryInputValue, licenseDatesError, todayInputValue, licenseStatus,
   PERSON_DOCUMENT_TYPES, type PersonDocumentType, LICENSE_CATEGORIES,
-  isValidDocument, sanitizeDocument, documentError, documentPlaceholder,
+  isValidDocument, sanitizeDocument, documentError, documentPlaceholder, capitalizeWords,
 } from '../../lib/validators';
 
 const ROLE_LABEL: Record<string, string> = {
@@ -157,7 +157,7 @@ export default function AccountModal({ onClose }: { onClose: () => void }) {
                   </div>
                   <div className="sm:col-span-2">
                     <Field label="Nombre completo" htmlFor="acc-name">
-                      <input id="acc-name" value={form.name} onChange={e => set('name', e.target.value)} maxLength={120} className={inputClass} />
+                      <input id="acc-name" value={form.name} onChange={e => set('name', capitalizeWords(e.target.value))} maxLength={120} className={inputClass} />
                     </Field>
                   </div>
                   <Field label="Tipo de documento" htmlFor="acc-doc-type">

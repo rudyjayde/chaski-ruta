@@ -75,6 +75,14 @@ export const isValidYear = (value: string) => /^\d{4}$/.test(value) && Number(va
 export const isValidOptionalDni = (value: string) => value === '' || isValidDni(value);
 export const isValidOptionalPhone = (value: string) => value === '' || isValidPhone(value);
 
+// Nombre y apellido (QA 20 sept 2026): un nombre peruano suele traer 4
+// palabras (2 nombres + 2 apellidos, ej. "Rudy Jayde Choque Cruz") y cada una
+// debe empezar con mayuscula por su cuenta -- no alcanza con capitalizar solo
+// la primera letra de todo el campo. Solo toca la primera letra de cada
+// palabra; el resto se deja tal cual se escribio (no fuerza minusculas, para
+// no romper apellidos como "McCarthy" si alguna vez aparece uno).
+export const capitalizeWords = (value: string) => value.replace(/(^|\s)(\p{L})/gu, (_, sep, letter) => sep + letter.toUpperCase());
+
 // Atributos del <input> para que el celular muestre teclado numerico. Sin
 // maxLength a proposito: el navegador cortaria un pegado con "+51" antes de
 // que sanitizePhone pueda quitarle el prefijo; el largo lo garantiza el
@@ -153,10 +161,10 @@ export const PERSON_DOCUMENT_TYPES: { value: PersonDocumentType; label: string }
 ];
 
 // ─── Categoria de licencia de conducir ──────────────────────────────────────
-// Categorias profesionales del MTC para transporte de personas (Sprinter/
-// Hiace/Master) -- supuesto acordado con Jayde (a confirmar). Mismo catalogo
-// que backend/src/common/validators.ts.
-export const LICENSE_CATEGORIES = ['A-IIIa', 'A-IIIb', 'A-IIIc'] as const;
+// Todo el catalogo de la clase A del MTC (Jayde, 20 sept 2026) -- sin filtrar
+// por si "aplica" al negocio, esa evaluacion la hace el administrador, no una
+// validacion de formulario. Mismo catalogo que backend/src/common/validators.ts.
+export const LICENSE_CATEGORIES = ['A-I', 'A-IIa', 'A-IIb', 'A-IIIa', 'A-IIIb', 'A-IIIc', 'A-IV'] as const;
 export const LICENSE_CATEGORY_ERROR = `La categoría debe ser una de: ${LICENSE_CATEGORIES.join(', ')}.`;
 
 // ─── GPS: IMEI del equipo ───────────────────────────────────────────────────

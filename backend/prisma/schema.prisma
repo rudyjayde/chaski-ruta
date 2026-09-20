@@ -24,6 +24,8 @@ enum OrgStatus {
   EN_CONFIGURACION
   SUSPENDIDA
   CON_INCIDENCIA
+  // Baja de la asociacion completa (20 sept 2026): no se borra nada, el historial se conserva.
+  ELIMINADA
 }
 
 enum OrgPlan {
@@ -221,6 +223,10 @@ enum VehicleType {
   SPRINTER
   HIACE
   MASTER
+  // Marca/modelo fuera del catalogo (QA 20 sept 2026): la unidad real no es
+  // ninguna de las tres de arriba -- se guarda marca y modelo como texto libre
+  // (ver CreateVehicleDto) en vez de forzar una de las tres opciones.
+  OTRO
 }
 
 enum RouteDir {

@@ -21,7 +21,7 @@ import {
   isValidPhone, isValidLicense, isValidOptionalPhone, maskLicense, formatLicenseExpiry,
   licenseExpiryInputValue, licenseDatesError, licenseStatus, todayInputValue,
   PERSON_DOCUMENT_TYPES, type PersonDocumentType, LICENSE_CATEGORIES,
-  isValidDocument, sanitizeDocument, documentError, documentPlaceholder, documentLabel,
+  isValidDocument, sanitizeDocument, documentError, documentPlaceholder, documentLabel, capitalizeWords,
 } from '../../lib/validators';
 
 type PersonTab = 'conductores' | 'socios' | 'administradores' | 'pendientes';
@@ -203,7 +203,7 @@ function RegisterSocioModal({
           <fieldset>
             <legend className="text-base font-semibold text-t1 mb-3">Datos personales y acceso</legend>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Nombre completo" required><input className={inputClass} value={form.name} onChange={e => set('name', e.target.value)} /></Field>
+              <Field label="Nombre completo" required><input className={inputClass} value={form.name} onChange={e => set('name', capitalizeWords(e.target.value))} /></Field>
               <Field label="Tipo de documento" required>
                 <select className={inputClass} value={form.documentType} onChange={e => { set('documentType', e.target.value); set('dni', ''); }}>
                   {PERSON_DOCUMENT_TYPES.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
@@ -449,7 +449,7 @@ function RegisterDriverModal({
           <fieldset>
             <legend className="text-base font-semibold text-t1 mb-3">Datos personales y acceso</legend>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Nombre completo" required><input className={inputClass} value={form.name} onChange={e => set('name', e.target.value)} /></Field>
+              <Field label="Nombre completo" required><input className={inputClass} value={form.name} onChange={e => set('name', capitalizeWords(e.target.value))} /></Field>
               <Field label="Tipo de documento" required>
                 <select className={inputClass} value={form.documentType} onChange={e => { set('documentType', e.target.value as PersonDocumentType); set('dni', ''); }}>
                   {PERSON_DOCUMENT_TYPES.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}

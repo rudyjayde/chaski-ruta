@@ -404,7 +404,7 @@ function RegisterWizard({ companies, units, onClose, onCreated }: { companies: C
   const [step, setStep] = useState<WizardStep>(1);
   const [form, setForm] = useState({
     companyId: '',
-    plate: '', brand: '', year: '',
+    plate: '', brand: '', year: '', customBrand: '', customModel: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -413,6 +413,9 @@ function RegisterWizard({ companies, units, onClose, onCreated }: { companies: C
   const set = (k: string, v: string) => { setForm(prev => ({ ...prev, [k]: v })); setError(''); };
 
   // El modelo no se escribe: sale de la marca elegida (una marca = un modelo).
+  // "Otro" (QA 20 sept 2026): la unidad no es ninguna de las tres del catalogo --
+  // se escribe la marca y el modelo a mano.
+  const isOtherBrand = form.brand === 'Otro';
   const brandInfo = findVehicleBrand(form.brand);
 
   // Aviso en vivo -- la placa repetida se ve apenas se escribe, no al final.
@@ -448,7 +451,12 @@ function RegisterWizard({ companies, units, onClose, onCreated }: { companies: C
     if (target === 2) {
       if (!isValidPlate(form.plate)) return PLATE_ERROR;
       if (plateMessage) return plateMessage;
-      if (!brandInfo) return 'Selecciona la marca.';
+      if (!form.brand) return 'Selecciona la marca.';
+      if (isOtherBrand) {
+        if (!form.customBrand.trim() || !form.customModel.trim()) return 'Escribe la marca y el modelo del vehículo.';
+      } else if (!brandInfo) {
+        return 'Selecciona la marca.';
+      }
       if (!isValidYear(form.year)) return YEAR_ERROR();
     }
     return '';
@@ -464,15 +472,15 @@ function RegisterWizard({ companies, units, onClose, onCreated }: { companies: C
 
   const saveRegistration = async () => {
     const message = validateStep(1) || validateStep(2);
-    if (message || !brandInfo) { setError(message); return; }
+    if (message || (!isOtherBrand && !brandInfo)) { setError(message); return; }
     setSaving(true);
     setError('');
     try {
       const created = await createVehicle({
         companyId: form.companyId,
-        vehicleType: brandInfo.type,
+        vehicleType: isOtherBrand ? 'OTRO' : brandInfo!.type,
         plate: form.plate,
-        model: `${brandInfo.brand} ${brandInfo.model}`,
+        model: isOtherBrand ? `${form.customBrand.trim()} ${form.customModel.trim()}` : `${brandInfo!.brand} ${brandInfo!.model}`,
         year: Number(form.year),
         routeAssignment: 'AMBAS',
       });
@@ -549,12 +557,26 @@ function RegisterWizard({ companies, units, onClose, onCreated }: { companies: C
                 <select value={form.brand} onChange={e => set('brand', e.target.value)} className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary">
                   <option value="">Seleccionar marca…</option>
                   {VEHICLE_BRANDS.map(b => <option key={b.brand} value={b.brand}>{b.brand}</option>)}
+                  <option value="Otro">Otro</option>
                 </select>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-t1 mb-1">Modelo</label>
-                <input value={brandInfo?.model ?? ''} readOnly tabIndex={-1} placeholder="Se completa al elegir la marca" className="w-full h-9 px-3 border border-border rounded-lg text-sm bg-bg text-t2" />
-              </div>
+              {isOtherBrand ? (
+                <>
+                  <div>
+                    <label className="block text-xs font-medium text-t1 mb-1">¿Cuál marca? <span className="text-danger">*</span></label>
+                    <input value={form.customBrand} onChange={e => set('customBrand', e.target.value)} placeholder="Ej. Kia" className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-t1 mb-1">¿Cuál modelo? <span className="text-danger">*</span></label>
+                    <input value={form.customModel} onChange={e => set('customModel', e.target.value)} placeholder="Ej. Grand Carnival" className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <label className="block text-xs font-medium text-t1 mb-1">Modelo</label>
+                  <input value={brandInfo?.model ?? ''} readOnly tabIndex={-1} placeholder="Se completa al elegir la marca" className="w-full h-9 px-3 border border-border rounded-lg text-sm bg-bg text-t2" />
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-medium text-t1 mb-1">Año <span className="text-danger">*</span></label>
                 <input
@@ -603,7 +625,7 @@ function RegisterWizard({ companies, units, onClose, onCreated }: { companies: C
                   { label: 'Código', value: 'Se asignará automáticamente' },
                   { label: 'Empresa', value: companies.find(c => c.id === form.companyId)?.name || '—' },
                   { label: 'Placa', value: form.plate || '—', mono: true },
-                  { label: 'Modelo', value: [brandInfo?.brand, brandInfo?.model, form.year].filter(Boolean).join(' ') || '—' },
+                  { label: 'Modelo', value: [isOtherBrand ? form.customBrand.trim() : brandInfo?.brand, isOtherBrand ? form.customModel.trim() : brandInfo?.model, form.year].filter(Boolean).join(' ') || '—' },
                 ].map(row => (
                   <div key={row.label} className="flex justify-between px-3 py-2">
                     <span className="text-t2">{row.label}</span>

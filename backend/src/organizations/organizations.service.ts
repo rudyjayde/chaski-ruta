@@ -1,24 +1,34 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
+import { DeleteOrganizationDto } from './dto/delete-organization.dto';
 import { JwtPayload } from '../auth/jwt.strategy';
 import { MailService } from '../mail/mail.service';
 import { AuthService } from '../auth/auth.service';
 import { hasValidRucCheckDigit, RUC_CHECK_MESSAGE } from '../common/validators';
 
-// Aplana operationalConfig.terminalOriginName/terminalDestinationName al nivel
-// raiz de la asociacion -- cada asociacion muestra SU PROPIO corredor, nunca el
-// de otra (ver comentario en OperationalConfig, schema.prisma). Los defaults
+// Aplana operationalConfig.terminalOriginName/terminalDestinationName (y sus
+// direcciones completas, si vienen seleccionadas) al nivel raiz de la
+// asociacion -- cada asociacion muestra SU PROPIO corredor, nunca el de otra
+// (ver comentario en OperationalConfig, schema.prisma). Los defaults
 // (Juli/Puno) solo aplican si la asociacion todavia no tiene OperationalConfig.
-function flattenCorridor<T extends { operationalConfig?: { terminalOriginName: string; terminalDestinationName: string } | null }>(
-  org: T,
-) {
+type Corridor = {
+  terminalOriginName: string;
+  terminalDestinationName: string;
+  terminalOriginAddress?: string | null;
+  terminalDestinationAddress?: string | null;
+};
+function flattenCorridor<T extends { operationalConfig?: Corridor | null }>(org: T) {
   const { operationalConfig, ...rest } = org;
   return {
     ...rest,
     terminalOriginName: operationalConfig?.terminalOriginName ?? 'Juli',
     terminalDestinationName: operationalConfig?.terminalDestinationName ?? 'Puno',
+    ...(operationalConfig && 'terminalOriginAddress' in operationalConfig
+      ? { terminalOriginAddress: operationalConfig.terminalOriginAddress, terminalDestinationAddress: operationalConfig.terminalDestinationAddress }
+      : {}),
   };
 }
 
@@ -32,6 +42,7 @@ export class OrganizationsService {
 
   async findAll() {
     const orgs = await this.prisma.organization.findMany({
+      where: { status: { not: 'ELIMINADA' } },
       orderBy: { createdAt: 'desc' },
       include: { operationalConfig: { select: { terminalOriginName: true, terminalDestinationName: true } } },
     });
@@ -61,7 +72,9 @@ export class OrganizationsService {
         name: true,
         ruc: true,
         logoUrl: true,
-        operationalConfig: { select: { terminalOriginName: true, terminalDestinationName: true } },
+        operationalConfig: {
+          select: { terminalOriginName: true, terminalDestinationName: true, terminalOriginAddress: true, terminalDestinationAddress: true },
+        },
       },
       orderBy: { name: 'asc' },
     });
@@ -296,6 +309,71 @@ export class OrganizationsService {
   }
 
   /**
+   * Eliminar una asociacion completa (20 sept 2026): es una BAJA, no un borrado
+   * -- viajes, manifiestos, pasajeros, personas, unidades y auditoria se
+   * conservan tal como estaban hasta este dia. La asociacion sale del listado,
+   * del portal y de los avisos, y sus cuentas quedan suspendidas para que nadie
+   * de ahi pueda volver a entrar. Solo Super Admin, con motivo obligatorio; se
+   * rechaza si todavia tiene viajes en curso o unidades en cola.
+   */
+  async remove(id: string, actor: JwtPayload, dto: DeleteOrganizationDto) {
+    const org = await this.prisma.organization.findUnique({ where: { id }, select: { id: true, name: true, ruc: true, status: true } });
+    if (!org) throw new NotFoundException('Asociacion no encontrada');
+    if (org.status === 'ELIMINADA') throw new ConflictException(`${org.name} ya fue eliminada.`);
+
+    const [openTrips, queued] = await Promise.all([
+      this.prisma.trip.count({ where: { organizationId: id, status: { in: ['PROGRAMADO', 'ACTIVO'] } } }),
+      this.prisma.queueEntry.count({ where: { organizationId: id } }),
+    ]);
+    if (openTrips > 0 || queued > 0) {
+      throw new ConflictException(
+        `${org.name} todavía tiene ${openTrips} viaje(s) en curso y ${queued} unidad(es) en cola. Termínalos o sácalas de la cola antes de eliminarla.`,
+      );
+    }
+
+    // Para que una asociacion NUEVA pueda usar el mismo RUC, los mismos
+    // correos, licencias, WhatsApp o equipos GPS como si la anterior nunca
+    // hubiera existido, los datos que la base exige UNICOS EN TODO EL SISTEMA se
+    // marcan con "~E<fecha>" al final (el original sigue legible) y el equipo
+    // GPS se libera. Todo lo demas (viajes, manifiestos, pasajeros, nombres,
+    // unidades) queda intacto. Lo que era unico solo dentro de la asociacion
+    // (codigos y placas de unidad, empresas) no choca con la nueva.
+    const tag = `~E${Date.now()}`;
+    await this.prisma.$transaction(async (tx) => {
+      const gpsDevices = await tx.vehicle.findMany({
+        where: { organizationId: id, traccarDeviceId: { not: null } },
+        select: { code: true, traccarDeviceId: true },
+      });
+      await tx.organization.update({ where: { id }, data: { status: 'ELIMINADA', ruc: `${org.ruc}${tag}` } });
+      await tx.person.updateMany({
+        where: { organizationId: id, role: { not: 'SUPERADMIN' }, status: { not: 'SUSPENDIDO' } },
+        data: { status: 'SUSPENDIDO' },
+      });
+      await tx.$executeRaw(Prisma.sql`
+        UPDATE "people" SET
+          "email" = "email" || ${tag},
+          "license" = CASE WHEN "license" IS NULL THEN NULL ELSE "license" || ${tag} END,
+          "whatsappPhone" = CASE WHEN "whatsappPhone" IS NULL THEN NULL ELSE "whatsappPhone" || ${tag} END
+        WHERE "organizationId" = ${id}`);
+      await tx.vehicle.updateMany({ where: { organizationId: id }, data: { traccarDeviceId: null } });
+      await tx.auditEntry.create({
+        data: {
+          organizationId: id,
+          actorId: actor.sub,
+          actorRole: actor.role,
+          action: 'ELIMINAR_ASOCIACION',
+          resource: `Asociacion ${org.name}`,
+          resourceId: id,
+          before: `${org.status} · RUC ${org.ruc}${gpsDevices.length ? ` · equipos GPS liberados: ${gpsDevices.map((v) => `${v.code}=${v.traccarDeviceId}`).join(', ')}` : ''}`,
+          after: 'ELIMINADA',
+          reason: dto.reason,
+        },
+      });
+    });
+    return { ok: true, name: org.name };
+  }
+
+  /**
    * Metricas reales de negocio para Super Admin (13 sept 2026, decidido con
    * Jayde) -- "Resumen" antes solo mostraba salud GPS/alertas; esto agrega
    * cuantas asociaciones hay, en que estado, por que plan, altas recientes
@@ -306,13 +384,13 @@ export class OrganizationsService {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000);
     const [total, activas, enConfiguracion, suspendidas, pro, operacion, nuevasUltimos30Dias, unidadesConPlanActivo, unidadesEnGracia] =
       await Promise.all([
-        this.prisma.organization.count(),
+        this.prisma.organization.count({ where: { status: { not: 'ELIMINADA' } } }),
         this.prisma.organization.count({ where: { status: 'ACTIVA' } }),
         this.prisma.organization.count({ where: { status: 'EN_CONFIGURACION' } }),
         this.prisma.organization.count({ where: { status: 'SUSPENDIDA' } }),
-        this.prisma.organization.count({ where: { plan: 'PRO' } }),
-        this.prisma.organization.count({ where: { plan: 'OPERACION' } }),
-        this.prisma.organization.count({ where: { createdAt: { gte: thirtyDaysAgo } } }),
+        this.prisma.organization.count({ where: { plan: 'PRO', status: { not: 'ELIMINADA' } } }),
+        this.prisma.organization.count({ where: { plan: 'OPERACION', status: { not: 'ELIMINADA' } } }),
+        this.prisma.organization.count({ where: { createdAt: { gte: thirtyDaysAgo }, status: { not: 'ELIMINADA' } } }),
         this.prisma.vehicle.count({ where: { traccarDeviceId: { not: null }, gpsVehicularActivo: true } }),
         this.prisma.vehicle.count({ where: { gpsVehicularVenceEn: { gt: new Date() } } }),
       ]);
