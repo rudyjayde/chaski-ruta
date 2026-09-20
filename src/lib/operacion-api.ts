@@ -627,7 +627,9 @@ export async function updateCompany(
 }
 
 export interface CreateVehicleInput {
-  code: string;
+  // Opcional (MEJ-002): si no se manda, el backend asigna el siguiente
+  // correlativo de 3 dígitos de la asociación.
+  code?: string;
   companyId: string;
   vehicleType: VehicleType;
   plate: string;
@@ -638,8 +640,9 @@ export interface CreateVehicleInput {
   currentDriverId?: string;
 }
 
-export async function createVehicle(input: CreateVehicleInput): Promise<void> {
-  await request<RawVehicle>('/vehicles', { method: 'POST', body: JSON.stringify(input) });
+export async function createVehicle(input: CreateVehicleInput): Promise<{ code: string }> {
+  const raw = await request<RawVehicle>('/vehicles', { method: 'POST', body: JSON.stringify(input) });
+  return { code: raw.code };
 }
 
 export async function changeVehicleDriver(vehicleId: string, currentDriverId: string, reason?: string): Promise<void> {
@@ -738,6 +741,7 @@ export interface CreatePersonInput {
   name: string;
   email: string;
   role: 'ADMINISTRADOR' | 'SOCIO' | 'CONDUCTOR';
+  documentType?: 'DNI' | 'CE';
   dni?: string;
   phone?: string;
   code?: string;
@@ -765,6 +769,7 @@ export async function fetchMyPersonProfile(): Promise<Person> {
 // "Mi cuenta": la persona corrige SUS datos (nunca correo, rol ni asociacion).
 export interface UpdateMyProfileInput {
   name?: string;
+  documentType?: 'DNI' | 'CE';
   dni?: string;
   phone?: string;
   license?: string;

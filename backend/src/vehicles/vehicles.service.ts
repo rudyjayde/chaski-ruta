@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateVehicleDto } from './dto/create-vehicle.dto';
 import { VEHICLE_TYPE_BY_MODEL } from './vehicle-catalog';
@@ -78,9 +79,19 @@ export class VehiclesService {
     return this.forActor(vehicle, actor);
   }
 
+  // Siguiente codigo correlativo de 3 digitos para esta asociacion (MEJ-002,
+  // QA 20 sept 2026): "001", "002"... Solo cuenta codigos que son puramente
+  // numericos -- unidades antiguas con un codigo manual no numerico no
+  // rompen el correlativo ni se pisan con el.
+  private async nextVehicleCode(organizationId: string): Promise<string> {
+    const rows = await this.prisma.$queryRaw<{ max: number | null }[]>(
+      Prisma.sql`SELECT MAX(CAST("code" AS INTEGER)) AS max FROM "vehicles" WHERE "organizationId" = ${organizationId} AND "code" ~ '^[0-9]+$'`,
+    );
+    const max = Number(rows[0]?.max ?? 0);
+    return String(max + 1).padStart(3, '0');
+  }
+
   async create(organizationId: string, dto: CreateVehicleDto) {
-    const code = dto.code.trim();
-    if (!code) throw new BadRequestException('El código de unidad no puede estar vacío.');
     if (VEHICLE_TYPE_BY_MODEL[dto.model] !== dto.vehicleType) {
       throw new BadRequestException('El tipo de vehículo no corresponde a la marca y modelo elegidos.');
     }
@@ -93,11 +104,8 @@ export class VehiclesService {
       throw new BadRequestException('La empresa elegida no existe en esta asociación.');
     }
 
-    // Si el codigo o la placa pertenecen a una unidad dada de baja, no es un
-    // duplicado a rechazar sino una unidad que vuelve: se ofrece restaurarla.
-    const sameCode = await this.prisma.vehicle.findFirst({ where: { organizationId, code }, select: { id: true, status: true } });
-    if (sameCode?.status === 'BAJA') this.throwRetiredMatch(sameCode.id, `La unidad ${code} fue dada de baja antes.`);
-    if (sameCode) throw new ConflictException(`La unidad ${code} ya está registrada en esta asociación.`);
+    // Si la placa pertenece a una unidad dada de baja, no es un duplicado a
+    // rechazar sino una unidad que vuelve: se ofrece restaurarla.
     const samePlate = await this.prisma.vehicle.findFirst({
       where: { organizationId, plate: dto.plate },
       select: { id: true, code: true, status: true },
@@ -107,35 +115,50 @@ export class VehiclesService {
     }
     if (samePlate) throw new ConflictException(`La placa ${dto.plate} ya está registrada en la unidad ${samePlate.code}.`);
 
-    try {
-      return await this.prisma.$transaction(async (tx) => {
-        const vehicle = await tx.vehicle.create({
-          data: {
-            organizationId,
-            code,
-            companyId: dto.companyId,
-            vehicleType: dto.vehicleType,
-            plate: dto.plate,
-            model: dto.model,
-            year: dto.year,
-            routeAssignment: dto.routeAssignment ?? 'AMBAS',
-            partnerId: dto.partnerId,
-            currentDriverId: dto.currentDriverId,
-          },
-        });
-        await tx.vehiclePlateHistory.create({
-          data: { vehicleId: vehicle.id, plate: dto.plate, fromDate: new Date() },
-        });
-        return vehicle;
-      });
-    } catch (err) {
-      // Dos altas simultaneas con el mismo codigo: la segunda pasa el chequeo
-      // de arriba pero la base de datos igual la rechaza (P2002).
-      if (typeof err === 'object' && err !== null && (err as { code?: string }).code === 'P2002') {
-        throw new ConflictException(`La unidad ${code} ya está registrada en esta asociación.`);
-      }
-      throw err;
+    // Codigo manual (excepcional) vs. autogenerado (MEJ-002): si no se manda
+    // codigo, el sistema asigna el siguiente correlativo -- el usuario ya no
+    // tiene que inventarlo ni puede chocar con uno existente.
+    const manualCode = dto.code?.trim() || undefined;
+    if (manualCode) {
+      const sameCode = await this.prisma.vehicle.findFirst({ where: { organizationId, code: manualCode }, select: { id: true, status: true } });
+      if (sameCode?.status === 'BAJA') this.throwRetiredMatch(sameCode.id, `La unidad ${manualCode} fue dada de baja antes.`);
+      if (sameCode) throw new ConflictException(`La unidad ${manualCode} ya está registrada en esta asociación.`);
     }
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const code = manualCode ?? (await this.nextVehicleCode(organizationId));
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const vehicle = await tx.vehicle.create({
+            data: {
+              organizationId,
+              code,
+              companyId: dto.companyId,
+              vehicleType: dto.vehicleType,
+              plate: dto.plate,
+              model: dto.model,
+              year: dto.year,
+              routeAssignment: dto.routeAssignment ?? 'AMBAS',
+              partnerId: dto.partnerId,
+              currentDriverId: dto.currentDriverId,
+            },
+          });
+          await tx.vehiclePlateHistory.create({
+            data: { vehicleId: vehicle.id, plate: dto.plate, fromDate: new Date() },
+          });
+          return vehicle;
+        });
+      } catch (err) {
+        // Dos altas simultaneas con el mismo codigo: la segunda pasa el
+        // chequeo de arriba pero la base de datos igual la rechaza (P2002).
+        // Con codigo manual eso es un duplicado real; con codigo
+        // autogenerado se reintenta con el siguiente correlativo.
+        const isConflict = typeof err === 'object' && err !== null && (err as { code?: string }).code === 'P2002';
+        if (!isConflict) throw err;
+        if (manualCode) throw new ConflictException(`La unidad ${manualCode} ya está registrada en esta asociación.`);
+      }
+    }
+    throw new ConflictException('No se pudo asignar un código de unidad. Intenta de nuevo.');
   }
 
   // Una unidad con viaje en curso o en una cola no se puede desactivar ni dar de baja.

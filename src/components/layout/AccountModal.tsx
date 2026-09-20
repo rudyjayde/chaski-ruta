@@ -2,7 +2,12 @@ import { useEffect, useState } from 'react';
 import { Lock, X, CheckCircle } from 'lucide-react';
 import { useAuth, requestPasswordResetApi } from '../../contexts/AuthContext';
 import { fetchMyPersonProfile, updateMyProfile } from '../../lib/operacion-api';
-import { DNI_ERROR, PHONE_ERROR, LICENSE_ERROR, dniInputProps, phoneInputProps, sanitizeDni, sanitizePhone, sanitizeLicense, isValidOptionalDni, isValidOptionalPhone, isValidLicense, licenseExpiryInputValue, licenseDatesError, todayInputValue } from '../../lib/validators';
+import {
+  PHONE_ERROR, LICENSE_ERROR, dniInputProps, phoneInputProps, sanitizePhone, sanitizeLicense,
+  isValidOptionalPhone, isValidLicense, licenseExpiryInputValue, licenseDatesError, todayInputValue, licenseStatus,
+  PERSON_DOCUMENT_TYPES, type PersonDocumentType, LICENSE_CATEGORIES,
+  isValidDocument, sanitizeDocument, documentError, documentPlaceholder,
+} from '../../lib/validators';
 
 const ROLE_LABEL: Record<string, string> = {
   superadmin: 'Super Admin',
@@ -31,7 +36,7 @@ export default function AccountModal({ onClose }: { onClose: () => void }) {
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const emptyForm = { name: '', dni: '', phone: '', license: '', licenseCategory: '', licenseIssuedAt: '', licenseExpiry: '' };
+  const emptyForm = { name: '', documentType: 'DNI' as PersonDocumentType, dni: '', phone: '', license: '', licenseCategory: '', licenseIssuedAt: '', licenseExpiry: '' };
   const [form, setForm] = useState(emptyForm);
   const [initial, setInitial] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -46,6 +51,7 @@ export default function AccountModal({ onClose }: { onClose: () => void }) {
         if (cancelled) return;
         const loaded = {
           name: p.name ?? '',
+          documentType: (p.documentType ?? 'DNI') as PersonDocumentType,
           dni: p.dni ?? '',
           phone: p.phone ?? '',
           license: p.license ?? '',
@@ -73,7 +79,7 @@ export default function AccountModal({ onClose }: { onClose: () => void }) {
 
   const validate = (): string => {
     if (!form.name.trim()) return 'Escribe tu nombre.';
-    if (!isValidOptionalDni(form.dni)) return DNI_ERROR;
+    if (form.dni && !isValidDocument(form.documentType, form.dni)) return documentError(form.documentType);
     if (!isValidOptionalPhone(form.phone)) return PHONE_ERROR;
     if (isDriver && licenseChanged) {
       if (!isValidLicense(form.license)) return LICENSE_ERROR;
@@ -92,6 +98,7 @@ export default function AccountModal({ onClose }: { onClose: () => void }) {
     try {
       await updateMyProfile({
         name: form.name.trim(),
+        documentType: form.documentType,
         dni: form.dni,
         phone: form.phone,
         ...(isDriver && licenseChanged
@@ -153,8 +160,13 @@ export default function AccountModal({ onClose }: { onClose: () => void }) {
                       <input id="acc-name" value={form.name} onChange={e => set('name', e.target.value)} maxLength={120} className={inputClass} />
                     </Field>
                   </div>
-                  <Field label="DNI" htmlFor="acc-dni" hint="8 números.">
-                    <input id="acc-dni" value={form.dni} onChange={e => set('dni', sanitizeDni(e.target.value))} {...dniInputProps} className={`${inputClass} font-mono`} />
+                  <Field label="Tipo de documento" htmlFor="acc-doc-type">
+                    <select id="acc-doc-type" value={form.documentType} onChange={e => { set('documentType', e.target.value); set('dni', ''); }} className={inputClass}>
+                      {PERSON_DOCUMENT_TYPES.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+                    </select>
+                  </Field>
+                  <Field label={form.documentType === 'CE' ? 'Número de carné' : 'DNI'} htmlFor="acc-dni" hint={documentPlaceholder(form.documentType)}>
+                    <input id="acc-dni" value={form.dni} onChange={e => set('dni', sanitizeDocument(form.documentType, e.target.value))} {...(form.documentType === 'DNI' ? dniInputProps : {})} className={`${inputClass} font-mono`} />
                   </Field>
                   <Field label="Celular" htmlFor="acc-phone" hint="9 números.">
                     <input id="acc-phone" value={form.phone} onChange={e => set('phone', sanitizePhone(e.target.value))} {...phoneInputProps} className={`${inputClass} font-mono`} />
@@ -165,7 +177,10 @@ export default function AccountModal({ onClose }: { onClose: () => void }) {
                         <input id="acc-license" value={form.license} onChange={e => set('license', sanitizeLicense(e.target.value))} placeholder="Q12345678" autoComplete="off" className={`${inputClass} font-mono`} />
                       </Field>
                       <Field label="Categoría" htmlFor="acc-license-cat">
-                        <input id="acc-license-cat" value={form.licenseCategory} onChange={e => set('licenseCategory', e.target.value)} placeholder="Ej. A-IIb" maxLength={20} className={inputClass} />
+                        <select id="acc-license-cat" value={form.licenseCategory} onChange={e => set('licenseCategory', e.target.value)} className={inputClass}>
+                          <option value="">Seleccionar categoría...</option>
+                          {LICENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
                       </Field>
                       <Field label="Fecha de emisión" htmlFor="acc-license-iss" hint={form.license && !form.licenseIssuedAt ? 'Falta registrar la fecha de emisión.' : undefined}>
                         <input id="acc-license-iss" type="date" max={todayInputValue()} value={form.licenseIssuedAt} onChange={e => set('licenseIssuedAt', e.target.value)} className={inputClass} />
@@ -176,6 +191,9 @@ export default function AccountModal({ onClose }: { onClose: () => void }) {
                     </>
                   )}
                 </div>
+                {isDriver && form.licenseExpiry && licenseStatus(form.licenseExpiry).kind === 'vencida' && (
+                  <p className="text-xs text-danger mt-3">Tu licencia está vencida — no podrás inscribirte en la cola hasta renovarla.</p>
+                )}
                 {error && <p className="text-xs text-danger mt-3">{error}</p>}
                 {saved && (
                   <p className="text-xs text-ok mt-3 flex items-center gap-1.5"><CheckCircle size={13} /> Tus datos se guardaron.</p>

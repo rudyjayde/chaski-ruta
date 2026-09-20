@@ -1,5 +1,11 @@
 import { IsDateString, IsEmail, IsIn, IsOptional, IsString, MinLength, MaxLength } from 'class-validator';
-import { IsOptionalDni, IsOptionalLicense, IsOptionalPhone } from '../../common/validators';
+import {
+  IsOptionalDocumentNumber,
+  IsOptionalLicense,
+  IsOptionalPhone,
+  LICENSE_CATEGORIES,
+  PERSON_DOCUMENT_TYPES,
+} from '../../common/validators';
 
 export class CreatePersonDto {
   @IsString()
@@ -15,7 +21,12 @@ export class CreatePersonDto {
   // SUPERADMIN nunca se crea desde aqui — es exclusivo de CHASKI AI (seed.ts).
   role: 'ADMINISTRADOR' | 'SOCIO' | 'CONDUCTOR';
 
-  @IsOptionalDni()
+  // Tipo del documento que trae `dni` -- por defecto DNI si no se especifica.
+  @IsOptional()
+  @IsIn(PERSON_DOCUMENT_TYPES, { message: `El tipo de documento debe ser: ${PERSON_DOCUMENT_TYPES.join(' o ')}` })
+  documentType?: 'DNI' | 'CE';
+
+  @IsOptionalDocumentNumber()
   @IsString()
   dni?: string;
 
@@ -41,8 +52,7 @@ export class CreatePersonDto {
   license?: string;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(20)
+  @IsIn(LICENSE_CATEGORIES, { message: `La categoría debe ser una de: ${LICENSE_CATEGORIES.join(', ')}` })
   licenseCategory?: string;
 
   // Fecha de vencimiento, "AAAA-MM-DD".

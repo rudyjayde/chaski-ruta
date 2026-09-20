@@ -16,7 +16,13 @@ import {
   fetchVehicles, fetchCompanies, type CompanyOption,
   changeVehiclePartner, changeVehicleDriver, updatePersonStatus, updatePersonLicense, resetPersonDevice,
 } from '../../lib/operacion-api';
-import { DNI_ERROR, PHONE_ERROR, LICENSE_ERROR, dniInputProps, phoneInputProps, sanitizeDni, sanitizePhone, sanitizeLicense, isValidDni, isValidPhone, isValidLicense, isValidOptionalDni, isValidOptionalPhone, maskLicense, formatLicenseExpiry, licenseExpiryInputValue, licenseDatesError, licenseStatus, todayInputValue } from '../../lib/validators';
+import {
+  PHONE_ERROR, LICENSE_ERROR, dniInputProps, phoneInputProps, sanitizePhone, sanitizeLicense,
+  isValidPhone, isValidLicense, isValidOptionalPhone, maskLicense, formatLicenseExpiry,
+  licenseExpiryInputValue, licenseDatesError, licenseStatus, todayInputValue,
+  PERSON_DOCUMENT_TYPES, type PersonDocumentType, LICENSE_CATEGORIES,
+  isValidDocument, sanitizeDocument, documentError, documentPlaceholder, documentLabel,
+} from '../../lib/validators';
 
 type PersonTab = 'conductores' | 'socios' | 'administradores' | 'pendientes';
 
@@ -47,6 +53,7 @@ const isUnassignedDriver = (unit: Unit) => !unit.currentDriverId;
 
 interface SocioForm {
   name: string;
+  documentType: PersonDocumentType;
   dni: string;
   email: string;
   phone: string;
@@ -61,7 +68,7 @@ interface SocioForm {
 }
 
 const EMPTY_SOCIO: SocioForm = {
-  name: '', dni: '', email: '', phone: '', company: '', vehicleCodes: [],
+  name: '', documentType: 'DNI', dni: '', email: '', phone: '', company: '', vehicleCodes: [],
   drivesOwn: false, driverUnit: '', license: '', licenseCategory: '', licenseIssuedAt: '', licenseExpiry: '',
 };
 
@@ -113,8 +120,8 @@ function RegisterSocioModal({
 
   const save = async () => {
     const email = form.email.trim().toLowerCase();
-    if (!form.name.trim() || !isValidDni(form.dni) || !email || !isValidPhone(form.phone) || !form.company) {
-      return setError('Completa los datos del socio. El DNI debe tener 8 dígitos y el teléfono 9.');
+    if (!form.name.trim() || !isValidDocument(form.documentType, form.dni) || !email || !isValidPhone(form.phone) || !form.company) {
+      return setError(!isValidDocument(form.documentType, form.dni) ? documentError(form.documentType) : 'Completa los datos del socio. El teléfono debe tener 9 dígitos.');
     }
     if (people.some(person => person.email.toLowerCase() === email && person.role === 'SOCIO')) {
       return setError('Ya existe una cuenta de socio con ese correo. Abre su perfil para vincularle vehículos sin crear otra cuenta.');
@@ -136,6 +143,7 @@ function RegisterSocioModal({
         name: form.name.trim(),
         email,
         role: 'SOCIO',
+        documentType: form.documentType,
         dni: form.dni,
         phone: form.phone,
         company: form.company,
@@ -146,6 +154,7 @@ function RegisterSocioModal({
           name: form.name.trim(),
           email,
           role: 'CONDUCTOR',
+          documentType: form.documentType,
           dni: form.dni,
           phone: form.phone,
           company: form.company,
@@ -195,7 +204,14 @@ function RegisterSocioModal({
             <legend className="text-base font-semibold text-t1 mb-3">Datos personales y acceso</legend>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Nombre completo" required><input className={inputClass} value={form.name} onChange={e => set('name', e.target.value)} /></Field>
-              <Field label="DNI" required><input className={inputClass} {...dniInputProps} value={form.dni} onChange={e => set('dni', sanitizeDni(e.target.value))} /></Field>
+              <Field label="Tipo de documento" required>
+                <select className={inputClass} value={form.documentType} onChange={e => { set('documentType', e.target.value); set('dni', ''); }}>
+                  {PERSON_DOCUMENT_TYPES.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+                </select>
+              </Field>
+              <Field label={form.documentType === 'CE' ? 'Número de carné' : 'DNI'} required>
+                <input className={inputClass} placeholder={documentPlaceholder(form.documentType)} {...(form.documentType === 'DNI' ? dniInputProps : {})} value={form.dni} onChange={e => set('dni', sanitizeDocument(form.documentType, e.target.value))} />
+              </Field>
               <Field label="Correo de acceso" required><input inputMode="email" className={inputClass} value={form.email} onChange={e => set('email', e.target.value)} /></Field>
               <Field label="Teléfono" required><input className={inputClass} {...phoneInputProps} value={form.phone} onChange={e => set('phone', sanitizePhone(e.target.value))} /></Field>
               <div className="col-span-2">
@@ -303,7 +319,12 @@ function RegisterSocioModal({
                   </Field>
                 </div>
                 <Field label="Número de licencia" required><input className={`${inputClass} font-mono`} placeholder="Q12345678" autoComplete="off" value={form.license} onChange={e => set('license', sanitizeLicense(e.target.value))} /></Field>
-                <Field label="Categoría" required><input className={inputClass} placeholder="Ej. A-IIb" value={form.licenseCategory} onChange={e => set('licenseCategory', e.target.value)} /></Field>
+                <Field label="Categoría" required>
+                  <select className={inputClass} value={form.licenseCategory} onChange={e => set('licenseCategory', e.target.value)}>
+                    <option value="">Seleccionar categoría...</option>
+                    {LICENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </Field>
                 <Field label="Fecha de emisión" required><input type="date" max={todayInputValue()} className={inputClass} value={form.licenseIssuedAt} onChange={e => set('licenseIssuedAt', e.target.value)} /></Field>
                 <Field label="Vencimiento" required><input type="date" className={inputClass} value={form.licenseExpiry} onChange={e => set('licenseExpiry', e.target.value)} /></Field>
               </div>
@@ -327,6 +348,7 @@ function RegisterSocioModal({
 
 interface DriverForm {
   name: string;
+  documentType: PersonDocumentType;
   dni: string;
   email: string;
   phone: string;
@@ -338,7 +360,7 @@ interface DriverForm {
 }
 
 const EMPTY_DRIVER: DriverForm = {
-  name: '', dni: '', email: '', phone: '', unitCode: '',
+  name: '', documentType: 'DNI', dni: '', email: '', phone: '', unitCode: '',
   license: '', licenseCategory: '', licenseIssuedAt: '', licenseExpiry: '',
 };
 
@@ -370,8 +392,8 @@ function RegisterDriverModal({
 
   const save = async () => {
     const email = form.email.trim().toLowerCase();
-    if (!form.name.trim() || !isValidDni(form.dni) || !email || !isValidPhone(form.phone)) {
-      return setError('Completa los datos del conductor. El DNI debe tener 8 dígitos y el teléfono 9.');
+    if (!form.name.trim() || !isValidDocument(form.documentType, form.dni) || !email || !isValidPhone(form.phone)) {
+      return setError(!isValidDocument(form.documentType, form.dni) ? documentError(form.documentType) : 'Completa los datos del conductor. El teléfono debe tener 9 dígitos.');
     }
     if (!selectedUnit || !form.license || !form.licenseCategory || !form.licenseIssuedAt || !form.licenseExpiry) {
       return setError('Selecciona la unidad y completa todos los datos de la licencia.');
@@ -393,6 +415,7 @@ function RegisterDriverModal({
         name: form.name.trim(),
         email,
         role: 'CONDUCTOR',
+        documentType: form.documentType,
         dni: form.dni,
         phone: form.phone,
         company: selectedUnit.company,
@@ -427,7 +450,14 @@ function RegisterDriverModal({
             <legend className="text-base font-semibold text-t1 mb-3">Datos personales y acceso</legend>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Nombre completo" required><input className={inputClass} value={form.name} onChange={e => set('name', e.target.value)} /></Field>
-              <Field label="DNI" required><input className={inputClass} {...dniInputProps} value={form.dni} onChange={e => set('dni', sanitizeDni(e.target.value))} /></Field>
+              <Field label="Tipo de documento" required>
+                <select className={inputClass} value={form.documentType} onChange={e => { set('documentType', e.target.value as PersonDocumentType); set('dni', ''); }}>
+                  {PERSON_DOCUMENT_TYPES.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+                </select>
+              </Field>
+              <Field label={form.documentType === 'CE' ? 'Número de carné' : 'DNI'} required>
+                <input className={inputClass} placeholder={documentPlaceholder(form.documentType)} {...(form.documentType === 'DNI' ? dniInputProps : {})} value={form.dni} onChange={e => set('dni', sanitizeDocument(form.documentType, e.target.value))} />
+              </Field>
               <Field label="Correo autorizado" required><input inputMode="email" className={inputClass} value={form.email} onChange={e => set('email', e.target.value)} /></Field>
               <Field label="Teléfono" required><input className={inputClass} {...phoneInputProps} value={form.phone} onChange={e => set('phone', sanitizePhone(e.target.value))} /></Field>
             </div>
@@ -443,7 +473,12 @@ function RegisterDriverModal({
             <legend className="text-base font-semibold text-t1 mb-3">Licencia de conducir</legend>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Número de licencia" required><input className={`${inputClass} font-mono`} placeholder="Q12345678" autoComplete="off" value={form.license} onChange={e => set('license', sanitizeLicense(e.target.value))} /></Field>
-              <Field label="Categoría" required><input className={inputClass} placeholder="Ej. A-IIb" value={form.licenseCategory} onChange={e => set('licenseCategory', e.target.value)} /></Field>
+              <Field label="Categoría" required>
+                <select className={inputClass} value={form.licenseCategory} onChange={e => set('licenseCategory', e.target.value)}>
+                  <option value="">Seleccionar categoría...</option>
+                  {LICENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </Field>
               <Field label="Fecha de emisión" required><input type="date" max={todayInputValue()} className={inputClass} value={form.licenseIssuedAt} onChange={e => set('licenseIssuedAt', e.target.value)} /></Field>
               <Field label="Vencimiento" required><input type="date" className={inputClass} value={form.licenseExpiry} onChange={e => set('licenseExpiry', e.target.value)} /></Field>
             </div>
@@ -580,7 +615,12 @@ function LicenseModal({ person, onClose, onSaved }: { person: Person; onClose: (
         <p className="text-xs text-t2 mb-4">1 letra seguida de 8 números, por ejemplo Q12345678.</p>
         <div className="space-y-3">
           <Field label="Número de licencia" required><input className={`${inputClass} font-mono`} placeholder="Q12345678" autoComplete="off" value={license} onChange={e => { setLicense(sanitizeLicense(e.target.value)); setError(''); }} /></Field>
-          <Field label="Categoría" required><input className={inputClass} placeholder="Ej. A-IIb" value={category} onChange={e => { setCategory(e.target.value); setError(''); }} /></Field>
+          <Field label="Categoría" required>
+            <select className={inputClass} value={category} onChange={e => { setCategory(e.target.value); setError(''); }}>
+              <option value="">Seleccionar categoría...</option>
+              {LICENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </Field>
           <Field label="Fecha de emisión" required><input type="date" max={todayInputValue()} className={inputClass} value={issued} onChange={e => { setIssued(e.target.value); setError(''); }} /></Field>
           <Field label="Vencimiento" required><input type="date" className={inputClass} value={expiry} onChange={e => { setExpiry(e.target.value); setError(''); }} /></Field>
         </div>
@@ -659,7 +699,7 @@ function PersonDetail({ person, onClose, onLink, onStatusChanged }: { person: Pe
         <div className="text-center py-3"><div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-lg mx-auto mb-2">{person.name[0]}</div><p className="text-sm font-semibold text-t1">{person.name}</p><p className="text-t2 mt-0.5">{person.role} · {person.company ?? org?.name ?? 'Sin dato'}</p><span className={`inline-block mt-1 text-[11px] px-2 py-0.5 rounded font-medium ${STATUS_STYLE[person.status]}`}>{person.status}</span></div>
         {error && <div className="p-2.5 bg-danger/5 text-danger border border-danger/30 rounded-lg text-sm">{error}</div>}
         <div className="border border-border rounded-lg divide-y divide-border">
-          {[{ label: 'DNI', value: maskDni(person.dni) }, { label: 'Correo', value: person.email }, { label: 'Teléfono', value: person.phone || 'No registrado' }, { label: 'Unidad', value: person.linkedUnit || person.code || 'Sin vincular' }].map(row => <div key={row.label} className="flex justify-between gap-3 px-3 py-2"><span className="text-t2">{row.label}</span><span className="text-t1 font-medium truncate max-w-[170px]">{row.value}</span></div>)}
+          {[{ label: documentLabel(person.documentType), value: maskDni(person.dni) }, { label: 'Correo', value: person.email }, { label: 'Teléfono', value: person.phone || 'No registrado' }, { label: 'Unidad', value: person.linkedUnit || person.code || 'Sin vincular' }].map(row => <div key={row.label} className="flex justify-between gap-3 px-3 py-2"><span className="text-t2">{row.label}</span><span className="text-t1 font-medium truncate max-w-[170px]">{row.value}</span></div>)}
         </div>
         {person.role === 'CONDUCTOR' && (
           <div className="border border-border rounded-lg p-3 space-y-2">
@@ -761,7 +801,7 @@ function CreatePersonModal({
   onCreated: (message: string) => void;
 }) {
   const [form, setForm] = useState<CreatePersonInput>({
-    name: '', email: '', role: fixedRole ?? 'CONDUCTOR', dni: '', phone: '', code: '', company: '',
+    name: '', email: '', role: fixedRole ?? 'CONDUCTOR', documentType: 'DNI', dni: '', phone: '', code: '', company: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -775,8 +815,9 @@ function CreatePersonModal({
       setError('Completa al menos el nombre y el correo.');
       return;
     }
-    if (!isValidOptionalDni(form.dni?.trim() ?? '')) {
-      setError(DNI_ERROR);
+    const trimmedDni = form.dni?.trim() ?? '';
+    if (trimmedDni && !isValidDocument(form.documentType ?? 'DNI', trimmedDni)) {
+      setError(documentError(form.documentType ?? 'DNI'));
       return;
     }
     if (!isValidOptionalPhone(form.phone?.trim() ?? '')) {
@@ -824,7 +865,16 @@ function CreatePersonModal({
             </Field>
           )}
           <div className="grid grid-cols-2 gap-4">
-            <Field label="DNI"><input className={inputClass} {...dniInputProps} value={form.dni} onChange={e => set('dni', sanitizeDni(e.target.value))} /></Field>
+            <Field label="Tipo de documento">
+              <select className={inputClass} value={form.documentType ?? 'DNI'} onChange={e => { set('documentType', e.target.value as CreatePersonInput['documentType']); set('dni', ''); }}>
+                {PERSON_DOCUMENT_TYPES.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+              </select>
+            </Field>
+            <Field label={form.documentType === 'CE' ? 'Número de carné' : 'DNI'}>
+              <input className={inputClass} placeholder={documentPlaceholder(form.documentType ?? 'DNI')} {...((form.documentType ?? 'DNI') === 'DNI' ? dniInputProps : {})} value={form.dni} onChange={e => set('dni', sanitizeDocument(form.documentType ?? 'DNI', e.target.value))} />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
             <Field label="Teléfono"><input className={inputClass} {...phoneInputProps} value={form.phone} onChange={e => set('phone', sanitizePhone(e.target.value))} /></Field>
           </div>
           <div className="grid grid-cols-2 gap-4">

@@ -112,8 +112,12 @@ model Person {
   // nunca dos con el mismo rol. Al hacer login con Google, si el correo tiene
   // mas de una cuenta, el sistema pide elegir con cual entrar (ver auth.service.ts).
   email  String
-  dni    String?
-  phone  String?
+  // Tipo del documento que guarda `dni` (Jayde, 20 sept 2026): DNI o Carne de
+  // Extranjeria -- antes solo se validaba como DNI de 8 digitos, sin forma de
+  // registrar a un conductor extranjero.
+  documentType String  @default("DNI")
+  dni          String?
+  phone        String?
   role   PersonRole
   status PersonStatus @default(PENDIENTE)
 

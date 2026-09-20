@@ -210,6 +210,7 @@ export interface Company {
 export interface Person {
   id: string;
   name: string;
+  documentType?: 'DNI' | 'CE';
   dni: string;
   email: string;
   phone: string;

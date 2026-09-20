@@ -365,6 +365,30 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     r = await call(T.admin, 'POST', '/queues/PUNO_JULI/join', { vehicleId: u[8].id, ...PUNO });
     check('REGLA: una unidad DADA DE BAJA no debería poder ser inscrita ni por el administrador', r.status >= 400, `HTTP ${r.status} ${r.status === 201 ? 'SE INSCRIBIÓ' : msg(r)}`);
 
+    // ═════════ K. QA 20 sept: documento CE, categoría de licencia, licencia vencida, código automático ═════════
+    head('K. Documento de conductor, categoría de licencia, licencia vencida y código automático');
+    const ceOk = await call(T.admin, 'POST', '/people', { name: 'Conductor Extranjero', email: `e2e.${stamp}.ce@example.test`, role: 'CONDUCTOR', documentType: 'CE', dni: 'AB1234567', phone: '987654321' });
+    check('conductor con carné de extranjería (CE) válido se registra', ceOk.status === 201, `HTTP ${ceOk.status} ${msg(ceOk)}`);
+    const ceBad = await call(T.admin, 'POST', '/people', { name: 'Conductor CE malo', email: `e2e.${stamp}.cebad@example.test`, role: 'CONDUCTOR', documentType: 'CE', dni: 'AB1' });
+    check('CE con formato inválido se rechaza', ceBad.status === 400, `HTTP ${ceBad.status} ${msg(ceBad)}`);
+    const catBad = await call(T.admin, 'POST', '/people', { name: 'Conductor cat mala', email: `e2e.${stamp}.catbad@example.test`, role: 'CONDUCTOR', dni: '87651234', license: 'Q12345678', licenseCategory: 'Z-9', licenseIssuedAt: '2024-01-01', licenseExpiry: '2030-01-01' });
+    check('una categoría de licencia fuera del catálogo se rechaza', catBad.status === 400, `HTTP ${catBad.status} ${msg(catBad)}`);
+
+    const autoV1 = await call(T.admin, 'POST', '/vehicles', { companyId: coA.id, vehicleType: 'HIACE', plate: `ZZ${stamp.slice(-1)}-001`, model: 'Toyota Hiace', year: 2024 });
+    check('una unidad sin código recibe uno automático de 3 dígitos', autoV1.status === 201 && /^\d{3}$/.test(autoV1.json.code), `HTTP ${autoV1.status} code=${autoV1.json.code}`);
+    const autoV2 = await call(T.admin, 'POST', '/vehicles', { companyId: coA.id, vehicleType: 'HIACE', plate: `ZZ${stamp.slice(-1)}-002`, model: 'Toyota Hiace', year: 2024 });
+    check('REGLA: la siguiente unidad automática sigue el correlativo', Number(autoV2.json.code) === Number(autoV1.json.code) + 1, `código ${autoV1.json.code} → ${autoV2.json.code}`);
+
+    const expDriver = await mk(orgA.id, 'CONDUCTOR', 'Conductor Vencido', 99);
+    const expVehicle = await prisma.vehicle.create({ data: { organizationId: orgA.id, code: `EXV${stamp.slice(-2)}`, companyId: coA.id, vehicleType: 'HIACE', plate: `EX${stamp.slice(-1)}-999`, model: 'Toyota Hiace', year: 2024, currentDriverId: expDriver.id } });
+    await prisma.person.update({ where: { id: expDriver.id }, data: { license: 'Q99999999', licenseCategory: 'A-IIIa', licenseIssuedAt: new Date('2020-01-01'), licenseExpiry: new Date('2021-01-01') } });
+    const expTok = await tok(expDriver);
+    const joinExpired = await call(expTok, 'POST', '/queues/JULI_PUNO/join', { vehicleId: expVehicle.id, deviceId: 'dev-exp', ...JULI });
+    check('REGLA: una licencia vencida no puede inscribirse en la cola', joinExpired.status === 403 && /venci/i.test(msg(joinExpired)), `HTTP ${joinExpired.status} ${msg(joinExpired)}`);
+    await prisma.person.update({ where: { id: expDriver.id }, data: { licenseExpiry: new Date(Date.now() + 365 * 86400000) } });
+    const joinRenewed = await call(expTok, 'POST', '/queues/JULI_PUNO/join', { vehicleId: expVehicle.id, deviceId: 'dev-exp', ...JULI });
+    check('con la licencia renovada, la unidad ya se puede inscribir', joinRenewed.status === 201, `HTTP ${joinRenewed.status} ${msg(joinRenewed)}`);
+
     // ═════════ J. CONSISTENCIA FINAL ═════════
     head('J. Consistencia de datos');
     await prisma.queueEntry.deleteMany({ where: { organizationId: orgA.id } });

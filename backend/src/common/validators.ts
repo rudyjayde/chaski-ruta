@@ -89,6 +89,13 @@ export const isValidDocument = (type: string | undefined, value: string): boolea
   return Boolean(rule) && rule.test(value);
 };
 
+// ─── Documento de identidad de personas (admin/socio/conductor) ─────────────
+// A diferencia de pasajeros/reclamos, aqui solo aplican DNI y Carne de
+// Extranjeria -- un pasaporte no habilita a conducir en Peru (MTC exige DNI o
+// CE para emitir licencia), asi que no se ofrece como opcion para el personal.
+export const PERSON_DOCUMENT_TYPES = ['DNI', 'CE'] as const;
+export type PersonDocumentType = (typeof PERSON_DOCUMENT_TYPES)[number];
+
 // Valida el numero segun el tipo que viene en el mismo cuerpo (por defecto DNI).
 export const IsDocumentNumber = (typeField = 'documentType', options?: ValidationOptions) => (object: object, propertyName: string) =>
   registerDecorator({
@@ -108,6 +115,22 @@ export const IsDocumentNumber = (typeField = 'documentType', options?: Validatio
       },
     },
   });
+
+// Campo opcional que valida contra el tipo de documento del mismo objeto
+// (por defecto DNI si no se especifica) -- igual que IsOptionalDni pero
+// tambien acepta CE cuando documentType = 'CE'.
+export const IsOptionalDocumentNumber = (typeField = 'documentType') =>
+  applyDecorators(skipEmpty(), IsDocumentNumber(typeField));
+
+// ─── Categoria de licencia de conducir ──────────────────────────────────────
+// Categorias profesionales del MTC que aplican a transporte de personas
+// (Sprinter/Hiace/Master, ruta interprovincial) -- supuesto acordado con
+// Jayde (a confirmar): se listan las 3 categorias A-III (transporte de
+// personas y mercancias); A-I/A-IIa/A-IIb son de vehiculos particulares y no
+// habilitan a conducir una unidad de la asociacion.
+export const LICENSE_CATEGORIES = ['A-IIIa', 'A-IIIb', 'A-IIIc'] as const;
+export type LicenseCategory = (typeof LICENSE_CATEGORIES)[number];
+export const LICENSE_CATEGORY_MESSAGE = `La categoría debe ser una de: ${LICENSE_CATEGORIES.join(', ')}`;
 
 // ─── Contraseña ─────────────────────────────────────────────────────────────
 // 8 a 72 caracteres (72 es el limite real de bcrypt), con al menos una letra y

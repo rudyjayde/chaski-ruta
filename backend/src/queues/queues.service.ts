@@ -221,11 +221,26 @@ export class QueuesService {
       throw new ForbiddenException('No eres el conductor asignado a esta unidad');
     }
     const driverId = vehicle.currentDriverId ?? actor.sub;
+    const driverPerson = await this.prisma.person.findUnique({ where: { id: driverId } });
+
+    // Licencia vencida (QA 20 sept 2026): si el conductor tiene fecha de
+    // vencimiento registrada y ya paso, no puede inscribirse. Un conductor
+    // SIN licencia registrada todavia (siembra inicial) no se bloquea aqui --
+    // eso es un dato incompleto, no una licencia vencida.
+    if (driverPerson?.licenseExpiry) {
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      if (driverPerson.licenseExpiry.getTime() < today.getTime()) {
+        throw new ForbiddenException(
+          `La licencia de ${driverPerson.name} vencio el ${driverPerson.licenseExpiry.toISOString().slice(0, 10)} -- debe renovarla antes de operar`,
+        );
+      }
+    }
 
     // Vinculo cuenta-dispositivo (§3.2): solo se exige cuando el conductor se
     // inscribe el mismo desde su celular — una intervencion de administrador no aplica.
     if (actor.role === 'CONDUCTOR') {
-      const person = await this.prisma.person.findUniqueOrThrow({ where: { id: actor.sub } });
+      const person = driverPerson ?? (await this.prisma.person.findUniqueOrThrow({ where: { id: actor.sub } }));
       if (!dto.deviceId) {
         throw new BadRequestException('Falta el identificador del dispositivo');
       }

@@ -3,10 +3,13 @@ import { IsPlate, IsVehicleYear } from '../../common/validators';
 import { VEHICLE_MODELS } from '../vehicle-catalog';
 
 export class CreateVehicleDto {
+  // Opcional (MEJ-002): si no se manda, el backend asigna el siguiente
+  // correlativo de 3 digitos para la asociacion (ver VehiclesService.create).
+  @IsOptional()
   @IsString()
   @MinLength(1)
   @MaxLength(10)
-  code: string;
+  code?: string;
 
   @IsString()
   companyId: string;

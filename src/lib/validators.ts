@@ -143,6 +143,22 @@ export const documentError = (type: DocumentType) =>
 export const documentPlaceholder = (type: DocumentType) =>
   type === 'DNI' ? '8 números' : type === 'RUC' ? '11 números' : type === 'CE' ? '9 a 12 letras o números' : '6 a 12 letras o números';
 
+// ─── Tipo y numero de documento de personal (admin/socio/conductor) ─────────
+// Solo DNI o Carne de Extranjeria -- un pasaporte no habilita a conducir en
+// Peru, asi que no aplica al personal (a diferencia de un pasajero).
+export type PersonDocumentType = 'DNI' | 'CE';
+export const PERSON_DOCUMENT_TYPES: { value: PersonDocumentType; label: string }[] = [
+  { value: 'DNI', label: 'DNI' },
+  { value: 'CE', label: 'Carné de extranjería' },
+];
+
+// ─── Categoria de licencia de conducir ──────────────────────────────────────
+// Categorias profesionales del MTC para transporte de personas (Sprinter/
+// Hiace/Master) -- supuesto acordado con Jayde (a confirmar). Mismo catalogo
+// que backend/src/common/validators.ts.
+export const LICENSE_CATEGORIES = ['A-IIIa', 'A-IIIb', 'A-IIIc'] as const;
+export const LICENSE_CATEGORY_ERROR = `La categoría debe ser una de: ${LICENSE_CATEGORIES.join(', ')}.`;
+
 // ─── GPS: IMEI del equipo ───────────────────────────────────────────────────
 export const IMEI_ERROR = 'El IMEI debe tener exactamente 15 números.';
 export const sanitizeImei = (value: string) => value.replace(/\D/g, '').slice(0, 15);

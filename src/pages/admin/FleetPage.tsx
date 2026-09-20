@@ -398,33 +398,28 @@ function UnitDetailPanel({ unit, people, gpsStatus, onClose, onChanged }: {
 
 type WizardStep = 1 | 2 | 3;
 
-const STEP_LABELS = ['Código y empresa', 'Vehículo', 'Confirmación'];
+const STEP_LABELS = ['Empresa', 'Vehículo', 'Confirmación'];
 
 function RegisterWizard({ companies, units, onClose, onCreated }: { companies: CompanyOption[]; units: Unit[]; onClose: () => void; onCreated: () => void }) {
   const [step, setStep] = useState<WizardStep>(1);
   const [form, setForm] = useState({
-    code: '', companyId: '',
+    companyId: '',
     plate: '', brand: '', year: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [saved, setSaved] = useState(false);
+  const [assignedCode, setAssignedCode] = useState('');
 
   const set = (k: string, v: string) => { setForm(prev => ({ ...prev, [k]: v })); setError(''); };
 
   // El modelo no se escribe: sale de la marca elegida (una marca = un modelo).
   const brandInfo = findVehicleBrand(form.brand);
 
-  // Avisos en vivo -- la unidad/placa repetida se ve apenas se escribe, no al final.
-  const codeTrimmed = form.code.trim();
-  const unitWithCode = codeTrimmed ? units.find(u => u.code === codeTrimmed) : undefined;
+  // Aviso en vivo -- la placa repetida se ve apenas se escribe, no al final.
+  // El código lo asigna el backend (MEJ-002): ya no se escribe a mano, asi
+  // que no puede repetirse ni hay nada que avisar sobre el aqui.
   const unitWithPlate = isValidPlate(form.plate) ? units.find(u => u.plate === form.plate) : undefined;
-  const retiredMatch = [unitWithCode, unitWithPlate].find(u => u?.status === 'BAJA');
-  const codeMessage = unitWithCode
-    ? unitWithCode.status === 'BAJA'
-      ? `La unidad ${codeTrimmed} fue dada de baja antes (placa ${unitWithCode.plate}, ${unitWithCode.company}).`
-      : `La unidad ${codeTrimmed} ya está registrada (placa ${unitWithCode.plate}, ${unitWithCode.company}).`
-    : '';
+  const retiredMatch = unitWithPlate?.status === 'BAJA' ? unitWithPlate : undefined;
   const plateMessage = unitWithPlate
     ? unitWithPlate.status === 'BAJA'
       ? `La placa ${form.plate} pertenece a la unidad ${unitWithPlate.code}, dada de baja antes.`
@@ -448,8 +443,6 @@ function RegisterWizard({ companies, units, onClose, onCreated }: { companies: C
 
   const validateStep = (target: WizardStep): string => {
     if (target === 1) {
-      if (!codeTrimmed) return 'Escribe el código de la unidad.';
-      if (codeMessage) return codeMessage;
       if (!form.companyId) return 'Selecciona la empresa integrante.';
     }
     if (target === 2) {
@@ -475,8 +468,7 @@ function RegisterWizard({ companies, units, onClose, onCreated }: { companies: C
     setSaving(true);
     setError('');
     try {
-      await createVehicle({
-        code: codeTrimmed,
+      const created = await createVehicle({
         companyId: form.companyId,
         vehicleType: brandInfo.type,
         plate: form.plate,
@@ -484,7 +476,7 @@ function RegisterWizard({ companies, units, onClose, onCreated }: { companies: C
         year: Number(form.year),
         routeAssignment: 'AMBAS',
       });
-      setSaved(true);
+      setAssignedCode(created.code);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo registrar la unidad.');
     } finally {
@@ -492,13 +484,13 @@ function RegisterWizard({ companies, units, onClose, onCreated }: { companies: C
     }
   };
 
-  if (saved) {
+  if (assignedCode) {
     return (
       <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true">
         <div className="bg-surface rounded-lg shadow-xl w-full max-w-md p-8 text-center">
           <CheckCircle size={40} className="text-ok mx-auto mb-4" />
           <h3 className="text-base font-semibold text-t1 mb-2">Unidad registrada</h3>
-          <p className="text-sm text-t2 mb-2">Código <strong>{form.code}</strong> registrado con éxito.</p>
+          <p className="text-sm text-t2 mb-2">Se le asignó el código <strong>{assignedCode}</strong>.</p>
           <p className="text-xs text-muted mb-6">Registro en auditoría. La unidad queda disponible para vincularla después con un socio y un conductor desde Personas.</p>
           <button onClick={onCreated} className="px-6 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h">
             Cerrar
@@ -527,22 +519,14 @@ function RegisterWizard({ companies, units, onClose, onCreated }: { companies: C
 
         <div className="flex-1 overflow-auto p-6 space-y-4">
           {step === 1 && (
-            <>
-              <div>
-                <label className="block text-xs font-medium text-t1 mb-1">Código de unidad <span className="text-danger">*</span></label>
-                <input value={form.code} onChange={e => set('code', e.target.value)} placeholder="Ej. 061" className={`w-full h-9 px-3 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary ${codeMessage ? 'border-danger' : 'border-border'}`} />
-                {codeMessage
-                  ? <p className="text-[11px] text-danger mt-1">{codeMessage}</p>
-                  : <p className="text-[11px] text-muted mt-1">El código pertenece a la unidad dentro de la asociación y no cambia con la placa.</p>}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-t1 mb-1">Empresa integrante <span className="text-danger">*</span></label>
-                <select value={form.companyId} onChange={e => set('companyId', e.target.value)} className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary">
-                  <option value="">Seleccionar empresa…</option>
-                  {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
-            </>
+            <div>
+              <label className="block text-xs font-medium text-t1 mb-1">Empresa integrante <span className="text-danger">*</span></label>
+              <select value={form.companyId} onChange={e => set('companyId', e.target.value)} className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+                <option value="">Seleccionar empresa…</option>
+                {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <p className="text-[11px] text-muted mt-1">El código de la unidad lo asigna el sistema automáticamente al finalizar.</p>
+            </div>
           )}
 
           {step === 2 && (
@@ -616,7 +600,7 @@ function RegisterWizard({ companies, units, onClose, onCreated }: { companies: C
               <p className="text-[11px] text-muted">El dispositivo GPS (si aplica) lo vincula Super Admin tras la instalación física del hardware — no se configura desde este registro.</p>
               <div className="border border-border rounded-lg divide-y divide-border text-xs">
                 {[
-                  { label: 'Código', value: form.code || '—' },
+                  { label: 'Código', value: 'Se asignará automáticamente' },
                   { label: 'Empresa', value: companies.find(c => c.id === form.companyId)?.name || '—' },
                   { label: 'Placa', value: form.plate || '—', mono: true },
                   { label: 'Modelo', value: [brandInfo?.brand, brandInfo?.model, form.year].filter(Boolean).join(' ') || '—' },

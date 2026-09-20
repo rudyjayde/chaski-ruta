@@ -4,7 +4,7 @@ import { CreatePersonDto } from './dto/create-person.dto';
 import { UpdatePersonStatusDto } from './dto/update-person-status.dto';
 import { UpdateLicenseDto } from './dto/update-license.dto';
 import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
-import { licenseDatesProblem } from '../common/validators';
+import { isValidDocument, licenseDatesProblem } from '../common/validators';
 import { JwtPayload } from '../auth/jwt.strategy';
 import { MailService } from '../mail/mail.service';
 import { AuthService } from '../auth/auth.service';
@@ -32,6 +32,7 @@ export class PeopleService {
     organizationId: true,
     name: true,
     email: true,
+    documentType: true,
     dni: true,
     phone: true,
     role: true,
@@ -62,15 +63,16 @@ export class PeopleService {
     if (owner) throw new ConflictException(`La licencia ${license} ya está registrada a nombre de ${owner.name}.`);
   }
 
-  // El DNI es de una sola persona dentro de la asociacion. El mismo correo con
-  // dos perfiles (Socio + Conductor) comparte DNI a proposito, por eso se
-  // excluyen las cuentas del mismo correo.
-  private async assertDniFree(organizationId: string | null, dni: string, email: string) {
+  // El documento es de una sola persona dentro de la asociacion. El mismo
+  // correo con dos perfiles (Socio + Conductor) comparte documento a
+  // proposito, por eso se excluyen las cuentas del mismo correo.
+  private async assertDniFree(organizationId: string | null, dni: string, email: string, documentType = 'DNI') {
     const owner = await this.prisma.person.findFirst({
       where: { organizationId, dni, NOT: { email } },
       select: { name: true },
     });
-    if (owner) throw new ConflictException(`El DNI ${dni} ya está registrado a nombre de ${owner.name}.`);
+    const label = documentType === 'CE' ? 'El carné de extranjería' : 'El DNI';
+    if (owner) throw new ConflictException(`${label} ${dni} ya está registrado a nombre de ${owner.name}.`);
   }
 
   findAll(organizationId: string) {
@@ -120,7 +122,8 @@ export class PeopleService {
         `Ya existe una cuenta ${dto.role.toLowerCase()} con el correo ${normalizedEmail}.`,
       );
     }
-    if (dto.dni) await this.assertDniFree(organizationId, dto.dni, normalizedEmail);
+    const documentType = dto.documentType ?? 'DNI';
+    if (dto.dni) await this.assertDniFree(organizationId, dto.dni, normalizedEmail, documentType);
 
     // La licencia de conducir solo existe para conductores.
     const hasLicenseData = Boolean(dto.license || dto.licenseCategory || dto.licenseIssuedAt || dto.licenseExpiry);
@@ -149,6 +152,7 @@ export class PeopleService {
         organizationId,
         name: dto.name,
         email: normalizedEmail,
+        documentType,
         dni: dto.dni,
         phone: dto.phone,
         role: dto.role,
@@ -301,16 +305,27 @@ export class PeopleService {
     if (!me) throw new NotFoundException('Persona no encontrada');
 
     const name = dto.name?.trim();
-    const shared: { name?: string; dni?: string; phone?: string } = {};
+    const shared: { name?: string; documentType?: string; dni?: string; phone?: string } = {};
     const changes: string[] = [];
     if (name && name !== me.name) {
       shared.name = name;
       changes.push(`Nombre: ${me.name} → ${name}`);
     }
-    if (dto.dni && dto.dni !== me.dni) {
-      await this.assertDniFree(me.organizationId, dto.dni, me.email);
-      shared.dni = dto.dni;
-      changes.push(`DNI: ${maskId(me.dni)} → ${maskId(dto.dni)}`);
+    // El tipo y el numero de documento van juntos: si cambia cualquiera de
+    // los dos, se validan y guardan los dos a la vez.
+    const documentType = dto.documentType ?? me.documentType;
+    if ((dto.dni && dto.dni !== me.dni) || (dto.documentType && dto.documentType !== me.documentType)) {
+      const dni = dto.dni ?? me.dni;
+      if (!dni) throw new BadRequestException('Indica el número de documento.');
+      if (!isValidDocument(documentType, dni)) {
+        throw new BadRequestException(
+          documentType === 'CE' ? 'El carné de extranjería debe tener de 9 a 12 letras o números' : 'El DNI debe tener exactamente 8 dígitos numéricos',
+        );
+      }
+      await this.assertDniFree(me.organizationId, dni, me.email, documentType);
+      shared.documentType = documentType;
+      shared.dni = dni;
+      changes.push(`Documento: ${me.documentType} ${maskId(me.dni)} → ${documentType} ${maskId(dni)}`);
     }
     if (dto.phone && dto.phone !== me.phone) {
       shared.phone = dto.phone;
