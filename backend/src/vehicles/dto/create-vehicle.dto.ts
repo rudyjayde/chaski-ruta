@@ -2,13 +2,12 @@ import { IsIn, IsInt, IsOptional, IsString, Max, Min, MinLength, MaxLength } fro
 import { IsPlate, IsVehicleYear } from '../../common/validators';
 
 export class CreateVehicleDto {
-  // Opcional (MEJ-002): si no se manda, el backend asigna el siguiente
-  // correlativo de 3 digitos para la asociacion (ver VehiclesService.create).
-  @IsOptional()
+  // Codigo de la unidad: lo escribe el administrador de la asociacion (cada
+  // asociacion maneja sus propios codigos); nunca se asigna solo.
   @IsString()
   @MinLength(1)
   @MaxLength(10)
-  code?: string;
+  code: string;
 
   @IsString()
   companyId: string;

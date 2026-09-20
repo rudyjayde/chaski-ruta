@@ -627,9 +627,8 @@ export async function updateCompany(
 }
 
 export interface CreateVehicleInput {
-  // Opcional (MEJ-002): si no se manda, el backend asigna el siguiente
-  // correlativo de 3 dígitos de la asociación.
-  code?: string;
+  // Código de la unidad: lo escribe el administrador (cada asociación maneja los suyos).
+  code: string;
   companyId: string;
   vehicleType: VehicleType;
   plate: string;

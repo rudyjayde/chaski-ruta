@@ -58,4 +58,26 @@ html, body, #root {
 ::-webkit-scrollbar-thumb:hover { background: #A1A1AA; }
 
 button { cursor: pointer; }
+
+/* Desplegables y campos con fondo y texto propios del tema (QA 20 sept 2026):
+   sin esto, en modo oscuro la lista que abre el navegador salia con fondo
+   blanco y texto claro (casi invisible). Va en la capa base para que
+   cualquier clase de Tailwind (bg-*, text-*) siga mandando. */
+@layer base {
+  select,
+  textarea,
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='color']) {
+    background-color: var(--color-surface);
+    color: var(--color-t1);
+  }
+  select option,
+  select optgroup {
+    background-color: var(--color-surface);
+    color: var(--color-t1);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-muted);
+  }
+}
 table { border-collapse: collapse; }
