@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   LayoutDashboard, Building2, Activity,
   HeadphonesIcon, ShieldCheck, Settings, Plus, X, ChevronRight, ArrowRight,
@@ -1186,9 +1186,12 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
   const [gpsSaveError, setGpsSaveError] = useState('');
   // Confirmacion visible de que se guardo / desvinculo (se borra sola).
   const [gpsSaveOk, setGpsSaveOk] = useState('');
+  const gpsOkTimer = useRef<number | undefined>(undefined);
   const showGpsOk = (message: string) => {
     setGpsSaveOk(message);
-    window.setTimeout(() => setGpsSaveOk(''), 7000);
+    // Un aviso nuevo cancela el temporizador del anterior (si no, el viejo borra al nuevo antes de tiempo).
+    window.clearTimeout(gpsOkTimer.current);
+    gpsOkTimer.current = window.setTimeout(() => setGpsSaveOk(''), 7000);
   };
 
   const loadGpsVehicles = useCallback(() => {
@@ -1223,15 +1226,19 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
       setGpsSaveError(`Número de la SIM: ${PHONE_ERROR}`);
       return;
     }
+    const unit = gpsVehicles.find(v => v.id === vehicleId);
+    const unitCode = unit?.code ?? '';
+    // IMEI vacio = quitar el equipo (igual que Desvincular). Se pide confirmar solo si la unidad tenia uno.
+    if (!imeiDraft.trim() && unit?.traccarDeviceId && !window.confirm(`El IMEI está vacío: se quitará el equipo GPS de la unidad ${unitCode}. ¿Continuar?`)) return;
     setGpsSaving(true);
     setGpsSaveError('');
     setGpsSaveOk('');
     try {
-      const unitCode = gpsVehicles.find(v => v.id === vehicleId)?.code ?? '';
-      await setVehicleGpsDevice(vehicleId, imeiDraft.trim(), org.id, simOperatorDraft || undefined, simNumberDraft.trim() || undefined);
+      // Un campo vacio de la SIM se envia como null (borrar), no como "sin cambios".
+      await setVehicleGpsDevice(vehicleId, imeiDraft.trim(), org.id, simOperatorDraft || null, simNumberDraft.trim() || null);
       setEditingVehicleId(null);
       loadGpsVehicles();
-      showGpsOk(`Guardado: la unidad ${unitCode} quedó con el equipo ${imeiDraft.trim()}.`);
+      showGpsOk(imeiDraft.trim() ? `Guardado: la unidad ${unitCode} quedó con el equipo ${imeiDraft.trim()}.` : `Listo: la unidad ${unitCode} quedó sin equipo GPS.`);
     } catch (err) {
       setGpsSaveError(err instanceof Error ? err.message : 'No se pudo guardar el dispositivo.');
     } finally {
@@ -1240,13 +1247,13 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
   };
 
   const handleUnlinkImei = async (vehicleId: string) => {
-    if (!window.confirm('¿Desvincular el dispositivo GPS de esta unidad?')) return;
+    if (!window.confirm('¿Quitar el equipo GPS de esta unidad y los datos de su SIM?')) return;
     setGpsSaving(true);
     setGpsSaveError('');
     setGpsSaveOk('');
     try {
       const unitCode = gpsVehicles.find(v => v.id === vehicleId)?.code ?? '';
-      await setVehicleGpsDevice(vehicleId, '', org.id);
+      await setVehicleGpsDevice(vehicleId, '', org.id, null, null);
       loadGpsVehicles();
       showGpsOk(`Listo: la unidad ${unitCode} quedó sin equipo GPS.`);
     } catch (err) {
@@ -2076,7 +2083,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                               <div className="flex items-center justify-end gap-1.5">
                                 <button
                                   onClick={() => handleSaveImei(v.id)}
-                                  disabled={gpsSaving || !imeiDraft.trim()}
+                                  disabled={gpsSaving}
                                   className="px-2.5 py-1 text-xs font-medium bg-primary text-white rounded hover:bg-primary-h disabled:opacity-50"
                                 >
                                   {gpsSaving ? 'Guardando…' : 'Guardar'}

@@ -710,8 +710,9 @@ export async function setVehicleGpsDevice(
   vehicleId: string,
   traccarDeviceId: string,
   organizationId?: string,
-  simOperator?: string,
-  simNumber?: string,
+  // undefined = no cambiar; null = borrar el dato.
+  simOperator?: string | null,
+  simNumber?: string | null,
 ): Promise<void> {
   const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
   await request<RawVehicle>(`/vehicles/${vehicleId}/gps-device${qs}`, {
