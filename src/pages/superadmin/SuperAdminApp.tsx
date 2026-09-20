@@ -1184,6 +1184,12 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
   const [simNumberDraft, setSimNumberDraft] = useState('');
   const [gpsSaving, setGpsSaving] = useState(false);
   const [gpsSaveError, setGpsSaveError] = useState('');
+  // Confirmacion visible de que se guardo / desvinculo (se borra sola).
+  const [gpsSaveOk, setGpsSaveOk] = useState('');
+  const showGpsOk = (message: string) => {
+    setGpsSaveOk(message);
+    window.setTimeout(() => setGpsSaveOk(''), 7000);
+  };
 
   const loadGpsVehicles = useCallback(() => {
     setGpsLoading(true);
@@ -1219,10 +1225,13 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
     }
     setGpsSaving(true);
     setGpsSaveError('');
+    setGpsSaveOk('');
     try {
+      const unitCode = gpsVehicles.find(v => v.id === vehicleId)?.code ?? '';
       await setVehicleGpsDevice(vehicleId, imeiDraft.trim(), org.id, simOperatorDraft || undefined, simNumberDraft.trim() || undefined);
       setEditingVehicleId(null);
       loadGpsVehicles();
+      showGpsOk(`Guardado: la unidad ${unitCode} quedó con el equipo ${imeiDraft.trim()}.`);
     } catch (err) {
       setGpsSaveError(err instanceof Error ? err.message : 'No se pudo guardar el dispositivo.');
     } finally {
@@ -1234,9 +1243,12 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
     if (!window.confirm('¿Desvincular el dispositivo GPS de esta unidad?')) return;
     setGpsSaving(true);
     setGpsSaveError('');
+    setGpsSaveOk('');
     try {
+      const unitCode = gpsVehicles.find(v => v.id === vehicleId)?.code ?? '';
       await setVehicleGpsDevice(vehicleId, '', org.id);
       loadGpsVehicles();
+      showGpsOk(`Listo: la unidad ${unitCode} quedó sin equipo GPS.`);
     } catch (err) {
       setGpsSaveError(err instanceof Error ? err.message : 'No se pudo desvincular el dispositivo.');
     } finally {
@@ -1461,14 +1473,14 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           ))}
         </div>
 
-        <div className="bg-surface border border-border rounded-lg p-6 max-w-2xl">
+        <div className="bg-surface border border-border rounded-lg p-6 max-w-6xl">
           <div className="flex items-center justify-between mb-5 gap-3">
             <h2 className="text-base font-semibold text-t1">{EDIT_ORG_STEPS[step]}</h2>
             {stepAction}
           </div>
 
           {step === 0 && (
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
               {infoFields.map(f => (
                 <div key={f.key}>
                   <label className="block text-sm font-medium text-t1 mb-1">{f.label}</label>
@@ -1486,7 +1498,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 </div>
               ))}
 
-              <div>
+              <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-t1 mb-1">Logotipo de la asociación</label>
                 <div className="flex items-center gap-3">
                   {infoForm.logoUrl ? (
@@ -1512,7 +1524,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 </div>
               </div>
 
-              {infoError && <p className="text-sm text-danger">{infoError}</p>}
+              {infoError && <p className="text-sm text-danger md:col-span-2">{infoError}</p>}
             </div>
           )}
 
@@ -1606,6 +1618,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                   </p>
                 </div>
               )}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-5">
               <div>
                 <p className="text-sm font-semibold text-t1 mb-2">Terminal 1 — Punto de salida de la ruta de ida</p>
                 <div className="space-y-3">
@@ -1700,6 +1713,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                     </p>
                   </div>
                 </div>
+              </div>
               </div>
 
               <EnabledRoutesEditor
@@ -1996,7 +2010,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
               ) : gpsVehicles.length === 0 ? (
                 <p className="text-sm text-t2">Esta asociación todavía no tiene unidades registradas.</p>
               ) : (
-                <div className="bg-bg border border-border rounded-lg overflow-hidden">
+                <div className="bg-bg border border-border rounded-lg overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border">
@@ -2005,15 +2019,15 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                         <th className="text-left px-3 py-2 text-t2 font-medium">Empresa</th>
                         <th className="text-left px-3 py-2 text-t2 font-medium">Dispositivo (IMEI)</th>
                         <th className="text-left px-3 py-2 text-t2 font-medium">SIM (informativo)</th>
-                        <th className="px-3 py-2" />
+                        <th className="px-3 py-2 sticky right-0 bg-bg" />
                       </tr>
                     </thead>
                     <tbody>
                       {gpsVehicles.map(v => (
                         <tr key={v.id} className="border-b border-border last:border-0">
-                          <td className="px-3 py-2.5 font-semibold text-t1">{v.code}</td>
-                          <td className="px-3 py-2.5 font-mono text-t2">{v.plate}</td>
-                          <td className="px-3 py-2.5 text-t2">{v.company}</td>
+                          <td className="px-3 py-2.5 font-semibold text-t1 whitespace-nowrap">{v.code}</td>
+                          <td className="px-3 py-2.5 font-mono text-t2 whitespace-nowrap">{v.plate}</td>
+                          <td className="px-3 py-2.5 text-t2 whitespace-nowrap">{v.company}</td>
                           <td className="px-3 py-2.5">
                             {editingVehicleId === v.id ? (
                               <input
@@ -2057,7 +2071,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                               <span className="text-muted">—</span>
                             )}
                           </td>
-                          <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                          <td className="px-3 py-2.5 text-right whitespace-nowrap sticky right-0 bg-bg">
                             {editingVehicleId === v.id ? (
                               <div className="flex items-center justify-end gap-1.5">
                                 <button
@@ -2099,6 +2113,11 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+              {gpsSaveOk && (
+                <div role="status" className="p-3 bg-ok/10 border border-ok/30 rounded-lg text-sm text-ok flex items-center gap-2">
+                  <CheckCircle size={16} className="flex-shrink-0" /> {gpsSaveOk}
                 </div>
               )}
               {gpsSaveError && <p className="text-sm text-danger">{gpsSaveError}</p>}
@@ -2249,7 +2268,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           )}
         </div>
 
-        <div className="flex items-center gap-3 mt-6 max-w-2xl">
+        <div className="flex items-center gap-3 mt-6 max-w-6xl">
           <button
             onClick={() => setStep(s => Math.max(0, s - 1))}
             disabled={step === 0}
@@ -2847,11 +2866,11 @@ function NewOrgWizard({
         ))}
       </div>
 
-      <div className="bg-surface border border-border rounded-lg p-6 max-w-2xl">
+      <div className="bg-surface border border-border rounded-lg p-6 max-w-6xl">
         <h2 className="text-base font-semibold text-t1 mb-5">{WIZARD_STEPS[step]}</h2>
 
         {step === 0 && (
-          <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
             {[
               { label: 'Nombre de la asociación *', key: 'name', placeholder: 'ASOTRANS NORTE' },
               { label: 'RUC *', key: 'ruc', placeholder: '20XXXXXXXXX' },
