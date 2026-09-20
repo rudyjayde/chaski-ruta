@@ -109,7 +109,7 @@ export class RouteRiskService {
 
   private detectEvents(
     history: PositionFix[],
-    config: { terminalOriginLat: number; terminalOriginLng: number; terminalDestinationLat: number; terminalDestinationLng: number },
+    config: { terminalOriginLat: number | null; terminalOriginLng: number | null; terminalDestinationLat: number | null; terminalDestinationLng: number | null },
   ): RiskEvent[] {
     const events: RiskEvent[] = [];
 
@@ -136,9 +136,12 @@ export class RouteRiskService {
           (new Date(history[endIndex].fixTime).getTime() - new Date(history[stopStartIndex].fixTime).getTime()) / 60_000;
         if (durationMinutes >= STOP_MIN_MINUTES) {
           const point = history[stopStartIndex];
-          const distOrigin = distanceMeters(point.lat, point.lng, config.terminalOriginLat, config.terminalOriginLng);
-          const distDest = distanceMeters(point.lat, point.lng, config.terminalDestinationLat, config.terminalDestinationLng);
-          if (distOrigin > TERMINAL_BUFFER_METERS && distDest > TERMINAL_BUFFER_METERS) {
+          // Sin las coordenadas de los terminales no se puede saber si la parada
+          // fue en un terminal: no se marca como anomala.
+          const located = config.terminalOriginLat != null && config.terminalOriginLng != null && config.terminalDestinationLat != null && config.terminalDestinationLng != null;
+          const distOrigin = located ? distanceMeters(point.lat, point.lng, config.terminalOriginLat as number, config.terminalOriginLng as number) : 0;
+          const distDest = located ? distanceMeters(point.lat, point.lng, config.terminalDestinationLat as number, config.terminalDestinationLng as number) : 0;
+          if (located && distOrigin > TERMINAL_BUFFER_METERS && distDest > TERMINAL_BUFFER_METERS) {
             events.push({ lat: point.lat, lng: point.lng, type: 'PARADA_ANOMALA', fixTime: point.fixTime });
           }
         }

@@ -249,10 +249,22 @@ lector de manifiestos en papel y verificación pública del QR). Hay pruebas en
 `backend/scripts/e2e-colas.ts` (sección L). Todo texto de ruta nuevo debe salir
 de esos ayudantes.
 
-**Pendiente:** una asociación nueva arranca con las coordenadas de terminal de
-Juli y Puno (valores por defecto del modelo) hasta que el Super Admin guarda las
-suyas en el mapa; mientras tanto sus conductores serían rechazados por "estar
-lejos del terminal". Falta avisarlo en el panel o exigir las coordenadas.
+**Coordenadas de los terminales (20 de septiembre de 2026):** una asociación
+nueva nace **sin coordenadas** (no hereda las de Juli/Puno). El Super Admin marca
+los dos terminales en el mapa (Editar asociación → Operación → Guardar).
+Mientras falten, los conductores **no pueden inscribirse en colas** y ven un
+mensaje claro; el panel del Super Admin muestra un aviso. Las coordenadas de los
+terminales, y no el texto de la dirección, son lo que mide el radio GPS.
+
+**Celular registrado para inscribirse (20 de septiembre de 2026):** la inscripción
+en cola se hace **solo desde el celular registrado del conductor** (el único
+aparato con GPS confiable). Ese celular se registra **solo cuando la primera
+inscripción sale bien**; un intento fallido nunca ata un aparato. Una
+computadora u otro navegador puede trabajar con normalidad (manifiesto, marcar
+salida, ver el temporizador) pero no inscribirse; otro celular distinto al
+registrado tampoco (el administrador lo reasigna). El administrador puede inscribir
+por el conductor desde su panel. "Celular" lo decide el navegador
+(`src/lib/device.ts`, `queues.controller.ts`).
 
 ## 6. ATIPCAR como primer cliente
 

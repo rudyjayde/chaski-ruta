@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { BadRequestException } from '@nestjs/common';
 import { QueuesService } from './queues.service';
 import { JoinQueueDto } from './dto/join-queue.dto';
@@ -39,10 +39,14 @@ export class QueuesController {
     @CurrentUser() user: JwtPayload,
     @Param('route') route: string,
     @Body() dto: JoinQueueDto,
+    @Req() req: { headers: Record<string, string | string[] | undefined> },
     @Query('organizationId') organizationId?: string,
   ) {
     const orgId = resolveOrgId(user, organizationId);
-    return this.queues.join(orgId, user, parseRoute(route), dto);
+    // Celular o no, segun lo que el navegador dice de si mismo (mismo criterio
+    // que src/lib/device.ts en el frontend).
+    const isMobile = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(String(req.headers['user-agent'] ?? ''));
+    return this.queues.join(orgId, user, parseRoute(route), dto, isMobile);
   }
 
   @Post('entries/:entryId/confirm-arrival')

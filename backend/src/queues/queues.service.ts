@@ -10,6 +10,9 @@ import { redactPerson } from '../common/redact';
 
 type RouteDir = 'JULI_PUNO' | 'PUNO_JULI';
 
+const TERMINAL_SIN_UBICACION =
+  'Los terminales de tu asociacion todavia no tienen ubicacion en el mapa. Avisa a tu administrador para que lo configure.';
+
 // El hash de la contraseña NUNCA debe llegar al navegador (mismo criterio
 // que people.service.ts / vehicles.service.ts) -- select explicito en vez
 // de "driver: true" / "partner: true" / "currentDriver: true".
@@ -202,7 +205,7 @@ export class QueuesService {
    * PREINSCRITO -- ese estado queda sin uso desde esta correccion, se
    * mantiene en el modelo solo por compatibilidad con filas antiguas).
    */
-  async join(organizationId: string, actor: JwtPayload, route: RouteDir, dto: JoinQueueDto) {
+  async join(organizationId: string, actor: JwtPayload, route: RouteDir, dto: JoinQueueDto, isMobile = true) {
     const vehicle = await this.prisma.vehicle.findUnique({ where: { id: dto.vehicleId } });
     if (!vehicle || vehicle.organizationId !== organizationId) {
       throw new NotFoundException('Vehiculo no encontrado en esta asociacion');
@@ -237,23 +240,28 @@ export class QueuesService {
       }
     }
 
-    // Vinculo cuenta-dispositivo (§3.2): solo se exige cuando el conductor se
-    // inscribe el mismo desde su celular — una intervencion de administrador no aplica.
+    // Vinculo cuenta-dispositivo (§3.2), regla de Jayde (20 sept 2026): la
+    // inscripcion en cola se hace SOLO desde el celular registrado del
+    // conductor -- es el unico aparato con un GPS confiable. Una computadora u
+    // otro navegador puede trabajar normal (manifiesto, marcar salida) pero no
+    // inscribirse. El celular NO se registra aqui: se registra al final, solo
+    // si la inscripcion sale bien (un intento fallido nunca ata un aparato).
+    // Una intervencion de administrador no aplica.
+    let bindDeviceAfterSuccess = false;
     if (actor.role === 'CONDUCTOR') {
       const person = driverPerson ?? (await this.prisma.person.findUniqueOrThrow({ where: { id: actor.sub } }));
       if (!dto.deviceId) {
         throw new BadRequestException('Falta el identificador del dispositivo');
       }
-      if (!person.boundDeviceId) {
-        await this.prisma.person.update({
-          where: { id: person.id },
-          data: { boundDeviceId: dto.deviceId, boundDeviceSetAt: new Date() },
-        });
-      } else if (person.boundDeviceId !== dto.deviceId) {
+      if (!isMobile) {
         throw new ForbiddenException(
-          'Esta cuenta ya esta vinculada a otro dispositivo. Contacta a tu administrador para revincularla.',
+          'Para inscribirte en la cola usa tu celular registrado. Desde esta pantalla puedes trabajar con normalidad (manifiesto, marcar salida), pero no inscribirte.',
         );
       }
+      if (person.boundDeviceId && person.boundDeviceId !== dto.deviceId) {
+        throw new ForbiddenException('Este no es tu celular registrado. Pide a tu administrador que lo reasigne.');
+      }
+      bindDeviceAfterSuccess = !person.boundDeviceId;
     }
 
     // Regla dura universal (§3.1) -- MODIFICADA (correccion 8 de septiembre de
@@ -333,6 +341,12 @@ export class QueuesService {
       route === 'JULI_PUNO'
         ? { lat: config.terminalOriginLat, lng: config.terminalOriginLng }
         : { lat: config.terminalDestinationLat, lng: config.terminalDestinationLng };
+    // Sin ubicacion de los terminales no hay contra que medir la distancia: el
+    // conductor no puede inscribirse hasta que el Super Admin marque el mapa.
+    const terminalLocated = terminal.lat != null && terminal.lng != null;
+    if (!terminalLocated && actor.role === 'CONDUCTOR') {
+      throw new BadRequestException(TERMINAL_SIN_UBICACION);
+    }
 
     let evidence: 'PRESENCIA_TERMINAL' | 'REGISTRO_MOVIL' | 'SIN_EVIDENCIA' = 'SIN_EVIDENCIA';
     let tripGpsStatus: 'SIN_GPS' | 'REGISTRO_MOVIL' | 'GPS_FISICO' = 'SIN_GPS';
@@ -351,8 +365,8 @@ export class QueuesService {
     const hardwarePosition = await this.gps.getVehiclePosition(organizationId, vehicle.id).catch(() => null);
     if (hardwarePosition) {
       tripGpsStatus = 'GPS_FISICO';
-      const distance = distanceMeters(hardwarePosition.lat, hardwarePosition.lng, terminal.lat, terminal.lng);
-      if (distance > config.gpsRadiusMeters) {
+      const distance = terminalLocated ? distanceMeters(hardwarePosition.lat, hardwarePosition.lng, terminal.lat as number, terminal.lng as number) : 0;
+      if (terminalLocated && distance > config.gpsRadiusMeters) {
         throw new ForbiddenException(
           `El GPS del vehiculo indica que esta a ${Math.round(distance)}m del terminal -- fuera del radio permitido (${config.gpsRadiusMeters}m). Acercate al terminal para poder inscribirte.`,
         );
@@ -362,8 +376,8 @@ export class QueuesService {
       arrivalLng = hardwarePosition.lng;
     } else if (dto.lat !== undefined && dto.lng !== undefined) {
       tripGpsStatus = 'REGISTRO_MOVIL';
-      const distance = distanceMeters(dto.lat, dto.lng, terminal.lat, terminal.lng);
-      if (distance > config.gpsRadiusMeters) {
+      const distance = terminalLocated ? distanceMeters(dto.lat, dto.lng, terminal.lat as number, terminal.lng as number) : 0;
+      if (terminalLocated && distance > config.gpsRadiusMeters) {
         throw new ForbiddenException(
           `Tu ubicacion esta a ${Math.round(distance)}m del terminal -- fuera del radio permitido (${config.gpsRadiusMeters}m). Acercate al terminal para poder inscribirte.`,
         );
@@ -476,6 +490,14 @@ export class QueuesService {
         },
       });
     });
+
+    // El celular queda registrado SOLO ahora que la inscripcion salio bien.
+    if (bindDeviceAfterSuccess && dto.deviceId) {
+      await this.prisma.person.update({
+        where: { id: actor.sub },
+        data: { boundDeviceId: dto.deviceId, boundDeviceSetAt: new Date() },
+      });
+    }
     await this.recomputeOrder(organizationId, route);
     await this.maybeAutoPromote(organizationId, route);
 
@@ -546,6 +568,7 @@ export class QueuesService {
       entry.route === 'JULI_PUNO'
         ? { lat: config.terminalOriginLat, lng: config.terminalOriginLng }
         : { lat: config.terminalDestinationLat, lng: config.terminalDestinationLng };
+    if (terminal.lat == null || terminal.lng == null) throw new BadRequestException(TERMINAL_SIN_UBICACION);
     const distance = distanceMeters(dto.lat, dto.lng, terminal.lat, terminal.lng);
     const withinRadius = distance <= config.gpsRadiusMeters;
     const evidence = withinRadius ? 'PRESENCIA_TERMINAL' : 'REGISTRO_MOVIL';

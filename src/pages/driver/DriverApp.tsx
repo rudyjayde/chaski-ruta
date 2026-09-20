@@ -24,6 +24,7 @@ import {
 import { getOperationalPosition, getOperationalState, getVehiclesAhead, getQueueDisplayOrder } from '../../lib/queue-ui';
 import { localDateStr } from '../../lib/dates';
 import { formatLicenseExpiry, isValidDocument, type DocumentType } from '../../lib/validators';
+import { isMobileDevice } from '../../lib/device';
 
 // Estado real de la licencia segun su vencimiento (antes decia "Vigente" y
 // "Vence en 585 dias" fijo, sin mirar ningun dato). Los dias se cuentan contra
@@ -567,10 +568,25 @@ function ReturnCountdown({ targetMs, onDone }: { targetMs: number; onDone: () =>
   );
 }
 
+// Desde donde puede inscribirse el conductor: SOLO desde su celular registrado.
+// Una computadora u otro navegador trabaja normal (manifiesto, salida) pero no
+// inscribe; otro celular distinto al registrado tampoco.
+function useEnrollDevice(profile: { boundDeviceId?: string | null } | null) {
+  if (!isMobileDevice()) {
+    return { allowed: false, message: 'Para inscribirte en la cola usa tu celular registrado. Desde esta pantalla puedes trabajar con normalidad (manifiesto, marcar salida), pero no inscribirte.' };
+  }
+  const bound = profile?.boundDeviceId ?? null;
+  if (bound && bound !== getOrCreateDeviceId()) {
+    return { allowed: false, message: 'Este no es tu celular registrado. Pide a tu administrador que lo reasigne.' };
+  }
+  return { allowed: true, message: '' };
+}
+
 function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
   const { user } = useAuth();
   const [, forceTick] = useState(0); // para re-dibujar cuando el temporizador llega a 00:00
   const { profile, company, org, hasVehicleGPS } = useDriverContext();
+  const enroll = useEnrollDevice(profile);
   const { wallets } = useDriverWallets(user?.email ?? user?.code ?? '', profile?.name ?? user?.name ?? '', profile?.phone ?? '');
   const [showWalletQr, setShowWalletQr] = useState(false);
 
@@ -688,6 +704,7 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
   // (join() completa la llegada -- §2 paso 8, no hay "Marcar llegada" aparte).
   const handleJoinReturn = () => {
     if (!myVehicleId || !returnRoute) return;
+    if (!enroll.allowed) { setReturnActionError(enroll.message); return; }
     setReturnActionError('');
     setReturnActionNotice('');
     setReturnActionBusy('join');
@@ -721,6 +738,7 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
   // que pide la pantalla Cola.
   const handleJoinNext = () => {
     if (!myVehicleId) return;
+    if (!enroll.allowed) { setReturnActionError(enroll.message); return; }
     setReturnActionError('');
     setReturnActionNotice('');
     setReturnActionBusy('join');
@@ -755,6 +773,7 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
   // siguiente unidad de la cadena (backend/queues.service.ts#declareLater).
   const handleDeclareLaterFromHome = () => {
     if (!myVehicleId || !returnRoute) return;
+    if (!enroll.allowed) { setReturnActionError(enroll.message); return; }
     setReturnActionError('');
     setReturnActionNotice('');
     setReturnActionBusy('later');
@@ -881,9 +900,10 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
               ) : (
                 <div className="border-t border-border pt-3 space-y-2">
                   <p className="text-xs font-semibold text-t2 uppercase tracking-wide">Cola de regreso — {returnRouteLabel}</p>
+                  {!enroll.allowed && <p className="text-xs text-warn">{enroll.message}</p>}
                   <button
                     onClick={handleJoinReturn}
-                    disabled={returnActionBusy !== null}
+                    disabled={returnActionBusy !== null || !enroll.allowed}
                     className="w-full px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                   >
                     <Plus size={14} /> {returnActionBusy === 'join' ? 'Inscribiendo…' : `Inscribirme en ${returnRouteLabel}`}
@@ -991,9 +1011,10 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
         ) : (
           <div className="space-y-3">
             <p className="text-sm text-t2">No estás inscrito en ninguna cola. Puedes anotarte para el siguiente turno.</p>
+            {!enroll.allowed && <p className="text-xs text-warn">{enroll.message}</p>}
             <button
               onClick={handleJoinNext}
-              disabled={returnActionBusy !== null}
+              disabled={returnActionBusy !== null || !enroll.allowed}
               className="px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-h transition-colors flex items-center gap-2 disabled:opacity-50"
             >
               <Plus size={14} /> {returnActionBusy === 'join' ? 'Inscribiendo…' : `Inscribirme en ${nextRouteLabel}`}
@@ -1034,7 +1055,8 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
 // ─── Cola ─────────────────────────────────────────────────────────────────────
 function DriverQueue() {
   const { user } = useAuth();
-  const { org } = useDriverContext();
+  const { org, profile } = useDriverContext();
+  const enroll = useEnrollDevice(profile);
   const code = user?.code ?? '';
   const [errorMsg, setErrorMsg] = useState('');
   const [queueJP, setQueueJP] = useState<QueueEntry[]>([]);
@@ -1079,6 +1101,7 @@ function DriverQueue() {
   const handleJoin = (route: 'JULI_PUNO' | 'PUNO_JULI') => {
     if (!myVehicleId) return;
     setErrorMsg('');
+    if (!enroll.allowed) { setErrorMsg(enroll.message); return; }
     setJoiningRoute(route);
     if (!navigator.geolocation) {
       setErrorMsg('Este navegador no puede obtener tu ubicación');
@@ -1185,9 +1208,10 @@ function DriverQueue() {
               <div className="px-4 py-3 border-b border-border bg-bg/50">
                 {!card.myEntry ? (
                   <div className="space-y-1.5">
+                    {!enroll.allowed && <p className="text-[11px] text-warn">{enroll.message}</p>}
                     <button
                       onClick={() => handleJoin(card.key)}
-                      disabled={!myVehicleId || joiningRoute === card.key || card.blockedByOther}
+                      disabled={!myVehicleId || joiningRoute === card.key || card.blockedByOther || !enroll.allowed}
                       className="w-full flex items-center justify-center gap-2 h-9 bg-primary text-white rounded-lg text-xs font-medium hover:bg-primary-h transition-colors disabled:opacity-50"
                     >
                       {joiningRoute === card.key ? <RefreshCw size={13} className="animate-spin" /> : <Plus size={13} />}

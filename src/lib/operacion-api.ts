@@ -1467,10 +1467,11 @@ export interface OperationalConfig {
   routeDestinationName: string | null;
   returnOriginName: string | null;
   returnDestinationName: string | null;
-  terminalOriginLat: number;
-  terminalOriginLng: number;
-  terminalDestinationLat: number;
-  terminalDestinationLng: number;
+  // null = el Super Admin todavia no marco el terminal en el mapa.
+  terminalOriginLat: number | null;
+  terminalOriginLng: number | null;
+  terminalDestinationLat: number | null;
+  terminalDestinationLng: number | null;
   initialConfigNotes: string | null;
 }
 

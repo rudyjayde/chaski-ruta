@@ -51,10 +51,12 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
   const prisma = app.get(PrismaService);
 
   let ipCounter = 1;
-  const call = async (token: string, method: string, path: string, body?: unknown): Promise<Res> => {
+  const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36';
+  const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36';
+  const call = async (token: string, method: string, path: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<Res> => {
     const res = await fetch(`${base}${path}`, {
       method,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'X-Forwarded-For': `10.9.${Math.floor(ipCounter / 250)}.${(ipCounter++ % 250) + 1}` },
+      headers: { 'User-Agent': MOBILE_UA, ...extraHeaders, 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'X-Forwarded-For': `10.9.${Math.floor(ipCounter / 250)}.${(ipCounter++ % 250) + 1}` },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     return { status: res.status, json: await res.json().catch(() => ({})) };
@@ -71,8 +73,8 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     const orgA = await prisma.organization.create({ data: { name: `ZZ E2E A ${stamp}`, ruc: `2099${stamp}9`.slice(0, 11), status: 'ACTIVA', plan: 'OPERACION' } });
     const orgB = await prisma.organization.create({ data: { name: `ZZ E2E B ${stamp}`, ruc: `2098${stamp}9`.slice(0, 11), status: 'ACTIVA', plan: 'OPERACION' } });
     orgIds.push(orgA.id, orgB.id);
-    await prisma.operationalConfig.create({ data: { organizationId: orgA.id } });
-    await prisma.operationalConfig.create({ data: { organizationId: orgB.id } });
+    await prisma.operationalConfig.create({ data: { organizationId: orgA.id, terminalOriginLat: JULI.lat, terminalOriginLng: JULI.lng, terminalDestinationLat: PUNO.lat, terminalDestinationLng: PUNO.lng } });
+    await prisma.operationalConfig.create({ data: { organizationId: orgB.id, terminalOriginLat: JULI.lat, terminalOriginLng: JULI.lng, terminalDestinationLat: PUNO.lat, terminalDestinationLng: PUNO.lng } });
     const coA = await prisma.company.create({ data: { organizationId: orgA.id, name: 'ZZ Empresa A' } });
     const coB = await prisma.company.create({ data: { organizationId: orgB.id, name: 'ZZ Empresa B' } });
     const adminA = await mk(orgA.id, 'ADMINISTRADOR', 'Admin A', 0);
@@ -140,6 +142,7 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     check('sin ubicación del celular se rechaza', r.status === 400, `HTTP ${r.status} ${msg(r)}`);
     r = await join(3, 'JULI_PUNO', FAR);
     check('ubicación lejos del terminal se rechaza (radio)', r.status === 403, `HTTP ${r.status} ${msg(r)}`);
+    await prisma.person.update({ where: { id: drivers[3].id }, data: { boundDeviceId: 'dev-3' } }); // ya tenia su celular registrado
     r = await call(T.d[3], 'POST', '/queues/JULI_PUNO/join', { vehicleId: u[3].id, deviceId: 'otro-celular', ...JULI });
     check('cuenta vinculada a otro celular se rechaza', r.status === 403, `HTTP ${r.status} ${msg(r)}`);
     r = await call(T.d[3], 'POST', '/queues/JULI_PUNO/join', { vehicleId: u[4].id, deviceId: 'dev-3', ...JULI });
@@ -439,7 +442,7 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     }
     const orgC = await prisma.organization.create({ data: { name: `ZZ E2E C ${stamp}`, ruc, status: 'ACTIVA', plan: 'PRO' } });
     orgIds.push(orgC.id);
-    await prisma.operationalConfig.create({ data: { organizationId: orgC.id } });
+    await prisma.operationalConfig.create({ data: { organizationId: orgC.id, terminalOriginLat: JULI.lat, terminalOriginLng: JULI.lng, terminalDestinationLat: PUNO.lat, terminalDestinationLng: PUNO.lng } });
     const coC = await prisma.company.create({ data: { organizationId: orgC.id, name: 'ZZ Empresa C' } });
     const adminC = await mk(orgC.id, 'ADMINISTRADOR', 'Admin C', 0);
     const drvC = await mk(orgC.id, 'CONDUCTOR', 'Conductor C', 1);
@@ -527,6 +530,41 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     const tokenV = 'atp_' + Buffer.from(`${dxx.manifest.id}|${dxx.manifest.number}|${u[4].code}`).toString('base64url');
     const ver = await call(T.d[0], 'GET', `/manifests-public/verify/${tokenV}`);
     check('la verificación pública del manifiesto usa el nombre de ruta de SU asociación', ver.status === 200 && ver.json.routeLabel === 'Puno → Juliaca', `HTTP ${ver.status} ${ver.json.routeLabel ?? msg(ver)}`);
+    // ─ Celular registrado: solo se registra si la inscripcion sale bien, y solo desde un celular ─
+    const dvD = await mk(orgA.id, 'CONDUCTOR', 'Conductor Celular', 77);
+    const dvV = await prisma.vehicle.create({ data: { organizationId: orgA.id, code: 'DV77', companyId: coA.id, vehicleType: 'HIACE', plate: `DV${stamp.slice(-1)}-777`, model: 'Toyota Hiace', year: 2024, currentDriverId: dvD.id } });
+    const dvT = await tok(dvD);
+    const joinDv = (deviceId: string, gps: any, ua?: string) => call(dvT, 'POST', '/queues/JULI_PUNO/join', { vehicleId: dvV.id, deviceId, ...gps }, ua ? { 'User-Agent': ua } : {});
+    const boundOf = async () => (await prisma.person.findUnique({ where: { id: dvD.id } }))?.boundDeviceId ?? null;
+    r = await joinDv('laptop-1', JULI, DESKTOP_UA);
+    check('desde una computadora NO se puede inscribir en la cola (mensaje: usa tu celular registrado)', r.status === 403 && /celular/i.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    check('la computadora NO queda registrada por ese intento', (await boundOf()) === null);
+    r = await joinDv('phone-1', FAR);
+    check('desde el celular pero lejos del terminal se rechaza por GPS', r.status === 403 && /radio/i.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    check('REGLA: un intento fallido por GPS NO ata el celular a la cuenta', (await boundOf()) === null);
+    r = await joinDv('phone-1', JULI);
+    check('desde el celular, en el terminal, se inscribe', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    check('recién ahí el celular queda registrado a la cuenta', (await boundOf()) === 'phone-1');
+    await call(T.admin, 'POST', `/queues/entries/${(await entryOf('JULI_PUNO', dvV)).id}/override`, { action: 'RETIRADO', reason: 'prueba de celular' });
+    r = await joinDv('phone-2', JULI);
+    check('otro celular distinto al registrado se rechaza (pide reasignar)', r.status === 403 && /no es tu celular registrado/i.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    r = await joinDv('phone-1', JULI, DESKTOP_UA);
+    check('aunque tenga celular registrado, desde la computadora tampoco inscribe', r.status === 403 && /celular/i.test(msg(r)), `HTTP ${r.status}`);
+    r = await call(T.admin, 'POST', '/queues/JULI_PUNO/join', { vehicleId: dvV.id, ...JULI }, { 'User-Agent': DESKTOP_UA });
+    check('el administrador SÍ puede inscribir por el conductor desde una computadora', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    await prisma.queueEntry.deleteMany({ where: { organizationId: orgA.id, vehicleId: dvV.id } });
+
+    // ─ Asociación nueva SIN coordenadas: los conductores no pueden inscribirse ─
+    if (bare.json.id) {
+      const bareDrv = await mk(bare.json.id, 'CONDUCTOR', 'Conductor Sin Mapa', 5);
+      const bareCo = await prisma.company.create({ data: { organizationId: bare.json.id, name: 'ZZ Emp S' } });
+      const bareVeh = await prisma.vehicle.create({ data: { organizationId: bare.json.id, code: '001', companyId: bareCo.id, vehicleType: 'HIACE', plate: 'SM1-001', model: 'Toyota Hiace', year: 2024, currentDriverId: bareDrv.id } });
+      const bareCfg = await prisma.operationalConfig.findUnique({ where: { organizationId: bare.json.id } });
+      check('una asociación nueva nace SIN coordenadas (no hereda las de Juli/Puno)', bareCfg?.terminalOriginLat === null && bareCfg?.terminalDestinationLng === null, JSON.stringify({ lat: bareCfg?.terminalOriginLat }));
+      r = await call(await tok(bareDrv), 'POST', '/queues/JULI_PUNO/join', { vehicleId: bareVeh.id, deviceId: 'phone-x', ...JULI });
+      check('sin terminales en el mapa, el conductor no puede inscribirse y ve un mensaje claro', r.status === 400 && /todavia no tienen ubicacion/i.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+      check('ese intento tampoco ata el celular', (await prisma.person.findUnique({ where: { id: bareDrv.id } }))?.boundDeviceId === null);
+    }
     await prisma.person.delete({ where: { id: superP.id } }).catch(() => null);
 
     // ═════════ J. CONSISTENCIA FINAL ═════════

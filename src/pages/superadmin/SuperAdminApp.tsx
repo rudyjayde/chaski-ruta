@@ -1586,6 +1586,14 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
 
           {step === 2 && (
             <div className="space-y-5">
+              {(opForm.terminalOriginLat == null || opForm.terminalOriginLng == null || opForm.terminalDestinationLat == null || opForm.terminalDestinationLng == null) && (
+                <div className="p-3 bg-warn/5 border border-warn/30 rounded-lg text-sm text-t1">
+                  <p className="font-medium text-warn">Faltan los terminales en el mapa</p>
+                  <p className="text-xs text-t2 mt-1">
+                    Marca la ubicación de {opForm.terminalOriginLat == null || opForm.terminalOriginLng == null ? 'el Terminal 1' : ''}{(opForm.terminalOriginLat == null || opForm.terminalOriginLng == null) && (opForm.terminalDestinationLat == null || opForm.terminalDestinationLng == null) ? ' y ' : ''}{opForm.terminalDestinationLat == null || opForm.terminalDestinationLng == null ? 'el Terminal 2' : ''} y toca Guardar. Mientras falte, los conductores de esta asociación no pueden inscribirse en las colas.
+                  </p>
+                </div>
+              )}
               <div>
                 <p className="text-sm font-semibold text-t1 mb-2">Terminal 1 — Punto de salida de la ruta de ida</p>
                 <div className="space-y-3">
@@ -2728,6 +2736,7 @@ function NewOrgWizard({
             {[
               { task: 'Completar datos de la organización', done: !!form.name },
               { task: 'Configurar terminales y rutas', done: !!form.terminal1 },
+              { task: 'Marcar los dos terminales en el mapa (Editar asociación → Operación): sin esto los conductores no pueden inscribirse', done: false },
               { task: 'Agregar empresas integrantes', done: form.companiesList.length > 0 },
               { task: 'Invitar administrador', done: !!form.adminEmail },
             ].map((item, i) => (

@@ -721,10 +721,13 @@ model OperationalConfig {
   // el centro aproximado de Juli/Puno; el Super Admin los ajusta al punto real
   // de la terminal de cada asociacion cuando tenga esos datos (paso pendiente,
   // hoy el wizard no captura coordenadas todavia -- ver comentario en el DTO).
-  terminalOriginLat      Float @default(-16.2035)
-  terminalOriginLng      Float @default(-69.4597)
-  terminalDestinationLat Float @default(-15.8402)
-  terminalDestinationLng Float @default(-70.0219)
+  // Sin valor por defecto (20 sept 2026): una asociacion nueva NO hereda las
+  // coordenadas de Juli/Puno -- el Super Admin marca sus dos terminales en el
+  // mapa, y mientras falten los conductores no pueden inscribirse en colas.
+  terminalOriginLat      Float?
+  terminalOriginLng      Float?
+  terminalDestinationLat Float?
+  terminalDestinationLng Float?
 
   // Notas libres de configuracion inicial (horario de apertura, tarifa base,
   // etc.) -- capturadas en el wizard "Nueva asociacion" (paso 2) pero recien
