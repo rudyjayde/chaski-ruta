@@ -856,6 +856,8 @@ export interface Organization {
   // vienen vacios se usa el nombre del terminal.
   routeOriginName?: string | null;
   routeDestinationName?: string | null;
+  returnOriginName?: string | null;
+  returnDestinationName?: string | null;
 }
 
 export interface CreateOrganizationInput {
@@ -876,6 +878,8 @@ export interface CreateOrganizationInput {
   terminalDestinationAddress?: string;
   routeOriginName?: string;
   routeDestinationName?: string;
+  returnOriginName?: string;
+  returnDestinationName?: string;
 }
 
 export async function fetchOrganizations(): Promise<Organization[]> {
@@ -899,6 +903,8 @@ export interface OrganizationDirectoryEntry {
   terminalDestinationAddress?: string | null;
   routeOriginName?: string | null;
   routeDestinationName?: string | null;
+  returnOriginName?: string | null;
+  returnDestinationName?: string | null;
 }
 
 // ─── Etiquetas de ruta/terminal por asociacion ──────────────────────────────
@@ -907,7 +913,7 @@ export interface OrganizationDirectoryEntry {
 // direccion ('ruta de ida'/'ruta de vuelta', 'terminal de origen'/'terminal de
 // destino') -- estas funciones son el UNICO lugar que debe traducirlos a texto,
 // para no volver a repetir "Juli"/"Puno" a mano en cada pantalla.
-type CorridorNames = Pick<Organization, 'terminalOriginName' | 'terminalDestinationName' | 'routeOriginName' | 'routeDestinationName'> | null | undefined;
+type CorridorNames = Pick<Organization, 'terminalOriginName' | 'terminalDestinationName' | 'routeOriginName' | 'routeDestinationName' | 'returnOriginName' | 'returnDestinationName'> | null | undefined;
 
 function names(org: CorridorNames): { origin: string; destination: string } {
   return {
@@ -920,6 +926,12 @@ function names(org: CorridorNames): { origin: string; destination: string } {
 export function routeLabel(route: RouteDir | 'AMBAS', org: CorridorNames): string {
   const { origin, destination } = names(org);
   if (route === 'AMBAS') return 'Ambas rutas';
+  // Las dos rutas habilitadas se escriben a mano (ida y retorno): si estan,
+  // son las etiquetas reales de cada cola.
+  const idaO = org?.routeOriginName?.trim(), idaD = org?.routeDestinationName?.trim();
+  const retO = org?.returnOriginName?.trim(), retD = org?.returnDestinationName?.trim();
+  if (route === 'JULI_PUNO' && idaO && idaD) return `${idaO} → ${idaD}`;
+  if (route === 'PUNO_JULI' && retO && retD) return `${retO} → ${retD}`;
   return route === 'JULI_PUNO' ? `${origin} → ${destination}` : `${destination} → ${origin}`;
 }
 
@@ -1448,6 +1460,8 @@ export interface OperationalConfig {
   terminalDestinationAddress: string | null;
   routeOriginName: string | null;
   routeDestinationName: string | null;
+  returnOriginName: string | null;
+  returnDestinationName: string | null;
   terminalOriginLat: number;
   terminalOriginLng: number;
   terminalDestinationLat: number;

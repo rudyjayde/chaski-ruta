@@ -711,6 +711,10 @@ model OperationalConfig {
   // ("Juliaca -> Puno"). Si estan vacios se usa el nombre del terminal.
   routeOriginName      String?
   routeDestinationName String?
+  // Ruta de retorno, escrita a mano (ej. "Puno" -> "Juli"): la ida es
+  // routeOriginName -> routeDestinationName. Solo hay dos rutas por asociacion.
+  returnOriginName      String?
+  returnDestinationName String?
 
   // Coordenadas de referencia de cada terminal, para la verificación puntual de
   // GPS al confirmar llegada (plan-operacion.md §3.3) -- valores por defecto son

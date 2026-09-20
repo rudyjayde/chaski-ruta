@@ -84,4 +84,15 @@ export class CreateOrganizationDto {
   @IsString()
   @MaxLength(60)
   routeDestinationName?: string;
+
+  // Ruta de retorno (escrita a mano).
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  returnOriginName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  returnDestinationName?: string;
 }

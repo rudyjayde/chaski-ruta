@@ -10,14 +10,34 @@ import {
 
 const CHASKI_WORDMARK_URL = 'https://res.cloudinary.com/sgf8nwgk/image/upload/e_trim,f_png,q_auto/v1788027352/chaski-AI-nombre_1_1.png';
 
-// Cada asociacion tiene su PROPIO corredor (terminalOriginName/terminalDestinationName,
-// configurado por el Super Admin al crearla) -- nunca uno global compartido. Esta
-// funcion arma las dos etiquetas de ruta (ida/vuelta) a partir de los nombres
-// reales de esa asociacion, con Juli/Puno como respaldo si aun no tiene los suyos.
-function corridorRoutes(originName?: string | null, destinationName?: string | null): string[] {
-  const origin = originName?.trim() || 'Juli';
-  const destination = destinationName?.trim() || 'Puno';
-  return [`${origin} → ${destination}`, `${destination} → ${origin}`];
+// Las rutas habilitadas (maximo 2: ida y retorno) las escribe el Super Admin a
+// mano; aqui solo se muestran las que ya estan completas.
+type RouteNames = {
+  routeOriginName?: string | null;
+  routeDestinationName?: string | null;
+  returnOriginName?: string | null;
+  returnDestinationName?: string | null;
+};
+function enabledRoutes(o?: RouteNames | null): string[] {
+  const out: string[] = [];
+  const a = o?.routeOriginName?.trim(), b = o?.routeDestinationName?.trim();
+  const c = o?.returnOriginName?.trim(), d = o?.returnDestinationName?.trim();
+  if (a && b) out.push(`${a} → ${b}`);
+  if (c && d) out.push(`${c} → ${d}`);
+  return out;
+}
+
+// Nombre del terminal 1 y del terminal 2, uno por linea (como en el ejemplo DORADO).
+function TerminalBox({ origin, destination, center = true }: { origin?: string; destination?: string; center?: boolean }) {
+  return (
+    <div className={`mt-3 w-full max-w-xs rounded-md border border-border bg-hover px-3 py-2 flex items-center gap-2 ${center ? 'mx-auto' : ''}`}>
+      <RouteIcon size={12} className="text-t2 flex-shrink-0" />
+      <div className="min-w-0 text-left">
+        <p className="text-xs font-medium text-t1">{origin}</p>
+        <p className="text-xs font-medium text-t1 mt-1">{destination}</p>
+      </div>
+    </div>
+  );
 }
 
 function roleName(role: string) {
@@ -169,8 +189,11 @@ export default function AssociationPortal({ onEnterAssociation, onLogout }: Prop
                 <CheckCircle size={14} />
                 Acceso activo · {roleName(user?.role ?? '')}
               </p>
+              <TerminalBox origin={org?.terminalOriginName} destination={org?.terminalDestinationName} center={false} />
               <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mt-3">Rutas habilitadas</p>
-              <RouteBadges routes={corridorRoutes(org?.routeOriginName?.trim() || org?.terminalOriginName, org?.routeDestinationName?.trim() || org?.terminalDestinationName)} center={false} />
+              {enabledRoutes(org).length > 0
+                ? <RouteBadges routes={enabledRoutes(org)} center={false} />
+                : <p className="text-xs text-t2 mt-2">Rutas por configurar</p>}
             </div>
 
             <div className="flex-shrink-0 flex flex-col items-center gap-1.5">
@@ -205,13 +228,11 @@ export default function AssociationPortal({ onEnterAssociation, onLogout }: Prop
                   <OrgAvatar name={other.name} logoUrl={other.logoUrl} size={72} />
                   <p className="text-sm font-semibold text-t1 mt-3">{other.name}</p>
                   <p className="text-xs text-t2 mt-1">Información disponible</p>
-                  <div className="mt-2 space-y-0.5">
-                    {[other.terminalOriginName, other.terminalDestinationName].map((terminal, i) => (
-                      <p key={i} className="text-xs text-t2">{terminal}</p>
-                    ))}
-                  </div>
+                  <TerminalBox origin={other.terminalOriginName} destination={other.terminalDestinationName} />
                   <p className="text-[11px] font-semibold text-t2 uppercase tracking-wide mt-3">Rutas habilitadas</p>
-                  <RouteBadges routes={corridorRoutes(other.routeOriginName?.trim() || other.terminalOriginName, other.routeDestinationName?.trim() || other.terminalDestinationName)} />
+                  {enabledRoutes(other).length > 0
+                    ? <RouteBadges routes={enabledRoutes(other)} />
+                    : <p className="text-xs text-t2 mt-2">Rutas por configurar</p>}
                   <span className="mt-4 h-9 px-3 border border-border rounded-md text-sm font-medium text-t1 inline-flex items-center justify-center gap-2">
                     Ver información
                     <ArrowRight size={14} />

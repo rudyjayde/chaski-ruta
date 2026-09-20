@@ -89,6 +89,56 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+// Rutas habilitadas (las que arman las colas): exactamente dos, una de ida y
+// una de retorno, que se escriben a mano -- primero el origen, luego el
+// destino, "Agregar", y lo mismo para la segunda. Nada viene por defecto.
+type EnabledRoute = { origin: string; destination: string };
+function EnabledRoutesEditor({ routes, editing, onChange }: { routes: EnabledRoute[]; editing: boolean; onChange: (next: EnabledRoute[]) => void }) {
+  const [origin, setOrigin] = useState('');
+  const [destination, setDestination] = useState('');
+  const canAdd = editing && routes.length < 2 && origin.trim() !== '' && destination.trim() !== '';
+  const add = () => {
+    if (!canAdd) return;
+    onChange([...routes, { origin: origin.trim(), destination: destination.trim() }]);
+    setOrigin('');
+    setDestination('');
+  };
+  return (
+    <div className="border border-border rounded-lg p-4 bg-bg">
+      <p className="text-sm font-semibold text-t1 mb-1">Rutas habilitadas</p>
+      <p className="text-xs text-t2 mb-3">
+        Son las dos rutas reales de la asociación, las que tienen cola de salida y aparecen en el portal: una de ida y una de retorno (ej. "Juli → Puno" y "Puno → Juli"). Escribe el origen y el destino, toca "Agregar" y repite para la segunda. No es lo mismo que el nombre del terminal.
+      </p>
+      {routes.length > 0 ? (
+        <div className="border border-border rounded-lg divide-y divide-border mb-3 bg-surface">
+          {routes.map((r, i) => (
+            <div key={i} className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+              <p className="text-sm text-t1"><span className="text-[11px] font-semibold text-t2 uppercase mr-2">{i === 0 ? 'Ida' : 'Retorno'}</span>{r.origin} → {r.destination}</p>
+              {editing && (
+                <button type="button" onClick={() => onChange(routes.filter((_, k) => k !== i))} className="w-7 h-7 grid place-items-center rounded-md text-danger hover:bg-danger/5" aria-label={`Quitar ruta ${r.origin} → ${r.destination}`}>
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-t2 mb-3">Todavía no hay rutas configuradas.</p>
+      )}
+      {editing && routes.length < 2 && (
+        <div className="flex items-center gap-2">
+          <input value={origin} onChange={e => setOrigin(e.target.value)} placeholder={routes.length === 0 ? 'Origen de la ida' : 'Origen del retorno'} className="flex-1 h-9 px-3 border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary" />
+          <input value={destination} onChange={e => setDestination(e.target.value)} placeholder={routes.length === 0 ? 'Destino de la ida' : 'Destino del retorno'} className="flex-1 h-9 px-3 border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary" />
+          <button type="button" onClick={add} disabled={!canAdd} className="h-9 px-3 border border-primary text-primary rounded-lg text-sm font-medium hover:bg-selected disabled:opacity-50 flex items-center gap-1.5 flex-shrink-0">
+            <Plus size={14} /> Agregar
+          </button>
+        </div>
+      )}
+      {editing && routes.length >= 2 && <p className="text-[11px] text-t2">Ya están las dos rutas (ida y retorno). Quita una con la X si necesitas cambiarla.</p>}
+    </div>
+  );
+}
+
 const ORG_STATUS_STYLE: Record<string, string> = {
   ACTIVA: 'bg-ok/10 text-ok',
   EN_CONFIGURACION: 'bg-warn/10 text-warn',
@@ -801,6 +851,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
     terminalDestinationLng: null as number | null,
     routeOriginName: '',
     routeDestinationName: '',
+    returnOriginName: '',
+    returnDestinationName: '',
     initialConfigNotes: '',
     // Parametros antifraude (plan-operacion.md §3.10) -- ya existian en el
     // backend y en OperationalConfig, pero ningun formulario los expone
@@ -959,6 +1011,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           terminalDestinationLng: cfg.terminalDestinationLng ?? null,
           routeOriginName: cfg.routeOriginName ?? '',
           routeDestinationName: cfg.routeDestinationName ?? '',
+          returnOriginName: cfg.returnOriginName ?? '',
+          returnDestinationName: cfg.returnDestinationName ?? '',
           initialConfigNotes: cfg.initialConfigNotes ?? '',
           gpsRadiusMeters: cfg.gpsRadiusMeters ?? 300,
           minTripMinutesOutbound: cfg.minTripMinutesOutbound ?? 90,
@@ -986,6 +1040,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
             : {}),
           routeOriginName: opForm.routeOriginName.trim(),
           routeDestinationName: opForm.routeDestinationName.trim(),
+          returnOriginName: opForm.returnOriginName.trim(),
+          returnDestinationName: opForm.returnDestinationName.trim(),
           initialConfigNotes: opForm.initialConfigNotes.trim(),
           gpsRadiusMeters: opForm.gpsRadiusMeters,
           minTripMinutesOutbound: opForm.minTripMinutesOutbound,
@@ -1260,6 +1316,8 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 terminalDestinationLng: opConfig.terminalDestinationLng ?? null,
                 routeOriginName: opConfig.routeOriginName ?? '',
                 routeDestinationName: opConfig.routeDestinationName ?? '',
+                returnOriginName: opConfig.returnOriginName ?? '',
+                returnDestinationName: opConfig.returnDestinationName ?? '',
                 initialConfigNotes: opConfig.initialConfigNotes ?? '',
                 gpsRadiusMeters: opConfig.gpsRadiusMeters ?? 300,
                 minTripMinutesOutbound: opConfig.minTripMinutesOutbound ?? 90,
@@ -1547,50 +1605,20 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 </div>
               </div>
 
-              <div className="border border-border rounded-lg p-4 bg-bg">
-                <p className="text-sm font-semibold text-t1 mb-1">Rutas habilitadas</p>
-                <p className="text-xs text-t2 mb-3">
-                  Estas son las dos rutas reales de la asociación (una de ida y una de vuelta): son las que tienen cola de salida y las que aparecen en el portal. Se crean solas a partir de estos dos nombres — no son lo mismo que el nombre del terminal.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-t1 mb-1">Origen de la ruta de ida</label>
-                    {editingOp ? (
-                      <input
-                        value={opForm.routeOriginName}
-                        onChange={e => setOpForm(v => ({ ...v, routeOriginName: e.target.value }))}
-                        placeholder="Puno"
-                        className="w-full h-9 px-3 border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary"
-                      />
-                    ) : (
-                      <p className="text-sm text-t1">{opForm.routeOriginName || '—'}</p>
-                    )}
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-t1 mb-1">Destino de la ruta de ida</label>
-                    {editingOp ? (
-                      <input
-                        value={opForm.routeDestinationName}
-                        onChange={e => setOpForm(v => ({ ...v, routeDestinationName: e.target.value }))}
-                        placeholder="Juliaca"
-                        className="w-full h-9 px-3 border border-border rounded-lg text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary"
-                      />
-                    ) : (
-                      <p className="text-sm text-t1">{opForm.routeDestinationName || '—'}</p>
-                    )}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 mt-3">
-                  {(() => {
-                    const o = opForm.routeOriginName.trim() || opForm.terminalOriginName.trim() || '—';
-                    const d = opForm.routeDestinationName.trim() || opForm.terminalDestinationName.trim() || '—';
-                    return [`${o} → ${d}`, `${d} → ${o}`].map(label => (
-                      <span key={label} className="px-2 py-1 rounded border border-border bg-surface text-[11px] font-medium text-t1">{label}</span>
-                    ));
-                  })()}
-                </div>
-                <p className="text-[11px] text-t2 mt-2">Si lo dejas vacío se usa el nombre del terminal.</p>
-              </div>
+              <EnabledRoutesEditor
+                editing={editingOp}
+                routes={[
+                  { origin: opForm.routeOriginName, destination: opForm.routeDestinationName },
+                  { origin: opForm.returnOriginName, destination: opForm.returnDestinationName },
+                ].filter(r => r.origin.trim() && r.destination.trim())}
+                onChange={list => setOpForm(v => ({
+                  ...v,
+                  routeOriginName: list[0]?.origin ?? '',
+                  routeDestinationName: list[0]?.destination ?? '',
+                  returnOriginName: list[1]?.origin ?? '',
+                  returnDestinationName: list[1]?.destination ?? '',
+                }))}
+              />
 
               <div>
                 <label className="block text-sm font-medium text-t1 mb-1">Configuración inicial (notas)</label>
@@ -2524,7 +2552,7 @@ function NewOrgWizard({
     // Step 1
     adminName: sug?.adminName ?? '', adminEmail: sug?.adminEmail ?? '', adminPhone: sug?.adminPhone ?? '',
     // Step 2
-    terminal1: sug?.terminal1 ?? '', terminal1Address: '', terminal2: sug?.terminal2 ?? '', terminal2Address: '', routeOrigin: '', routeDestination: '',
+    terminal1: sug?.terminal1 ?? '', terminal1Address: '', terminal2: sug?.terminal2 ?? '', terminal2Address: '', enabledRoutes: [] as { origin: string; destination: string }[],
     routes:
       sug?.routes && sug.routes.length > 0
         ? sug.routes
@@ -2583,8 +2611,8 @@ function NewOrgWizard({
           ...(form.terminal1Address.trim() ? { terminalOriginAddress: form.terminal1Address.trim() } : {}),
           ...(form.terminal2.trim() ? { terminalDestinationName: form.terminal2.trim() } : {}),
           ...(form.terminal2Address.trim() ? { terminalDestinationAddress: form.terminal2Address.trim() } : {}),
-          ...(form.routeOrigin.trim() ? { routeOriginName: form.routeOrigin.trim() } : {}),
-          ...(form.routeDestination.trim() ? { routeDestinationName: form.routeDestination.trim() } : {}),
+          ...(form.enabledRoutes[0] ? { routeOriginName: form.enabledRoutes[0].origin, routeDestinationName: form.enabledRoutes[0].destination } : {}),
+          ...(form.enabledRoutes[1] ? { returnOriginName: form.enabledRoutes[1].origin, returnDestinationName: form.enabledRoutes[1].destination } : {}),
         });
         setCreated(true);
       } catch (err) {
@@ -2837,33 +2865,11 @@ function NewOrgWizard({
               </div>
             </div>
 
-            <div className="border border-border rounded-lg p-4 bg-bg">
-              <h3 className="text-base font-semibold text-t1">Rutas habilitadas</h3>
-              <p className="text-sm text-t2 mt-0.5 mb-3">
-                La ruta de ida y la de vuelta que tendrán cola de salida (se crean solas). Es un nombre corto, distinto del nombre del terminal — ej. "Puno" y "Juliaca".
-              </p>
-              <div className="grid md:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-t1 mb-1">Origen de la ruta de ida</label>
-                  <input value={form.routeOrigin} onChange={event => set('routeOrigin', event.target.value)} placeholder="Puno"
-                    className="w-full h-9 px-3 border border-border rounded-md text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-t1 mb-1">Destino de la ruta de ida</label>
-                  <input value={form.routeDestination} onChange={event => set('routeDestination', event.target.value)} placeholder="Juliaca"
-                    className="w-full h-9 px-3 border border-border rounded-md text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-primary" />
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 mt-3">
-                {(() => {
-                  const o = form.routeOrigin.trim() || form.terminal1.trim() || '—';
-                  const d = form.routeDestination.trim() || form.terminal2.trim() || '—';
-                  return [`${o} → ${d}`, `${d} → ${o}`].map(label => (
-                    <span key={label} className="px-2 py-1 rounded border border-border bg-surface text-[11px] font-medium text-t1">{label}</span>
-                  ));
-                })()}
-              </div>
-            </div>
+            <EnabledRoutesEditor
+              editing
+              routes={form.enabledRoutes}
+              onChange={list => setForm(current => ({ ...current, enabledRoutes: list }))}
+            />
 
             <div className="border border-border rounded-lg p-4">
               <div className="flex items-start gap-2 mb-4">
@@ -3017,7 +3023,7 @@ function NewOrgWizard({
               ['Dirección terminal 1', form.terminal1Address || '—'],
               ['Terminal 2', form.terminal2 || '—'],
               ['Dirección terminal 2', form.terminal2Address || '—'],
-              ['Rutas habilitadas', (form.routeOrigin.trim() || form.terminal1.trim()) && (form.routeDestination.trim() || form.terminal2.trim()) ? `${form.routeOrigin.trim() || form.terminal1.trim()} → ${form.routeDestination.trim() || form.terminal2.trim()} · ${form.routeDestination.trim() || form.terminal2.trim()} → ${form.routeOrigin.trim() || form.terminal1.trim()}` : '—'],
+              ['Rutas habilitadas', form.enabledRoutes.length ? form.enabledRoutes.map(r => `${r.origin} → ${r.destination}`).join(' · ') : '—'],
               ['Rutas', form.routes
                 .filter(route => route.origin && route.destination)
                 .map(route => route.origin + ' → ' + route.destination)
@@ -3060,7 +3066,7 @@ function NewOrgWizard({
           onClose={() => setMapTarget(null)}
           onSelect={location => {
             // Google Maps llena el nombre y la direccion del terminal. Las RUTAS
-            // habilitadas tienen sus propios campos (routeOrigin/routeDestination)
+            // habilitadas tienen su propia lista (enabledRoutes)
             // y ya no dependen del nombre del terminal.
             if (mapTarget === 'terminal1') {
               setForm(current => ({ ...current, terminal1: location.name, terminal1Address: location.address }));

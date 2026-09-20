@@ -21,8 +21,10 @@ type Corridor = {
   terminalDestinationAddress?: string | null;
   routeOriginName?: string | null;
   routeDestinationName?: string | null;
+  returnOriginName?: string | null;
+  returnDestinationName?: string | null;
 };
-const CORRIDOR_SELECT = { terminalOriginName: true, terminalDestinationName: true, routeOriginName: true, routeDestinationName: true } as const;
+const CORRIDOR_SELECT = { terminalOriginName: true, terminalDestinationName: true, routeOriginName: true, routeDestinationName: true, returnOriginName: true, returnDestinationName: true } as const;
 function flattenCorridor<T extends { operationalConfig?: Corridor | null }>(org: T) {
   const { operationalConfig, ...rest } = org;
   return {
@@ -31,6 +33,8 @@ function flattenCorridor<T extends { operationalConfig?: Corridor | null }>(org:
     terminalDestinationName: operationalConfig?.terminalDestinationName ?? 'Puno',
     routeOriginName: operationalConfig?.routeOriginName ?? null,
     routeDestinationName: operationalConfig?.routeDestinationName ?? null,
+    returnOriginName: operationalConfig?.returnOriginName ?? null,
+    returnDestinationName: operationalConfig?.returnDestinationName ?? null,
     ...(operationalConfig && 'terminalOriginAddress' in operationalConfig
       ? { terminalOriginAddress: operationalConfig.terminalOriginAddress, terminalDestinationAddress: operationalConfig.terminalDestinationAddress }
       : {}),
@@ -131,6 +135,8 @@ export class OrganizationsService {
           ...(dto.terminalDestinationAddress ? { terminalDestinationAddress: dto.terminalDestinationAddress } : {}),
           ...(dto.routeOriginName?.trim() ? { routeOriginName: dto.routeOriginName.trim() } : {}),
           ...(dto.routeDestinationName?.trim() ? { routeDestinationName: dto.routeDestinationName.trim() } : {}),
+          ...(dto.returnOriginName?.trim() ? { returnOriginName: dto.returnOriginName.trim() } : {}),
+          ...(dto.returnDestinationName?.trim() ? { returnDestinationName: dto.returnDestinationName.trim() } : {}),
         },
       });
 
