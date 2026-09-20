@@ -1073,13 +1073,16 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
                 >
                   <Plus size={14} /> {returnActionBusy === 'join' && joinTarget === nextRoute ? 'Inscribiendo…' : `Inscribirme en ${nextRouteLabel}`}
                 </button>
-                <button
-                  onClick={() => handleJoinNext(otherRoute)}
-                  disabled={returnActionBusy !== null || !enroll.allowed}
-                  className="text-xs text-primary hover:underline disabled:opacity-50"
-                >
-                  {returnActionBusy === 'join' && joinTarget === otherRoute ? 'Inscribiendo…' : `¿Estás en el otro terminal? Inscribirme en ${otherRouteLabel}`}
-                </button>
+                <div className="pt-3 border-t border-border space-y-2">
+                  <p className="text-xs text-t2">¿Estás en el otro terminal?</p>
+                  <button
+                    onClick={() => handleJoinNext(otherRoute)}
+                    disabled={returnActionBusy !== null || !enroll.allowed}
+                    className="px-4 py-2.5 border border-primary text-primary rounded-lg text-sm font-medium hover:bg-primary/5 transition-colors flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <Plus size={14} /> {returnActionBusy === 'join' && joinTarget === otherRoute ? 'Inscribiendo…' : `Inscribirme en ${otherRouteLabel}`}
+                  </button>
+                </div>
               </>
             ) : detectedRoute ? (
               <>
@@ -1090,9 +1093,15 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
                 >
                   <Plus size={14} /> {returnActionBusy === 'join' && joinTarget === detectedRoute ? 'Inscribiendo…' : `Inscribirme en ${routeLabel(detectedRoute, org)}`}
                 </button>
-                <button onClick={() => setShowBothRoutes(true)} className="text-xs text-primary hover:underline">
-                  ¿No estás ahí? Ver las dos rutas
-                </button>
+                <div className="pt-3 border-t border-border space-y-2">
+                  <p className="text-xs text-t2">¿No estás en ese terminal?</p>
+                  <button
+                    onClick={() => setShowBothRoutes(true)}
+                    className="px-4 py-2.5 border border-primary text-primary rounded-lg text-sm font-medium hover:bg-primary/5 transition-colors"
+                  >
+                    Ver las dos rutas
+                  </button>
+                </div>
               </>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

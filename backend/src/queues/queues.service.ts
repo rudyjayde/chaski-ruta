@@ -41,6 +41,13 @@ const SELF_SERVICE_STATUSES = new Set(ADVANCE_ORDER.slice(1)); // LLAMADO en ade
 // limite razonable, no una cifra del documento maestro.
 const PREDECESSOR_WINDOW_HOURS = 18;
 
+// Distancia legible para el conductor: "850 m" o "936 km" (una cifra como 936256m no se lee).
+function formatDistance(meters: number): string {
+  if (meters < 1000) return `${Math.round(meters)} m`;
+  const km = meters / 1000;
+  return km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
+}
+
 function opposite(route: RouteDir): RouteDir {
   return route === 'JULI_PUNO' ? 'PUNO_JULI' : 'JULI_PUNO';
 }
@@ -393,7 +400,7 @@ export class QueuesService {
       const distance = terminalLocated ? distanceMeters(hardwarePosition.lat, hardwarePosition.lng, terminal.lat as number, terminal.lng as number) : 0;
       if (terminalLocated && distance > config.gpsRadiusMeters) {
         throw new ForbiddenException(
-          `El GPS del vehiculo indica que esta a ${Math.round(distance)}m ${terminalRef} -- fuera del radio permitido (${config.gpsRadiusMeters}m). Acercate al terminal para poder inscribirte.`,
+          `El GPS del vehiculo indica que esta a ${formatDistance(distance)} ${terminalRef} -- fuera del radio permitido (${config.gpsRadiusMeters}m). Acercate al terminal para poder inscribirte.`,
         );
       }
       evidence = 'PRESENCIA_TERMINAL';
@@ -404,7 +411,7 @@ export class QueuesService {
       const distance = terminalLocated ? distanceMeters(dto.lat, dto.lng, terminal.lat as number, terminal.lng as number) : 0;
       if (terminalLocated && distance > config.gpsRadiusMeters) {
         throw new ForbiddenException(
-          `Tu ubicacion esta a ${Math.round(distance)}m ${terminalRef} -- fuera del radio permitido (${config.gpsRadiusMeters}m). Acercate al terminal para poder inscribirte.`,
+          `Tu ubicacion esta a ${formatDistance(distance)} ${terminalRef} -- fuera del radio permitido (${config.gpsRadiusMeters}m). Acercate al terminal para poder inscribirte.`,
         );
       }
       evidence = 'PRESENCIA_TERMINAL';
