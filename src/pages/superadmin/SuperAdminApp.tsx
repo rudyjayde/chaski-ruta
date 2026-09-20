@@ -937,6 +937,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
     // proposito: existen en el modelo pero ningun servicio los lee hoy
     // (agregarlos aqui daria la falsa impresion de que hacen algo).
     gpsRadiusMeters: 300,
+    gpsMaxAgeMinutes: 5,
     minTripMinutesOutbound: 90,
     minTripMinutesReturn: 90,
     maxTripMinutesOutbound: null as number | null,
@@ -1094,6 +1095,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           returnDestinationName: cfg.returnDestinationName ?? '',
           initialConfigNotes: cfg.initialConfigNotes ?? '',
           gpsRadiusMeters: cfg.gpsRadiusMeters ?? 300,
+          gpsMaxAgeMinutes: cfg.gpsMaxAgeMinutes ?? 5,
           minTripMinutesOutbound: cfg.minTripMinutesOutbound ?? 90,
           minTripMinutesReturn: cfg.minTripMinutesReturn ?? 90,
           maxTripMinutesOutbound: cfg.maxTripMinutesOutbound ?? null,
@@ -1125,6 +1127,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           returnDestinationName: opForm.returnDestinationName.trim(),
           initialConfigNotes: opForm.initialConfigNotes.trim(),
           gpsRadiusMeters: opForm.gpsRadiusMeters,
+          gpsMaxAgeMinutes: opForm.gpsMaxAgeMinutes,
           minTripMinutesOutbound: opForm.minTripMinutesOutbound,
           minTripMinutesReturn: opForm.minTripMinutesReturn,
           maxTripMinutesOutbound: opForm.maxTripMinutesOutbound,
@@ -1403,6 +1406,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 returnDestinationName: opConfig.returnDestinationName ?? '',
                 initialConfigNotes: opConfig.initialConfigNotes ?? '',
                 gpsRadiusMeters: opConfig.gpsRadiusMeters ?? 300,
+                gpsMaxAgeMinutes: opConfig.gpsMaxAgeMinutes ?? 5,
                 minTripMinutesOutbound: opConfig.minTripMinutesOutbound ?? 90,
                 minTripMinutesReturn: opConfig.minTripMinutesReturn ?? 90,
                 maxTripMinutesOutbound: opConfig.maxTripMinutesOutbound ?? null,
@@ -1753,6 +1757,22 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                     ) : (
                       <p className="text-sm text-t1">{opForm.gpsRadiusMeters} m</p>
                     )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-t1 mb-1">Antigüedad máx. de la señal del GPS del vehículo (min)</label>
+                    {editingOp ? (
+                      <input
+                        type="number"
+                        min={1}
+                        max={60}
+                        value={opForm.gpsMaxAgeMinutes}
+                        onChange={e => setOpForm(v => ({ ...v, gpsMaxAgeMinutes: Number(e.target.value) }))}
+                        className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    ) : (
+                      <p className="text-sm text-t1">{opForm.gpsMaxAgeMinutes} min</p>
+                    )}
+                    <p className="text-[11px] text-muted mt-1">Pasado ese tiempo sin reportar, el equipo cuenta como "sin señal" y el conductor debe pedir autorización.</p>
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-t1 mb-1">Tiempo mínimo de viaje — ida (min)</label>
@@ -2211,6 +2231,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 ['Terminal 1', opForm.terminalOriginName || '—'],
                 ['Terminal 2', opForm.terminalDestinationName || '—'],
                 ['Radio GPS de terminal', `${opForm.gpsRadiusMeters} m`],
+                ['Antigüedad máx. de la señal GPS', `${opForm.gpsMaxAgeMinutes} min`],
                 ['Tiempo mínimo — ida', `${opForm.minTripMinutesOutbound} min`],
                 ['Tiempo mínimo — vuelta', `${opForm.minTripMinutesReturn} min`],
                 ['Tiempo máximo esperado — ida / vuelta', `${opForm.maxTripMinutesOutbound ?? '—'} / ${opForm.maxTripMinutesReturn ?? '—'} min`],

@@ -158,4 +158,38 @@ export class QueuesController {
     const orgId = resolveOrgId(user, organizationId);
     return this.queues.resolveDelayedRegistrationRequest(orgId, user, id, dto.resolution);
   }
+  // GPS del vehiculo sin señal: el conductor consulta su estado / pide usar el GPS de su celular.
+  @Get('gps-fallback/mine')
+  @Roles('CONDUCTOR')
+  myGpsFallbackStatus(@CurrentUser() user: JwtPayload, @Query('organizationId') organizationId?: string) {
+    const orgId = resolveOrgId(user, organizationId);
+    return this.queues.myGpsFallbackStatus(orgId, user);
+  }
+
+  @Post('gps-fallback')
+  @Roles('CONDUCTOR')
+  createGpsFallbackRequest(@CurrentUser() user: JwtPayload, @Query('organizationId') organizationId?: string) {
+    const orgId = resolveOrgId(user, organizationId);
+    return this.queues.createGpsFallbackRequest(orgId, user);
+  }
+
+  @Get('gps-fallback/list')
+  @Roles('ADMINISTRADOR', 'SUPERADMIN')
+  listGpsFallbackRequests(@CurrentUser() user: JwtPayload, @Query('organizationId') organizationId?: string) {
+    const orgId = resolveOrgId(user, organizationId);
+    return this.queues.listGpsFallbackRequests(orgId);
+  }
+
+  @Post('gps-fallback/:id/resolve')
+  @Roles('ADMINISTRADOR', 'SUPERADMIN')
+  resolveGpsFallbackRequest(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: { approve: boolean },
+    @Query('organizationId') organizationId?: string,
+  ) {
+    if (typeof dto?.approve !== 'boolean') throw new BadRequestException('Indica si autorizas o rechazas (approve: true o false)');
+    const orgId = resolveOrgId(user, organizationId);
+    return this.queues.resolveGpsFallbackRequest(orgId, user, id, dto.approve);
+  }
 }

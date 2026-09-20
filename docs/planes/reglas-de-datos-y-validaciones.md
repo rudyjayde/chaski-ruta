@@ -132,6 +132,7 @@ Todo texto libre tiene máximo (antes aceptaban hasta 8 MB por campo):
 | Parámetro | Rango |
 |---|---|
 | Radio GPS de terminal | 50 a 2000 m |
+| Antigüedad máxima de la señal del GPS del vehículo | 1 a 60 min (5 por defecto; solo Super Admin) |
 | Tiempo mínimo de viaje (ida / vuelta) | 10 a 600 min |
 | Tiempo de espera | 1 a 240 min |
 | Velocidad de alerta | 30 a 200 km/h |

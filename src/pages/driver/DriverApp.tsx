@@ -10,6 +10,7 @@ import DocumentField from '../../components/DocumentField';
 import { useAuth } from '../../contexts/AuthContext';
 import SeatMap from '../../components/SeatMap';
 import GpsAlertBanner from '../../components/GpsAlertBanner';
+import GpsFallbackNotice from '../../components/GpsFallbackNotice';
 import ProductionReportView from '../../components/ProductionReportView';
 import type { Passenger, PaymentMethod, Person, Unit, QueueEntry, Manifest, Trip, TripStatus, VehicleType, RouteDir } from '../../types';
 import {
@@ -842,6 +843,7 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
       </div>
 
       <GpsAlertBanner enabled={hasVehicleGPS} />
+      <GpsFallbackNotice />
 
       {/* Unit */}
       <div className="bg-surface border border-border rounded-lg p-4 flex flex-wrap gap-4 items-center">
@@ -1196,6 +1198,8 @@ function DriverQueue() {
           </p>
         </div>
       </div>
+
+      <GpsFallbackNotice />
 
       {moveNotice && (
         <div className="mb-3 p-3 bg-warn/10 text-warn text-xs rounded-lg flex items-center gap-2">

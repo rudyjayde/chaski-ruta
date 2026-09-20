@@ -106,7 +106,13 @@ Para unidades con GPS físico activo:
 
 ### Resuelto en la implementación (11 de septiembre de 2026)
 
-- **Pérdida de señal al inscribirse:** ya no está pendiente. `queues.service.ts` intenta `gps.getVehiclePosition()` (Traccar); si no hay fix disponible, cae directo al chequeo por GPS del celular (mismo mecanismo de Operación) en vez de bloquear o marcar "Sin señal". Sin ninguna de las dos evidencias, solo administrador/superadmin puede continuar (caso de excepción, igual que en Operación).
+- **Pérdida de señal al inscribirse (regla corregida el 20 de septiembre de 2026):** el GPS del vehículo solo vale si su última señal (posición o cualquier contacto del equipo con Traccar) es más nueva que `OperationalConfig.gpsMaxAgeMinutes` (5 min por defecto, lo cambia solo Super Admin, 1 a 60). Antes se usaba la última posición guardada sin mirar su antigüedad: un equipo malogrado dejaba al conductor rechazado con un "estás a 200 km" falso, y uno desconectado a propósito dejaba inscribirse desde lejos con una posición vieja. Un servidor Traccar inalcanzable también cuenta como "sin señal".
+  - **Sin señal → el conductor NO pasa solo al GPS del celular** (si fuera automático, desconectar el equipo bastaría para saltarse la verificación PRO). Ve el aviso "El GPS de tu vehículo no tiene señal" y el botón **"Pedir autorización para usar el GPS de mi celular"**.
+  - El **administrador** recibe un aviso y lo resuelve en *Inscripción retrasada → GPS del vehículo sin señal*: autoriza o rechaza. Lo autorizado vale **24 horas o hasta que el equipo vuelva a reportar** (lo que ocurra primero) y sirve para varias inscripciones.
+  - Con autorización vigente la inscripción usa el GPS del celular ya verificado y **sigue exigiendo estar dentro del radio del terminal**; queda en Auditoría (`SOLICITAR_GPS_CELULAR`, `RESOLVER_GPS_CELULAR` y el motivo en la inscripción).
+  - **Repetición:** desde la 4.ª solicitud de una misma unidad en 7 días se marca "ATENCION" en Auditoría, en el aviso y en la lista del administrador (posible desconexión a propósito).
+  - Administrador y Super Admin siguen pudiendo inscribir la unidad sin señal (excepción de siempre).
+  - Pendiente de afinar con los 2 vehículos reales: un equipo con el motor apagado puede dormirse y dejar de reportar; si los conductores reciben "sin señal" estando en el terminal, subir `gpsMaxAgeMinutes` (compromiso: más margen = una unidad desconectada a propósito puede alejarse más antes de contar como sin señal).
 
 ## 4. Qué cambia realmente vs. Operación (resumen)
 

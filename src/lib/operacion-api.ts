@@ -1464,6 +1464,8 @@ export interface OperationalConfig {
   maxTripMinutesOutbound: number | null;
   maxTripMinutesReturn: number | null;
   gpsRadiusMeters: number;
+  // Antiguedad maxima (min) de la ultima señal del GPS del vehiculo para tomarla como valida.
+  gpsMaxAgeMinutes: number;
   timeoutMinutes: number;
   anomalySpeedThresholdKmh: number;
   // Nombres genericos (no "Juli"/"Puno" fijos) -- cada asociacion define su
@@ -1657,6 +1659,72 @@ export async function resolveDelayedRegistrationRequest(id: string, resolution: 
     body: JSON.stringify({ resolution }),
   });
   return mapDelayedRegistrationRequest(raw);
+}
+
+// ─── GPS del vehiculo sin señal: pedir usar el GPS del celular ────────────────
+export type GpsFallbackStatus = 'PENDIENTE' | 'AUTORIZADO' | 'RECHAZADO' | 'EXPIRADO';
+
+export interface MyGpsFallback {
+  // false = la unidad no tiene GPS fisico vinculado (nada que mostrar).
+  applies: boolean;
+  noSignal: boolean;
+  request: { id: string; status: GpsFallbackStatus; authorizedUntil: string | null } | null;
+}
+
+export interface GpsFallbackRow {
+  id: string;
+  status: GpsFallbackStatus;
+  vehicleCode: string;
+  vehiclePlate: string;
+  driverName: string;
+  resolvedByName: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+  authorizedUntil: string | null;
+  requestsLast7Days: number;
+}
+
+interface RawGpsFallbackRow {
+  id: string;
+  status: GpsFallbackStatus;
+  vehicle: { code: string; plate: string };
+  requestedBy: { name: string };
+  resolvedBy: { name: string } | null;
+  createdAt: string;
+  resolvedAt: string | null;
+  authorizedUntil: string | null;
+  requestsLast7Days: number;
+}
+
+// Conductor: como esta el GPS de su vehiculo y su solicitud.
+export async function fetchMyGpsFallback(): Promise<MyGpsFallback> {
+  return request<MyGpsFallback>('/queues/gps-fallback/mine');
+}
+
+// Conductor: pide al administrador usar el GPS de su celular.
+export async function requestGpsFallback(): Promise<void> {
+  await request('/queues/gps-fallback', { method: 'POST' });
+}
+
+// Panel admin.
+export async function fetchGpsFallbackRequests(): Promise<GpsFallbackRow[]> {
+  const raw = await request<RawGpsFallbackRow[]>('/queues/gps-fallback/list');
+  return raw.map(r => ({
+    id: r.id,
+    status: r.status,
+    vehicleCode: r.vehicle.code,
+    vehiclePlate: r.vehicle.plate,
+    driverName: r.requestedBy.name,
+    resolvedByName: r.resolvedBy?.name ?? null,
+    createdAt: r.createdAt,
+    resolvedAt: r.resolvedAt,
+    authorizedUntil: r.authorizedUntil,
+    requestsLast7Days: r.requestsLast7Days,
+  }));
+}
+
+export async function resolveGpsFallbackRequest(id: string, approve: boolean): Promise<void> {
+  await request(`/queues/gps-fallback/${id}/resolve`, { method: 'POST', body: JSON.stringify({ approve }) });
 }
 
 // ─── Solicitudes comerciales (landing publica) ────────────────────────────

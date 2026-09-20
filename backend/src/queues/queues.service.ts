@@ -7,8 +7,17 @@ import { ConfirmArrivalDto } from './dto/confirm-arrival.dto';
 import { AdvanceQueueDto } from './dto/advance-queue.dto';
 import { OverrideQueueDto } from './dto/override-queue.dto';
 import { redactPerson } from '../common/redact';
+import { NoticesService } from '../notices/notices.service';
 
 type RouteDir = 'JULI_PUNO' | 'PUNO_JULI';
+
+const GPS_VEHICULO_SIN_SENAL =
+  'El GPS de tu vehiculo no tiene señal. Pide autorizacion a tu administrador para inscribirte con el GPS de tu celular.';
+
+// Cuanto dura la autorizacion del administrador para usar el GPS del celular (termina antes si el equipo vuelve a reportar).
+const GPS_FALLBACK_HOURS = 24;
+// Desde cuantas solicitudes en 7 dias se marca a la unidad como sospechosa de desconexion repetida.
+const GPS_FALLBACK_REPEAT_THRESHOLD = 3;
 
 const TERMINAL_SIN_UBICACION =
   'Los terminales de tu asociacion todavia no tienen ubicacion en el mapa. Avisa a tu administrador para que lo configure.';
@@ -54,6 +63,7 @@ export class QueuesService {
   constructor(
     private prisma: PrismaService,
     private gps: GpsService,
+    private notices: NoticesService,
   ) {}
 
   private async getConfig(organizationId: string) {
@@ -362,8 +372,19 @@ export class QueuesService {
     // administrador/superadmin de mas abajo sigue intacta y solo aplica
     // cuando NO hay ninguna posicion disponible (nunca cuando la hay y dice
     // que esta lejos).
-    const hardwarePosition = await this.gps.getVehiclePosition(organizationId, vehicle.id).catch(() => null);
+    const hardware = await this.gps.getVehicleHardwareStatus(organizationId, vehicle.id);
+    const hardwarePosition = hardware.position;
+    // GPS del vehiculo sin señal (malogrado, desconectado o sin fix): el conductor solo puede usar
+    // el GPS de su celular con una autorizacion vigente del administrador. Si fuera automatico,
+    // desconectar el equipo bastaria para saltarse la verificacion del Plan PRO.
+    let gpsFallbackAuthorization: { id: string } | null = null;
+    if (hardware.noSignal && actor.role === 'CONDUCTOR') {
+      gpsFallbackAuthorization = await this.findValidGpsFallback(organizationId, vehicle.id);
+      if (!gpsFallbackAuthorization) throw new ForbiddenException(GPS_VEHICULO_SIN_SENAL);
+    }
     if (hardwarePosition) {
+      // El equipo volvio a reportar: cualquier autorizacion de usar el celular deja de aplicar.
+      await this.expireGpsFallbacks(organizationId, vehicle.id);
       tripGpsStatus = 'GPS_FISICO';
       const distance = terminalLocated ? distanceMeters(hardwarePosition.lat, hardwarePosition.lng, terminal.lat as number, terminal.lng as number) : 0;
       if (terminalLocated && distance > config.gpsRadiusMeters) {
@@ -534,7 +555,9 @@ export class QueuesService {
         before: null,
         after: 'INSCRITO',
         evidence,
-        reason: `Unidad ${vehicle.code}`,
+        reason: gpsFallbackAuthorization
+          ? `Unidad ${vehicle.code} -- GPS del vehiculo sin señal: se uso el GPS del celular autorizado por el administrador (solicitud ${gpsFallbackAuthorization.id})`
+          : `Unidad ${vehicle.code}`,
       },
     });
     if (activeTrip) {
@@ -1030,6 +1053,174 @@ export class QueuesService {
             : 'Se contacto al predecesor para que marque -- el candado sigue activo',
       },
     });
+    return updated;
+  }
+  // ── GPS del vehiculo sin señal: el conductor pide usar el GPS de su celular ──
+
+  private async findValidGpsFallback(organizationId: string, vehicleId: string) {
+    return this.prisma.gpsFallbackRequest.findFirst({
+      where: { organizationId, vehicleId, status: 'AUTORIZADO', authorizedUntil: { gt: new Date() } },
+      select: { id: true },
+      orderBy: { resolvedAt: 'desc' },
+    });
+  }
+
+  /** El equipo volvio a reportar: las solicitudes abiertas o autorizadas de esa unidad ya no tienen sentido. */
+  private async expireGpsFallbacks(organizationId: string, vehicleId: string) {
+    await this.prisma.gpsFallbackRequest.updateMany({
+      where: { organizationId, vehicleId, status: { in: ['PENDIENTE', 'AUTORIZADO'] } },
+      data: { status: 'EXPIRADO' },
+    });
+  }
+
+  private async findDriverVehicle(organizationId: string, actor: JwtPayload) {
+    if (actor.role !== 'CONDUCTOR') {
+      throw new ForbiddenException('Solo el conductor puede pedir esto -- el administrador lo resuelve desde su panel');
+    }
+    const vehicle = await this.prisma.vehicle.findFirst({ where: { organizationId, currentDriverId: actor.sub } });
+    if (!vehicle) throw new NotFoundException('No se encontro la unidad asignada a tu cuenta');
+    return vehicle;
+  }
+
+  /** Estado que ve el conductor en su Inicio: si el GPS de su vehiculo tiene señal y como va su solicitud. */
+  async myGpsFallbackStatus(organizationId: string, actor: JwtPayload) {
+    const vehicle = await this.prisma.vehicle.findFirst({ where: { organizationId, currentDriverId: actor.sub } });
+    if (!vehicle) return { applies: false, noSignal: false, request: null };
+    const hardware = await this.gps.getVehicleHardwareStatus(organizationId, vehicle.id);
+    if (!hardware.linked) return { applies: false, noSignal: false, request: null };
+    if (!hardware.noSignal) {
+      await this.expireGpsFallbacks(organizationId, vehicle.id);
+      return { applies: true, noSignal: false, request: null };
+    }
+    const since = new Date(Date.now() - GPS_FALLBACK_HOURS * 3600 * 1000);
+    const latest = await this.prisma.gpsFallbackRequest.findFirst({
+      where: { organizationId, vehicleId: vehicle.id, createdAt: { gte: since }, status: { in: ['PENDIENTE', 'AUTORIZADO', 'RECHAZADO'] } },
+      orderBy: { createdAt: 'desc' },
+    });
+    const valid = latest && (latest.status !== 'AUTORIZADO' || (latest.authorizedUntil && latest.authorizedUntil > new Date()));
+    return {
+      applies: true,
+      noSignal: true,
+      request: valid && latest ? { id: latest.id, status: latest.status, authorizedUntil: latest.authorizedUntil, resolvedAt: latest.resolvedAt } : null,
+    };
+  }
+
+  async createGpsFallbackRequest(organizationId: string, actor: JwtPayload) {
+    const vehicle = await this.findDriverVehicle(organizationId, actor);
+    const hardware = await this.gps.getVehicleHardwareStatus(organizationId, vehicle.id);
+    if (!hardware.linked || !hardware.noSignal) {
+      throw new BadRequestException('El GPS de tu vehiculo esta reportando con normalidad, no hace falta pedir autorizacion.');
+    }
+
+    const open = await this.prisma.gpsFallbackRequest.findFirst({
+      where: {
+        organizationId,
+        vehicleId: vehicle.id,
+        OR: [{ status: 'PENDIENTE' }, { status: 'AUTORIZADO', authorizedUntil: { gt: new Date() } }],
+      },
+    });
+    if (open) return open;
+
+    const created = await this.prisma.gpsFallbackRequest.create({
+      data: { organizationId, vehicleId: vehicle.id, requestedById: actor.sub },
+    });
+    const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    const lastWeek = await this.prisma.gpsFallbackRequest.count({ where: { organizationId, vehicleId: vehicle.id, createdAt: { gte: weekAgo } } });
+    const repeated = lastWeek > GPS_FALLBACK_REPEAT_THRESHOLD;
+
+    await this.prisma.auditEntry.create({
+      data: {
+        organizationId,
+        actorId: actor.sub,
+        actorRole: actor.role,
+        action: 'SOLICITAR_GPS_CELULAR',
+        resource: `Unidad ${vehicle.code}`,
+        resourceId: created.id,
+        before: null,
+        after: 'PENDIENTE',
+        reason: repeated
+          ? `El GPS del vehiculo no tiene señal. ATENCION: ${lastWeek} solicitudes de esta unidad en los ultimos 7 dias.`
+          : 'El GPS del vehiculo no tiene señal; el conductor pide usar el GPS de su celular',
+      },
+    });
+
+    const admins = await this.prisma.person.findMany({
+      where: { organizationId, role: 'ADMINISTRADOR', status: { notIn: ['SUSPENDIDO', 'ELIMINADO'] } },
+      select: { id: true },
+    });
+    const driver = await this.prisma.person.findUnique({ where: { id: actor.sub }, select: { name: true } });
+    for (const admin of admins) {
+      await this.notices.createSystemNotice(
+        organizationId,
+        admin.id,
+        'GPS del vehiculo sin señal',
+        `${driver?.name ?? 'Un conductor'} (unidad ${vehicle.code}) pide usar el GPS de su celular para inscribirse. Autorizalo o rechazalo en Inscripciones retrasadas.${
+          repeated ? ` Atencion: es la solicitud ${lastWeek} de esta unidad en 7 dias.` : ''
+        }`,
+      );
+    }
+    return created;
+  }
+
+  async listGpsFallbackRequests(organizationId: string) {
+    const rows = await this.prisma.gpsFallbackRequest.findMany({
+      where: { organizationId },
+      include: {
+        vehicle: { select: { code: true, plate: true } },
+        requestedBy: { select: { name: true } },
+        resolvedBy: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    const counts = await this.prisma.gpsFallbackRequest.groupBy({
+      by: ['vehicleId'],
+      where: { organizationId, createdAt: { gte: weekAgo } },
+      _count: { _all: true },
+    });
+    const countByVehicle = new Map(counts.map((c) => [c.vehicleId, c._count._all]));
+    return rows.map((r) => ({ ...r, requestsLast7Days: countByVehicle.get(r.vehicleId) ?? 1 }));
+  }
+
+  async resolveGpsFallbackRequest(organizationId: string, actor: JwtPayload, id: string, approve: boolean) {
+    const request = await this.prisma.gpsFallbackRequest.findUnique({ where: { id }, include: { vehicle: { select: { code: true } } } });
+    if (!request || request.organizationId !== organizationId) throw new NotFoundException('Solicitud no encontrada');
+    if (request.status !== 'PENDIENTE') throw new BadRequestException('Esta solicitud ya fue resuelta');
+
+    const authorizedUntil = approve ? new Date(Date.now() + GPS_FALLBACK_HOURS * 3600 * 1000) : null;
+    const updated = await this.prisma.gpsFallbackRequest.update({
+      where: { id },
+      data: {
+        status: approve ? 'AUTORIZADO' : 'RECHAZADO',
+        resolvedById: actor.sub,
+        resolvedAt: new Date(),
+        authorizedUntil,
+      },
+    });
+    await this.prisma.auditEntry.create({
+      data: {
+        organizationId,
+        actorId: actor.sub,
+        actorRole: actor.role,
+        action: 'RESOLVER_GPS_CELULAR',
+        resource: `Unidad ${request.vehicle.code}`,
+        resourceId: id,
+        before: 'PENDIENTE',
+        after: updated.status,
+        reason: approve
+          ? `Se autoriza usar el GPS del celular por ${GPS_FALLBACK_HOURS} h o hasta que el equipo del vehiculo vuelva a reportar`
+          : 'Solicitud rechazada',
+      },
+    });
+    await this.notices.createSystemNotice(
+      organizationId,
+      request.requestedById,
+      approve ? 'GPS del celular autorizado' : 'GPS del celular rechazado',
+      approve
+        ? `Tu administrador autorizo usar el GPS de tu celular para inscribirte (unidad ${request.vehicle.code}). Repara el equipo del vehiculo cuanto antes.`
+        : `Tu administrador rechazo la solicitud de usar el GPS de tu celular (unidad ${request.vehicle.code}). Comunicate con el.`,
+    );
     return updated;
   }
 }

@@ -93,6 +93,7 @@ model Organization {
   manifests                   Manifest[]
   relocationOrders            RelocationOrder[]
   delayedRegistrationRequests DelayedRegistrationRequest[]
+  gpsFallbackRequests         GpsFallbackRequest[]
   gpsAlerts                   GpsAlert[]
   notices                     Notice[]
   engineLockRequests          EngineLockRequest[]
@@ -112,19 +113,19 @@ model Person {
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
 
-  name   String
+  name         String
   // Un mismo correo puede tener hasta 2 cuentas (una Socio, una Conductor) —
   // nunca dos con el mismo rol. Al hacer login con Google, si el correo tiene
   // mas de una cuenta, el sistema pide elegir con cual entrar (ver auth.service.ts).
-  email  String
+  email        String
   // Tipo del documento que guarda `dni` (Jayde, 20 sept 2026): DNI o Carne de
   // Extranjeria -- antes solo se validaba como DNI de 8 digitos, sin forma de
   // registrar a un conductor extranjero.
-  documentType String  @default("DNI")
+  documentType String       @default("DNI")
   dni          String?
   phone        String?
-  role   PersonRole
-  status PersonStatus @default(PENDIENTE)
+  role         PersonRole
+  status       PersonStatus @default(PENDIENTE)
 
   // Identidad de Google verificada (Sign in with Google).
   // Ya no es @unique: la MISMA cuenta real de Google confirma dos filas de Person
@@ -177,6 +178,8 @@ model Person {
   manifestsAsOperator          Manifest[]                   @relation("ManifestOperator")
   relocationsConfirmed         RelocationOrder[]            @relation("RelocationConfirmedBy")
   delayedRegistrationsResolved DelayedRegistrationRequest[] @relation("DelayedRegistrationResolvedBy")
+  gpsFallbackRequested         GpsFallbackRequest[]         @relation("GpsFallbackRequestedBy")
+  gpsFallbackResolved          GpsFallbackRequest[]         @relation("GpsFallbackResolvedBy")
   commercialRequestsReviewed   CommercialRequest[]          @relation("CommercialRequestReviewedBy")
   landingContentUpdates        LandingContent[]             @relation("LandingContentUpdatedBy")
   noticesAsAuthor              Notice[]                     @relation("NoticeAuthor")
@@ -433,6 +436,7 @@ model Vehicle {
   relocationUnits               RelocationUnit[]
   delayedRegistrationsRequested DelayedRegistrationRequest[] @relation("DelayedRegistrationRequesting")
   delayedRegistrationsBlocking  DelayedRegistrationRequest[] @relation("DelayedRegistrationBlockedBy")
+  gpsFallbackRequests           GpsFallbackRequest[]
   gpsAlerts                     GpsAlert[]
   engineLockRequests            EngineLockRequest[]
 
@@ -692,16 +696,19 @@ model OperationalConfig {
   organization   Organization @relation(fields: [organizationId], references: [id])
 
   // JULI_PUNO ('ruta de ida' = origen -> destino) / PUNO_JULI ('ruta de vuelta' = destino -> origen).
-  minTripMinutesOutbound   Int @default(90)
-  minTripMinutesReturn     Int @default(90)
+  minTripMinutesOutbound   Int  @default(90)
+  minTripMinutesReturn     Int  @default(90)
   // Tiempo MAXIMO esperado de viaje (20 sept 2026), solo informativo: pasado
   // este tiempo, un viaje que sigue "En curso" aparece como "Llegada sin
   // confirmar". No bloquea, no cierra ni avisa por correo. null = sin configurar.
   maxTripMinutesOutbound   Int?
   maxTripMinutesReturn     Int?
-  gpsRadiusMeters          Int @default(300)
-  timeoutMinutes           Int @default(15)
-  anomalySpeedThresholdKmh Int @default(100)
+  gpsRadiusMeters          Int  @default(300)
+  // Antiguedad maxima (min) de la ultima señal del GPS del vehiculo para tomarla como valida.
+  // Pasado ese tiempo el equipo se considera SIN SEÑAL (ver GpsFallbackRequest).
+  gpsMaxAgeMinutes         Int  @default(5)
+  timeoutMinutes           Int  @default(15)
+  anomalySpeedThresholdKmh Int  @default(100)
 
   // Nombre y direccion visibles de cada terminal -- esto es lo que el Super
   // Admin configura por asociacion (paso 2 del wizard "Nueva asociacion").
@@ -714,8 +721,8 @@ model OperationalConfig {
   // terminal. Ej. terminal "Terminal Zonal Puno" -> ruta "Puno". Con estos dos
   // se arman automaticamente la ruta de ida ("Puno -> Juliaca") y la de vuelta
   // ("Juliaca -> Puno"). Si estan vacios se usa el nombre del terminal.
-  routeOriginName      String?
-  routeDestinationName String?
+  routeOriginName       String?
+  routeDestinationName  String?
   // Ruta de retorno, escrita a mano (ej. "Puno" -> "Juli"): la ida es
   // routeOriginName -> routeDestinationName. Solo hay dos rutas por asociacion.
   returnOriginName      String?
@@ -1045,6 +1052,44 @@ model DelayedRegistrationRequest {
 
   @@index([organizationId, status])
   @@map("delayed_registration_requests")
+}
+
+enum GpsFallbackStatus {
+  PENDIENTE
+  AUTORIZADO
+  RECHAZADO
+  // La autorizacion dejo de aplicar porque el GPS del vehiculo volvio a reportar.
+  EXPIRADO
+}
+
+/// (20 sept 2026) El GPS del vehiculo no tiene señal (equipo malogrado o desconectado): el
+/// conductor pide al administrador usar el GPS de su celular ya verificado para inscribirse.
+/// Nunca se cambia solo -- si fuera automatico, desconectar el equipo bastaria para saltarse
+/// la verificacion del Plan PRO. Vale hasta authorizedUntil o hasta que el equipo vuelva a
+/// reportar (lo que ocurra primero).
+model GpsFallbackRequest {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id])
+
+  requestedById String
+  requestedBy   Person @relation("GpsFallbackRequestedBy", fields: [requestedById], references: [id])
+
+  status GpsFallbackStatus @default(PENDIENTE)
+
+  resolvedById    String?
+  resolvedBy      Person?   @relation("GpsFallbackResolvedBy", fields: [resolvedById], references: [id])
+  resolvedAt      DateTime?
+  authorizedUntil DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, status])
+  @@index([vehicleId, status])
+  @@map("gps_fallback_requests")
 }
 
 enum CommercialSolution {

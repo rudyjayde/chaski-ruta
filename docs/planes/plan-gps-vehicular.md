@@ -102,6 +102,7 @@ Traccar recibe y normaliza la telemetría. CHASKI AI conserva la identidad, el c
 - No mover el marcador artificialmente.
 - No afirmar que el vehículo sigue en ese punto.
 - Registrar reconexión cuando vuelva la telemetría.
+- Para inscribirse en la cola, la posición solo cuenta si es reciente (`gpsMaxAgeMinutes`); sin señal el conductor pide autorización al administrador para usar el GPS del celular — ver `plan-pro.md` §3, "Pérdida de señal al inscribirse".
 
 ## 7. Comparación resumida (§7.4)
 

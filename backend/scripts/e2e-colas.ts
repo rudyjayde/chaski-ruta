@@ -25,6 +25,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 import { AuthService } from '../src/auth/auth.service';
 import { JwtService } from '@nestjs/jwt';
+import { GpsService } from '../src/gps/gps.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { validationExceptionFactory } from '../src/common/validation-messages';
 import { hasValidRucCheckDigit } from '../src/common/validators';
@@ -624,6 +625,145 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     r = await call(visitorTok, 'GET', '/people/me');
     check('y un visitante no entra a rutas de personas (rol)', r.status === 403 || r.status === 401, `HTTP ${r.status}`);
 
+    // ═════════ O. GPS DEL VEHICULO SIN SEÑAL: PEDIR USAR EL GPS DEL CELULAR ═════════
+    head('O. GPS del vehículo sin señal');
+    const gpsSvc = app.get(GpsService) as any;
+    const realTraccarFetch = gpsSvc.traccarFetch;
+    const gDev = `e2e-gps-${stamp}`;
+    const traccar = { down: false, lastUpdateMinAgo: 0, fixMinAgo: 0, valid: true, at: JULI };
+    gpsSvc.traccarFetch = async (path: string) => {
+      if (traccar.down) throw new Error('Traccar caido (simulado)');
+      if (path === '/api/devices') {
+        return [{ id: 9001, uniqueId: gDev, name: 'GPS prueba', status: 'online', lastUpdate: new Date(Date.now() - traccar.lastUpdateMinAgo * 60000).toISOString() }];
+      }
+      return [{ deviceId: 9001, latitude: traccar.at.lat, longitude: traccar.at.lng, speed: 0, course: 0, valid: traccar.valid, fixTime: new Date(Date.now() - traccar.fixMinAgo * 60000).toISOString() }];
+    };
+    const setHw = (o: Partial<typeof traccar>) => Object.assign(traccar, { down: false, lastUpdateMinAgo: 0, fixMinAgo: 0, valid: true, at: JULI }, o);
+
+    const gD = await mk(orgA.id, 'CONDUCTOR', 'Conductor GPS', 66);
+    const gV = await prisma.vehicle.create({ data: { organizationId: orgA.id, code: 'GP66', companyId: coA.id, vehicleType: 'HIACE', plate: `GP${stamp.slice(-1)}-666`, model: 'Toyota Hiace', year: 2024, currentDriverId: gD.id, traccarDeviceId: gDev } });
+    const gT = await tok(gD);
+    const gJoin = (gps: { lat: number; lng: number } | null) => call(gT, 'POST', '/queues/JULI_PUNO/join', { vehicleId: gV.id, deviceId: 'gps-dev-1', ...(gps ?? {}) });
+    const gClean = () => prisma.queueEntry.deleteMany({ where: { organizationId: orgA.id, vehicleId: gV.id } });
+    const adminPerson = await prisma.person.findFirst({ where: { organizationId: orgA.id, role: 'ADMINISTRADOR' } });
+    // Usuarios propios de esta seccion: el Super Admin de la seccion I ya se borro, y la asociacion B ya se elimino
+    // (sus sesiones, con razon, ya no sirven).
+    const superO = await prisma.person.create({ data: { organizationId: null, name: 'Super E2E O', email: `e2e.${stamp}.supero@example.test`, role: 'SUPERADMIN', status: 'ACTIVO' } });
+    const TSO = await tok(superO);
+    const orgO = await prisma.organization.create({ data: { name: `ZZ E2E O ${stamp}`, ruc: `2098${stamp}9`.slice(0, 11), status: 'ACTIVA', plan: 'PRO' } });
+    orgIds.push(orgO.id);
+    const adminO = await mk(orgO.id, 'ADMINISTRADOR', 'Admin Otra Asociacion', 55);
+    const TAO = await tok(adminO);
+
+    setHw({});
+    r = await gJoin(JULI);
+    check('con el GPS del vehículo reportando ahora mismo, el conductor se inscribe normal', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    await gClean();
+
+    setHw({ fixMinAgo: 3, lastUpdateMinAgo: 3 });
+    r = await gJoin(JULI);
+    check('una señal de hace 3 min (dentro de los 5 permitidos) todavía sirve', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    await gClean();
+
+    setHw({ fixMinAgo: 40, lastUpdateMinAgo: 40 });
+    r = await gJoin(JULI);
+    check('con el equipo sin reportar hace 40 min, NO se acepta ni con el celular en el terminal (sin autorización)', r.status === 403 && /no tiene señal/i.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    r = await call(gT, 'GET', '/queues/gps-fallback/mine');
+    check('el conductor ve que su GPS no tiene señal y que aún no pidió autorización', r.status === 200 && r.json.applies === true && r.json.noSignal === true && r.json.request === null, JSON.stringify(r.json));
+
+    setHw({ down: true });
+    r = await gJoin(JULI);
+    check('si el servidor Traccar no responde tampoco se acepta el celular por su cuenta (403)', r.status === 403, `HTTP ${r.status} ${msg(r)}`);
+    setHw({ fixMinAgo: 40, lastUpdateMinAgo: 40 });
+
+    setHw({ fixMinAgo: 500, lastUpdateMinAgo: 500, at: JULI });
+    r = await call(gT, 'POST', '/queues/gps-fallback');
+    check('el conductor pide autorizar el GPS del celular (queda PENDIENTE)', r.status === 201 && r.json.status === 'PENDIENTE', `HTTP ${r.status} ${msg(r)}`);
+    const req1 = r.json;
+    r = await call(gT, 'POST', '/queues/gps-fallback');
+    check('pedirlo dos veces no duplica la solicitud', r.status === 201 && r.json.id === req1.id, `HTTP ${r.status}`);
+    r = await gJoin(JULI);
+    check('mientras la solicitud está pendiente, sigue sin poder inscribirse (403)', r.status === 403, `HTTP ${r.status}`);
+    const notif = await prisma.notice.count({ where: { targetPersonId: adminPerson!.id, title: 'GPS del vehiculo sin señal' } });
+    check('el administrador recibe el aviso de la solicitud', notif >= 1, `${notif} avisos`);
+    r = await call(T.admin, 'GET', '/queues/gps-fallback/list');
+    check('el administrador ve la solicitud en su lista', r.status === 200 && r.json.some((x: any) => x.id === req1.id && x.status === 'PENDIENTE'), `HTTP ${r.status}`);
+    r = await call(gT, 'POST', `/queues/gps-fallback/${req1.id}/resolve`, { approve: true });
+    check('el conductor NO puede autorizarse a sí mismo (403)', r.status === 403, `HTTP ${r.status}`);
+    r = await call(TAO, 'POST', `/queues/gps-fallback/${req1.id}/resolve`, { approve: true });
+    check('el administrador de OTRA asociación no puede resolverla (404)', r.status === 404, `HTTP ${r.status}`);
+    r = await call(T.admin, 'POST', `/queues/gps-fallback/${req1.id}/resolve`, {});
+    check('resolver sin decir si autoriza o rechaza da error (400)', r.status === 400, `HTTP ${r.status}`);
+
+    r = await call(T.admin, 'POST', `/queues/gps-fallback/${req1.id}/resolve`, { approve: true });
+    const hoursLeft = r.json.authorizedUntil ? (new Date(r.json.authorizedUntil).getTime() - Date.now()) / 3600000 : 0;
+    check('el administrador autoriza: queda AUTORIZADO por unas 24 h', r.status === 201 && r.json.status === 'AUTORIZADO' && hoursLeft > 23 && hoursLeft <= 24, `HTTP ${r.status} ${hoursLeft.toFixed(1)} h`);
+    check('el conductor recibe el aviso de que fue autorizado', (await prisma.notice.count({ where: { targetPersonId: gD.id, title: 'GPS del celular autorizado' } })) >= 1);
+    r = await gJoin(FAR);
+    check('autorizado, el celular igual debe estar en el terminal: desde lejos se rechaza (403 por radio)', r.status === 403 && /radio|lejos|fuera/i.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    r = await gJoin(null);
+    check('autorizado pero SIN ubicación del celular no se inscribe (400)', r.status === 400, `HTTP ${r.status} ${msg(r)}`);
+    r = await gJoin(JULI);
+    check('autorizado y con el celular en el terminal, se inscribe', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    const gEntry = await prisma.queueEntry.findFirst({ where: { organizationId: orgA.id, vehicleId: gV.id } });
+    check('la inscripción queda con evidencia de presencia en el terminal', gEntry?.evidence === 'PRESENCIA_TERMINAL', gEntry?.evidence);
+    const gAudit = await prisma.auditEntry.findFirst({ where: { organizationId: orgA.id, action: 'INSCRIPCION_COLA', resourceId: gEntry?.id } });
+    check('Auditoría deja escrito que se usó el GPS del celular autorizado', /GPS del celular autorizado/.test(gAudit?.reason ?? ''), gAudit?.reason ?? '');
+    await gClean();
+
+    setHw({});
+    r = await call(gT, 'GET', '/queues/gps-fallback/mine');
+    const exp1 = await prisma.gpsFallbackRequest.findUnique({ where: { id: req1.id } });
+    check('cuando el equipo vuelve a reportar, el conductor ve que ya tiene señal', r.status === 200 && r.json.noSignal === false, JSON.stringify(r.json));
+    check('y la autorización termina sola (EXPIRADO)', exp1?.status === 'EXPIRADO', exp1?.status);
+    setHw({ fixMinAgo: 60, lastUpdateMinAgo: 60 });
+    r = await gJoin(JULI);
+    check('si el equipo vuelve a fallar, la autorización anterior ya no sirve (403)', r.status === 403, `HTTP ${r.status}`);
+
+    r = await call(gT, 'POST', '/queues/gps-fallback');
+    const req2 = r.json;
+    r = await call(T.admin, 'POST', `/queues/gps-fallback/${req2.id}/resolve`, { approve: false });
+    check('el administrador puede rechazar la solicitud', r.status === 201 && r.json.status === 'RECHAZADO', `HTTP ${r.status} ${msg(r)}`);
+    r = await gJoin(JULI);
+    check('rechazada, el conductor sigue sin poder inscribirse (403)', r.status === 403, `HTTP ${r.status}`);
+    r = await call(T.admin, 'POST', `/queues/gps-fallback/${req2.id}/resolve`, { approve: true });
+    check('una solicitud ya resuelta no se puede volver a resolver (400)', r.status === 400, `HTTP ${r.status}`);
+
+    r = await call(T.admin, 'POST', '/queues/JULI_PUNO/join', { vehicleId: gV.id, ...JULI });
+    check('un administrador puede inscribir la unidad aunque el equipo no tenga señal (excepción de siempre)', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    await gClean();
+
+    for (let i = 0; i < 2; i++) {
+      const q = await call(gT, 'POST', '/queues/gps-fallback');
+      await call(T.admin, 'POST', `/queues/gps-fallback/${q.json.id}/resolve`, { approve: false });
+    }
+    const q4 = await call(gT, 'POST', '/queues/gps-fallback');
+    const rep = await prisma.auditEntry.findFirst({ where: { organizationId: orgA.id, action: 'SOLICITAR_GPS_CELULAR', resourceId: q4.json.id } });
+    check('a la 4.ª solicitud en 7 días queda marcada como repetida en Auditoría', /ATENCION/.test(rep?.reason ?? ''), rep?.reason ?? '');
+    r = await call(T.admin, 'GET', '/queues/gps-fallback/list');
+    check('y la lista del administrador muestra cuántas solicitudes lleva esa unidad', r.status === 200 && r.json.find((x: any) => x.id === q4.json.id)?.requestsLast7Days >= 4, JSON.stringify(r.json.find((x: any) => x.id === q4.json.id)?.requestsLast7Days));
+    await prisma.gpsFallbackRequest.deleteMany({ where: { vehicleId: gV.id } });
+
+    setHw({});
+    r = await call(gT, 'POST', '/queues/gps-fallback');
+    check('con el GPS del vehículo funcionando no se puede pedir autorización (400)', r.status === 400, `HTTP ${r.status} ${msg(r)}`);
+    r = await call(T.d[0], 'POST', '/queues/gps-fallback');
+    check('una unidad sin GPS vinculado no puede pedirla (400)', r.status === 400, `HTTP ${r.status} ${msg(r)}`);
+
+    r = await call(T.admin, 'POST', '/operational-config', { gpsMaxAgeMinutes: 2 });
+    check('un administrador NO puede cambiar la antigüedad máxima de la señal (solo Super Admin)', r.status === 403, `HTTP ${r.status}`);
+    r = await call(TSO, 'POST', `/operational-config?organizationId=${orgA.id}`, { gpsMaxAgeMinutes: 0 });
+    check('la antigüedad máxima debe ser de al menos 1 minuto (400)', r.status === 400, `HTTP ${r.status}`);
+    r = await call(TSO, 'POST', `/operational-config?organizationId=${orgA.id}`, { gpsMaxAgeMinutes: 2 });
+    check('el Super Admin la puede cambiar', r.status === 201 && r.json.gpsMaxAgeMinutes === 2, `HTTP ${r.status} ${msg(r)}`);
+    setHw({ fixMinAgo: 3, lastUpdateMinAgo: 3 });
+    r = await gJoin(JULI);
+    check('con el límite en 2 min, una señal de hace 3 min ya cuenta como sin señal (403)', r.status === 403, `HTTP ${r.status}`);
+    await call(TSO, 'POST', `/operational-config?organizationId=${orgA.id}`, { gpsMaxAgeMinutes: 5 });
+    await gClean();
+    gpsSvc.traccarFetch = realTraccarFetch;
+    await prisma.person.delete({ where: { id: superO.id } }).catch(() => null);
+
     // ═════════ J. CONSISTENCIA FINAL ═════════
     head('J. Consistencia de datos');
     await prisma.queueEntry.deleteMany({ where: { organizationId: orgA.id } });
@@ -646,6 +786,7 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
         await prisma.trip.updateMany({ where: { organizationId: id }, data: { predecessorTripId: null } });
         await prisma.trip.deleteMany({ where: { organizationId: id } });
         await prisma.delayedRegistrationRequest.deleteMany({ where: { organizationId: id } });
+        await prisma.gpsFallbackRequest.deleteMany({ where: { organizationId: id } });
         const ordIds = (await prisma.relocationOrder.findMany({ where: { organizationId: id }, select: { id: true } })).map((o) => o.id);
         await prisma.relocationUnit.deleteMany({ where: { relocationOrderId: { in: ordIds } } });
         await prisma.relocationOrder.deleteMany({ where: { organizationId: id } });

@@ -3,6 +3,7 @@ import { Clock, PhoneCall, ShieldCheck, AlertTriangle, RefreshCw } from 'lucide-
 import type { DelayedRegistrationRequest } from '../../types';
 import { fetchDelayedRegistrationRequests, resolveDelayedRegistrationRequest, routeLabel } from '../../lib/operacion-api';
 import { useAdminDemo } from './AdminApp';
+import GpsFallbackSection from './GpsFallbackSection';
 
 const STATUS_STYLE: Record<DelayedRegistrationRequest['status'], { label: string; cls: string }> = {
   PENDIENTE: { label: 'Pendiente', cls: 'bg-warn/10 text-warn' },
@@ -66,6 +67,8 @@ export default function DelayedRegistrationsPage() {
           <RefreshCw size={14} /> Actualizar
         </button>
       </div>
+
+      <GpsFallbackSection />
 
       {loadError && <div className="p-3 bg-danger/5 border border-danger/30 rounded-lg text-sm text-danger">{loadError}</div>}
       {actionError && <div className="p-3 bg-danger/5 border border-danger/30 rounded-lg text-sm text-danger">{actionError}</div>}

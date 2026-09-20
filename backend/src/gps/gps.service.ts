@@ -12,6 +12,8 @@ interface TraccarDevice {
   uniqueId: string;
   name: string;
   status: string; // 'online' | 'offline' | 'unknown'
+  // Ultima vez que el servidor Traccar recibio ALGO de este equipo (ISO), aunque no fuera una posicion nueva.
+  lastUpdate?: string | null;
 }
 
 interface TraccarPosition {
@@ -239,25 +241,58 @@ export class GpsService {
   }
 
   /**
-   * Posicion actual de UNA sola unidad (GPS real del vehiculo, via Traccar) --
-   * usado por "Marcar llegada" en Plan PRO (plan-flujo-colas-hardware.md §2.6),
-   * donde el conductor no hace nada adicional: el backend lee la posicion del
-   * hardware directamente. Devuelve null si la unidad no tiene dispositivo
-   * vinculado o si Traccar todavia no reporta un fix para ella.
+   * Estado del GPS fisico de UNA unidad y su ultima posicion, SOLO si es reciente.
+   *
+   * Traccar guarda para siempre la ultima posicion que recibio: si el equipo se malogra o lo
+   * desconectan, esa posicion sigue ahi, cada vez mas vieja. Tomarla como "donde esta ahora"
+   * rechaza al conductor con un mensaje falso (esta lejos de donde quedo el equipo) o deja
+   * inscribir a quien se fue lejos con el equipo desconectado. Por eso la posicion solo cuenta
+   * si la ultima señal (posicion o cualquier contacto del equipo) es mas nueva que
+   * OperationalConfig.gpsMaxAgeMinutes.
+   *
+   *  - linked: la unidad tiene un equipo Traccar vinculado.
+   *  - position: posicion valida y reciente; null si no hay o esta vencida.
+   *  - noSignal: linked pero sin posicion reciente (equipo malogrado, desconectado, sin fix
+   *    de satelites, o servidor Traccar inalcanzable -- en ese caso no se puede verificar nada).
+   */
+  async getVehicleHardwareStatus(
+    organizationId: string,
+    vehicleId: string,
+    now: Date = new Date(),
+  ): Promise<{ linked: boolean; noSignal: boolean; position: { lat: number; lng: number; fixTime: string } | null }> {
+    const vehicle = await this.prisma.vehicle.findFirst({ where: { id: vehicleId, organizationId } });
+    if (!vehicle?.traccarDeviceId) return { linked: false, noSignal: false, position: null };
+
+    const config = await this.prisma.operationalConfig.findUnique({ where: { organizationId }, select: { gpsMaxAgeMinutes: true } });
+    const maxAgeMs = (config?.gpsMaxAgeMinutes ?? 5) * 60_000;
+
+    try {
+      const [devices, positions] = await Promise.all([
+        this.traccarFetch<TraccarDevice[]>('/api/devices'),
+        this.traccarFetch<TraccarPosition[]>('/api/positions'),
+      ]);
+      const device = devices.find((d) => d.uniqueId === vehicle.traccarDeviceId);
+      const pos = device ? positions.find((p) => p.deviceId === device.id) : undefined;
+      if (!device || !pos || pos.valid === false) return { linked: true, noSignal: true, position: null };
+
+      const fixMs = new Date(pos.fixTime).getTime();
+      const contactMs = device.lastUpdate ? new Date(device.lastUpdate).getTime() : 0;
+      const lastSignalMs = Math.max(Number.isFinite(fixMs) ? fixMs : 0, Number.isFinite(contactMs) ? contactMs : 0);
+      if (!lastSignalMs || now.getTime() - lastSignalMs > maxAgeMs) return { linked: true, noSignal: true, position: null };
+
+      return { linked: true, noSignal: false, position: { lat: pos.latitude, lng: pos.longitude, fixTime: pos.fixTime } };
+    } catch {
+      return { linked: true, noSignal: true, position: null };
+    }
+  }
+
+  /**
+   * Posicion actual de UNA sola unidad (GPS real del vehiculo, via Traccar). Devuelve null si la
+   * unidad no tiene dispositivo vinculado o su ultima señal ya no es reciente (ver
+   * getVehicleHardwareStatus).
    */
   async getVehiclePosition(organizationId: string, vehicleId: string): Promise<{ lat: number; lng: number; fixTime: string } | null> {
-    const vehicle = await this.prisma.vehicle.findFirst({ where: { id: vehicleId, organizationId } });
-    if (!vehicle?.traccarDeviceId) return null;
-
-    const [devices, positions] = await Promise.all([
-      this.traccarFetch<TraccarDevice[]>('/api/devices'),
-      this.traccarFetch<TraccarPosition[]>('/api/positions'),
-    ]);
-    const device = devices.find((d) => d.uniqueId === vehicle.traccarDeviceId);
-    if (!device) return null;
-    const pos = positions.find((p) => p.deviceId === device.id);
-    if (!pos || pos.valid === false) return null;
-    return { lat: pos.latitude, lng: pos.longitude, fixTime: pos.fixTime };
+    return (await this.getVehicleHardwareStatus(organizationId, vehicleId)).position;
   }
 
   /**
