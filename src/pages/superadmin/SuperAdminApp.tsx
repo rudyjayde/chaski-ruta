@@ -139,6 +139,75 @@ function EnabledRoutesEditor({ routes, editing, onChange }: { routes: EnabledRou
   );
 }
 
+// Lista de paradas (solo informativas, sin limite): origen + destino + "Agregar".
+function StopsEditor({ stops, onChange }: { stops: { origin: string; destination: string }[]; onChange: (next: { origin: string; destination: string }[]) => void }) {
+  const [origin, setOrigin] = useState('');
+  const [destination, setDestination] = useState('');
+  const canAdd = origin.trim() !== '' && destination.trim() !== '';
+  const add = () => {
+    if (!canAdd) return;
+    onChange([...stops, { origin: origin.trim(), destination: destination.trim() }]);
+    setOrigin('');
+    setDestination('');
+  };
+  return (
+    <div>
+      {stops.length > 0 && (
+        <div className="border border-border rounded-lg divide-y divide-border mb-3">
+          {stops.map((r, i) => (
+            <div key={i} className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+              <p className="text-sm text-t1">{r.origin} → {r.destination}</p>
+              <button type="button" onClick={() => onChange(stops.filter((_, k) => k !== i))} className="w-7 h-7 grid place-items-center rounded-md text-danger hover:bg-danger/5" aria-label={`Quitar parada ${r.origin} → ${r.destination}`}>
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <input value={origin} onChange={e => setOrigin(e.target.value)} placeholder="Origen" className="flex-1 h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+        <input value={destination} onChange={e => setDestination(e.target.value)} placeholder="Destino" className="flex-1 h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+        <button type="button" onClick={add} disabled={!canAdd} className="h-9 px-3 border border-primary text-primary rounded-lg text-sm font-medium hover:bg-selected disabled:opacity-50 flex items-center gap-1.5 flex-shrink-0">
+          <Plus size={14} /> Agregar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Lista de nombres (empresas integrantes): escribes el nombre, "Agregar", y otro.
+function NamesListEditor({ items, placeholder, onChange }: { items: string[]; placeholder: string; onChange: (next: string[]) => void }) {
+  const [name, setName] = useState('');
+  const canAdd = name.trim() !== '' && !items.some(i => i.toLowerCase() === name.trim().toLowerCase());
+  const add = () => {
+    if (!canAdd) return;
+    onChange([...items, name.trim()]);
+    setName('');
+  };
+  return (
+    <div>
+      {items.length > 0 && (
+        <div className="border border-border rounded-lg divide-y divide-border mb-3">
+          {items.map((n, i) => (
+            <div key={i} className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+              <p className="text-sm text-t1">{n}</p>
+              <button type="button" onClick={() => onChange(items.filter((_, k) => k !== i))} className="w-7 h-7 grid place-items-center rounded-md text-danger hover:bg-danger/5" aria-label={`Quitar ${n}`}>
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} placeholder={placeholder} className="flex-1 h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+        <button type="button" onClick={add} disabled={!canAdd} className="h-9 px-3 border border-primary text-primary rounded-lg text-sm font-medium hover:bg-selected disabled:opacity-50 flex items-center gap-1.5 flex-shrink-0">
+          <Plus size={14} /> Agregar
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const ORG_STATUS_STYLE: Record<string, string> = {
   ACTIVA: 'bg-ok/10 text-ok',
   EN_CONFIGURACION: 'bg-warn/10 text-warn',
@@ -2541,6 +2610,7 @@ function NewOrgWizard({
 }) {
   const [step, setStep] = useState(0);
   const [created, setCreated] = useState(false);
+  const [createdNote, setCreatedNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [mapTarget, setMapTarget] = useState<'terminal1' | 'terminal2' | null>(null);
@@ -2553,14 +2623,9 @@ function NewOrgWizard({
     adminName: sug?.adminName ?? '', adminEmail: sug?.adminEmail ?? '', adminPhone: sug?.adminPhone ?? '',
     // Step 2
     terminal1: sug?.terminal1 ?? '', terminal1Address: '', terminal2: sug?.terminal2 ?? '', terminal2Address: '', enabledRoutes: [] as { origin: string; destination: string }[],
-    routes:
-      sug?.routes && sug.routes.length > 0
-        ? sug.routes
-        : [
-            { origin: '', destination: '' },
-            { origin: '', destination: '' },
-          ],
-    companies: '', config: sug?.configNotes ?? '',
+    // Paradas adicionales (solo informativas): empiezan vacias.
+    routes: (sug?.routes ?? []).filter(r => r.origin && r.destination) as { origin: string; destination: string }[],
+    companiesList: [] as string[], config: sug?.configNotes ?? '',
     // Step 3
     plan: sug?.plan ?? ('OPERACION' as 'OPERACION' | 'PRO'),
     units: sug?.units ?? '', gpsUnits: sug?.gpsUnits ?? '',
@@ -2596,7 +2661,7 @@ function NewOrgWizard({
         // destino del paso 2) — cada asociacion con su propia ruta, nunca una global
         // compartida. Empresas integrantes y el plan de suscripcion PRO se configuran
         // despues desde sus propios paneles — no tienen campo aqui todavia.
-        await createOrganization({
+        const newOrg = await createOrganization({
           name: form.name.trim(),
           ruc: form.ruc.trim(),
           adminEmail: form.adminEmail.trim().toLowerCase(),
@@ -2614,6 +2679,14 @@ function NewOrgWizard({
           ...(form.enabledRoutes[0] ? { routeOriginName: form.enabledRoutes[0].origin, routeDestinationName: form.enabledRoutes[0].destination } : {}),
           ...(form.enabledRoutes[1] ? { returnOriginName: form.enabledRoutes[1].origin, returnDestinationName: form.enabledRoutes[1].destination } : {}),
         });
+        // Empresas integrantes y paradas adicionales: antes se pedian aqui pero
+        // se descartaban al crear. Ahora se guardan en la asociacion recien creada.
+        const extras = await Promise.allSettled([
+          ...form.companiesList.map(name => createCompany({ name }, newOrg.id)),
+          ...form.routes.filter(r => r.origin.trim() && r.destination.trim()).map(r => createRoute({ origin: r.origin.trim(), destination: r.destination.trim() }, newOrg.id)),
+        ]);
+        const failed = extras.filter(x => x.status === 'rejected').length;
+        setCreatedNote(failed > 0 ? `${failed} empresa(s) o parada(s) no se pudieron guardar; agrégalas desde Editar asociación.` : '');
         setCreated(true);
       } catch (err) {
         setSaveError(err instanceof Error ? err.message : 'No se pudo crear la asociación. Intenta de nuevo.');
@@ -2635,6 +2708,7 @@ function NewOrgWizard({
           <p className="text-sm text-t2 mb-2">
             <strong>{form.name || 'Nueva Org'}</strong> fue creada con plan {form.plan}.
           </p>
+          {createdNote && <p className="text-sm text-warn mb-2">{createdNote}</p>}
           {form.plan === 'PRO' && (
             <div className="bg-ok/5 border border-ok/20 rounded-lg p-3 text-left mb-4">
               <p className="text-sm font-medium text-ok">Plan PRO — activo</p>
@@ -2646,7 +2720,7 @@ function NewOrgWizard({
             {[
               { task: 'Completar datos de la organización', done: !!form.name },
               { task: 'Configurar terminales y rutas', done: !!form.terminal1 },
-              { task: 'Agregar empresas integrantes', done: !!form.companies },
+              { task: 'Agregar empresas integrantes', done: form.companiesList.length > 0 },
               { task: 'Invitar administrador', done: !!form.adminEmail },
             ].map((item, i) => (
               <div key={i} className="flex items-center gap-2 py-1.5">
@@ -2880,86 +2954,13 @@ function NewOrgWizard({
                 </div>
               </div>
 
-              <div className="space-y-3">
-                {form.routes.map((route, index) => (
-                  <div key={index} className="border-b border-border pb-3 last:border-b-0">
-                    <div className="flex items-center justify-between gap-3 mb-2">
-                      <p className="text-sm font-semibold text-t2">
-                        {index === 0 ? 'Ruta de ida' : index === 1 ? 'Ruta de vuelta' : 'Ruta ' + (index + 1)}
-                      </p>
-                      {index > 1 && (
-                        <button
-                          onClick={() => setForm(current => ({
-                            ...current,
-                            routes: current.routes.filter((_, routeIndex) => routeIndex !== index),
-                          }))}
-                          className="w-7 h-7 grid place-items-center rounded-md text-danger hover:bg-danger/5"
-                          aria-label={'Eliminar ruta ' + (index + 1)}
-                        >
-                          <X size={14} />
-                        </button>
-                      )}
-                    </div>
-                    <div className="grid md:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-sm font-medium text-t1 mb-1">Origen</label>
-                        <input
-                          list="route-cities"
-                          value={route.origin}
-                          onChange={event => setForm(current => ({
-                            ...current,
-                            routes: current.routes.map((item, routeIndex) =>
-                              routeIndex === index ? { ...item, origin: event.target.value } : item
-                            ),
-                          }))}
-                          placeholder={index === 0 ? 'Juli' : index === 1 ? 'Puno' : 'Origen'}
-                          className="w-full h-9 px-3 border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-t1 mb-1">Destino</label>
-                        <input
-                          list="route-cities"
-                          value={route.destination}
-                          onChange={event => setForm(current => ({
-                            ...current,
-                            routes: current.routes.map((item, routeIndex) =>
-                              routeIndex === index ? { ...item, destination: event.target.value } : item
-                            ),
-                          }))}
-                          placeholder={index === 0 ? 'Puno' : index === 1 ? 'Juli' : 'Destino'}
-                          className="w-full h-9 px-3 border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <datalist id="route-cities">
-                <option value="Juli" />
-                <option value="Puno" />
-                <option value="Juliaca" />
-                <option value="Ilave" />
-                <option value="Desaguadero" />
-              </datalist>
-
-              <button
-                onClick={() => setForm(current => ({
-                  ...current,
-                  routes: [...current.routes, { origin: '', destination: '' }],
-                }))}
-                className="mt-3 h-9 px-3 border border-primary text-primary rounded-md text-sm font-medium hover:bg-selected flex items-center gap-2"
-              >
-                <Plus size={15} />
-                Agregar ruta
-              </button>
+              <StopsEditor stops={form.routes} onChange={list => setForm(current => ({ ...current, routes: list }))} />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-t1 mb-1">Empresas integrantes (nombres)</label>
-              <input value={form.companies} onChange={event => set('companies', event.target.value)} placeholder="Empresa A, Empresa B"
-                className="w-full h-9 px-3 border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+            <div className="border border-border rounded-lg p-4">
+              <h3 className="text-base font-semibold text-t1">Empresas integrantes</h3>
+              <p className="text-sm text-t2 mt-0.5 mb-3">Escribe el nombre de una empresa y toca "Agregar"; repite para las demás. El resto de sus datos se completa después.</p>
+              <NamesListEditor items={form.companiesList} placeholder="Nombre de la empresa" onChange={list => setForm(current => ({ ...current, companiesList: list }))} />
             </div>
             <div>
               <label className="block text-sm font-medium text-t1 mb-1">Configuración inicial (notas)</label>
@@ -3024,10 +3025,11 @@ function NewOrgWizard({
               ['Terminal 2', form.terminal2 || '—'],
               ['Dirección terminal 2', form.terminal2Address || '—'],
               ['Rutas habilitadas', form.enabledRoutes.length ? form.enabledRoutes.map(r => `${r.origin} → ${r.destination}`).join(' · ') : '—'],
-              ['Rutas', form.routes
+              ['Paradas adicionales', form.routes
                 .filter(route => route.origin && route.destination)
                 .map(route => route.origin + ' → ' + route.destination)
                 .join(' · ') || '—'],
+              ['Empresas integrantes', form.companiesList.join(', ') || '—'],
               ['Plan', form.plan],
               ['Unidades', form.units || '—'],
               ['Unidades GPS', form.gpsUnits || '—'],
