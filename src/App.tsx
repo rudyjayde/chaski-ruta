@@ -16,6 +16,7 @@ import { setVisitorToken } from './lib/visitor-auth-api';
 import { verifyManifestPublic, type ManifestPublicVerification } from './lib/operacion-api';
 import { getActingOrgId, getActingOrgName, setActingOrg } from './lib/acting-org';
 import { passwordProblem, PASSWORD_HINT } from './lib/validators';
+import { applyPageMeta } from './lib/page-meta';
 
 function useRouter() {
   const [path, setPath] = useState(() => window.location.pathname);
@@ -34,6 +35,9 @@ function useRouter() {
     window.addEventListener('popstate', handler);
     return () => window.removeEventListener('popstate', handler);
   }, []);
+
+  // Titulo, descripcion y direccion canonica de cada pagina (Google y vistas previas al compartir).
+  useEffect(() => { applyPageMeta(path); }, [path]);
 
   return { path, navigate };
 }

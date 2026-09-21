@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /app
+Disallow: /portal
+Disallow: /ingresar
+Disallow: /mi-cuenta
+Disallow: /auth/
+Disallow: /restablecer-contrasena
+
+Sitemap: https://chaskiai.com.pe/sitemap.xml

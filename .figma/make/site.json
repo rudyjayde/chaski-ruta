@@ -1,12 +1,15 @@
 {
-  "title": "CHASKI AI",
-  "description": "Plataforma digital para asociaciones de transporte y operaciones logísticas: colas, ventas, manifiestos, viajes y control operativo en un solo sistema.",
-  "language": "es",
+  "title": "CHASKI AI | Software para asociaciones de transporte por turnos",
+  "description": "Software operativo para asociaciones de transporte por turnos. Reemplaza los procesos manuales de cola, venta de pasajes y manifiestos con un sistema digital.",
+  "language": "es-PE",
   "robots": {
     "index": true
   },
   "accessibility": {
     "addBypassLinks": false,
     "ignoreReducedMotion": false
+  },
+  "openGraph": {
+    "image": "https://chaskiai.com.pe/og-image.png"
   }
 }

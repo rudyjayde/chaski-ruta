@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://chaskiai.com.pe/</loc>
+    <lastmod>2026-09-20</lastmod>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://chaskiai.com.pe/empresa</loc>
+    <lastmod>2026-09-20</lastmod>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://chaskiai.com.pe/libro-de-reclamaciones</loc>
+    <lastmod>2026-09-20</lastmod>
+    <priority>0.4</priority>
+  </url>
+  <url>
+    <loc>https://chaskiai.com.pe/legal/terminos-condiciones</loc>
+    <lastmod>2026-09-20</lastmod>
+    <priority>0.4</priority>
+  </url>
+  <url>
+    <loc>https://chaskiai.com.pe/legal/politica-privacidad</loc>
+    <lastmod>2026-09-20</lastmod>
+    <priority>0.4</priority>
+  </url>
+  <url>
+    <loc>https://chaskiai.com.pe/legal/politica-cookies</loc>
+    <lastmod>2026-09-20</lastmod>
+    <priority>0.4</priority>
+  </url>
+</urlset>
