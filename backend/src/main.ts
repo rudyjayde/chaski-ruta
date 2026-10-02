@@ -22,6 +22,12 @@ async function bootstrap() {
   // porque este backend nunca sirve HTML/paginas propias, solo JSON a la API --
   // un Content-Security-Policy pensado para paginas no aplica aqui.
   app.use(helmet({ contentSecurityPolicy: false }));
+  // El dominio se registro en Search Console como propiedad de DOMINIO COMPLETO (cubre subdominios) --
+  // sin esto Google visita api.chaskiai.com.pe como si fuera una pagina y marca "No encontrado (404)"
+  // porque este backend no tiene ninguna ruta publica en "/" (20 sept 2026, reportado por Search Console).
+  app.use('/robots.txt', (_req: unknown, res: { type: (t: string) => { send: (b: string) => void } }) => {
+    res.type('text/plain').send('User-agent: *\nDisallow: /\n');
+  });
   app.use(json({ limit: '8mb' }));
   app.use(urlencoded({ extended: true, limit: '8mb' }));
   const config = app.get(ConfigService);
