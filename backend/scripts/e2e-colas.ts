@@ -917,6 +917,127 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     await prisma.person.delete({ where: { id: superQ.id } }).catch(() => null);
     await prisma.operationalConfig.update({ where: { organizationId: orgA.id }, data: { enrollmentAuthRequired: false } });
 
+    // ═════════ R. Soporte ITIL 4 (mesa de servicio, SLA y Problemas/KEDB) ═════════
+    head('R. Soporte ITIL 4 (mesa de servicio, SLA y Problemas/KEDB)');
+    const superS = await prisma.person.create({ data: { organizationId: null, name: 'Super E2E Soporte', email: `e2e.${stamp}.supers@example.test`, role: 'SUPERADMIN', status: 'ACTIVO' } });
+    const TSK = await tok(superS);
+    const problemIdsCreated: string[] = [];
+
+    // R1. Matriz de prioridad + SLA por prioridad (impacto x urgencia -> P1..P4)
+    const matrix: { impact: string; urgency: string; priority: string; slaResponse: number; slaResolution: number | null }[] = [
+      { impact: 'ALTO', urgency: 'ALTA', priority: 'P1', slaResponse: 30, slaResolution: 240 },
+      { impact: 'ALTO', urgency: 'BAJA', priority: 'P2', slaResponse: 120, slaResolution: 1440 },
+      { impact: 'MEDIO', urgency: 'MEDIA', priority: 'P2', slaResponse: 120, slaResolution: 1440 },
+      { impact: 'MEDIO', urgency: 'BAJA', priority: 'P3', slaResponse: 480, slaResolution: 4320 },
+      { impact: 'BAJO', urgency: 'ALTA', priority: 'P2', slaResponse: 120, slaResolution: 1440 },
+      { impact: 'BAJO', urgency: 'BAJA', priority: 'P4', slaResponse: 1440, slaResolution: null },
+    ];
+    const createdTickets: Record<string, any> = {};
+    for (const m of matrix) {
+      r = await call(T.admin, 'POST', '/support-tickets', { subject: `Prueba ${m.impact}/${m.urgency}`, message: 'Caso de prueba e2e', type: 'INCIDENTE', category: 'GPS', impact: m.impact, urgency: m.urgency });
+      check(`${m.impact}+${m.urgency} → prioridad ${m.priority}`, r.status === 201 && r.json.priority === m.priority, `HTTP ${r.status} prioridad=${r.json.priority}`);
+      check(`${m.impact}+${m.urgency} → SLA respuesta ${m.slaResponse}min / resolución ${m.slaResolution ?? 'sin límite'}`, r.json.slaResponseMin === m.slaResponse && r.json.slaResolutionMin === m.slaResolution, `respuesta=${r.json.slaResponseMin} resolucion=${r.json.slaResolutionMin}`);
+      check(`${m.impact}+${m.urgency} → código correlativo TCK-####`, /^TCK-\d{4}$/.test(r.json.code), r.json.code);
+      createdTickets[`${m.impact}_${m.urgency}`] = r.json;
+    }
+    const ticketP1 = createdTickets['ALTO_ALTA'];
+    check('ticket nuevo nace ABIERTO y sin primera respuesta', ticketP1.status === 'ABIERTO' && ticketP1.firstResponseAt === null, JSON.stringify({ status: ticketP1.status, firstResponseAt: ticketP1.firstResponseAt }));
+
+    // R2. Clasificar (N1): confirmar categoría sin tocar impacto/urgencia fija firstResponseAt (primera accion de Super Admin)
+    r = await call(TSK, 'PATCH', `/support-tickets/${ticketP1.id}/classify`, { category: 'GPS' });
+    check('Super Admin clasifica (confirma categoría)', r.status === 200 || r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    check('la primera acción del Super Admin fija firstResponseAt', !!r.json.firstResponseAt, JSON.stringify(r.json.firstResponseAt));
+    check('confirmar sin cambiar impacto/urgencia no cambia la prioridad', r.json.priority === 'P1', r.json.priority);
+    const firstResponseAt1 = r.json.firstResponseAt;
+
+    // R2b. Una segunda acción (asignar) NO vuelve a mover firstResponseAt
+    r = await call(TSK, 'PATCH', `/support-tickets/${ticketP1.id}/assign`, { assigneeName: 'Rudy N1' });
+    check('asignar responsable', r.status === 200 || r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    check('firstResponseAt NO se vuelve a mover en acciones posteriores', r.json.firstResponseAt === firstResponseAt1, `antes=${firstResponseAt1} después=${r.json.firstResponseAt}`);
+
+    // R3. Clasificar corrigiendo impacto/urgencia: recalcula prioridad+SLA y queda en Auditoría con antes/después
+    const ticketToCorrect = createdTickets['MEDIO_BAJA']; // nace P3
+    r = await call(TSK, 'PATCH', `/support-tickets/${ticketToCorrect.id}/classify`, { impact: 'ALTO', urgency: 'ALTA' });
+    check('Super Admin corrige impacto/urgencia del administrador', r.status === 200 || r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    check('la corrección recalcula la prioridad (P3 → P1)', r.json.priority === 'P1', r.json.priority);
+    check('la corrección recalcula el SLA (240min de resolución)', r.json.slaResolutionMin === 240, r.json.slaResolutionMin);
+    const correctAudit = await prisma.auditEntry.findFirst({ where: { resourceId: ticketToCorrect.id, action: 'CLASIFICAR_TICKET_SOPORTE' }, orderBy: { createdAt: 'desc' } });
+    check('la Auditoría guarda el valor anterior y el nuevo de la clasificación', !!correctAudit && /MEDIO\/BAJA/.test(correctAudit.before ?? '') && /ALTO\/ALTA/.test(correctAudit.after ?? ''), JSON.stringify({ before: correctAudit?.before, after: correctAudit?.after }));
+
+    // R4. Escalar a N2 con nota obligatoria
+    r = await call(TSK, 'PATCH', `/support-tickets/${ticketP1.id}/escalate`, { supportLevel: 'N2' });
+    check('escalar sin nota se rechaza (400)', r.status === 400, `HTTP ${r.status} ${msg(r)}`);
+    r = await call(TSK, 'PATCH', `/support-tickets/${ticketP1.id}/escalate`, { supportLevel: 'N2', note: 'Requiere revisión de hardware GPS' });
+    check('escalar a N2 con nota', r.status === 200 || r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    check('el ticket queda ESCALADO con nivel N2', r.json.status === 'ESCALADO' && r.json.supportLevel === 'N2', JSON.stringify({ status: r.json.status, nivel: r.json.supportLevel }));
+
+    // R5. No se puede cerrar sin estar RESUELTO
+    r = await call(TSK, 'PATCH', `/support-tickets/${ticketP1.id}/close`, {});
+    check('cerrar un ticket que no está RESUELTO se rechaza (400)', r.status === 400, `HTTP ${r.status} ${msg(r)}`);
+
+    // R6. Resolver y luego cerrar; no se puede volver a resolver un ticket cerrado
+    r = await call(TSK, 'PATCH', `/support-tickets/${ticketP1.id}/resolve`, { resolution: 'Se reemplazó el cable de la antena GPS.' });
+    check('resolver el ticket', r.status === 200 || r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    check('queda RESUELTO con resolvedAt', r.json.status === 'RESUELTO' && !!r.json.resolvedAt, JSON.stringify({ status: r.json.status, resolvedAt: r.json.resolvedAt }));
+    r = await call(TSK, 'PATCH', `/support-tickets/${ticketP1.id}/close`, { note: 'Confirmado por el administrador' });
+    check('cerrar un ticket ya RESUELTO', r.status === 200 || r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    check('queda CERRADO con closedAt', r.json.status === 'CERRADO' && !!r.json.closedAt, JSON.stringify({ status: r.json.status, closedAt: r.json.closedAt }));
+    r = await call(TSK, 'PATCH', `/support-tickets/${ticketP1.id}/resolve`, { resolution: 'Intento tardío' });
+    check('no se puede volver a resolver un ticket CERRADO (400)', r.status === 400, `HTTP ${r.status} ${msg(r)}`);
+
+    // R7. Problemas (KEDB): crear con código correlativo y vincular a un ticket
+    r = await call(TSK, 'POST', '/problems', { title: 'Falla recurrente de antena GPS', description: 'Varias unidades reportan pérdida de señal GPS por cableado defectuoso.', knownError: true });
+    check('crear un Problema (Super Admin)', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    check('código correlativo PRB-###', /^PRB-\d{3}$/.test(r.json.code), r.json.code);
+    const problem = r.json;
+    problemIdsCreated.push(problem.id);
+    r = await call(T.admin, 'POST', '/problems', { title: 'Intento no autorizado', description: 'x' });
+    check('el Administrador no puede crear Problemas (403)', r.status === 403, `HTTP ${r.status}`);
+
+    r = await call(TSK, 'PATCH', `/support-tickets/${ticketP1.id}/link-problem`, { problemId: problem.id });
+    check('vincular el ticket al Problema', r.status === 200 || r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    check('el ticket queda vinculado al id del Problema', r.json.problemId === problem.id, r.json.problemId);
+    r = await call(TSK, 'GET', `/problems/${problem.id}`);
+    check('el Problema lista el ticket vinculado', Array.isArray(r.json.tickets) && r.json.tickets.some((t: any) => t.id === ticketP1.id), JSON.stringify(r.json.tickets?.map((t: any) => t.id)));
+
+    // R8. Aislamiento entre asociaciones y RBAC (solo Super Admin clasifica/ve métricas) --
+    // orgB ya no sirve aquí: la sección L la eliminó (ELIMINADA, personas suspendidas); se crea
+    // una asociación D nueva solo para esta comprobación.
+    const orgD = await prisma.organization.create({ data: { name: `ZZ E2E D ${stamp}`, ruc: `2097${stamp}9`.slice(0, 11), status: 'ACTIVA', plan: 'OPERACION' } });
+    orgIds.push(orgD.id);
+    const adminD = await mk(orgD.id, 'ADMINISTRADOR', 'Admin D', 0);
+    const TD = await tok(adminD);
+    r = await call(TD, 'GET', '/support-tickets');
+    check('el administrador de otra asociación no ve los tickets de esta', Array.isArray(r.json) && !r.json.some((t: any) => t.organizationId === orgA.id), `HTTP ${r.status} tickets=${Array.isArray(r.json) ? r.json.length : JSON.stringify(r.json)}`);
+    r = await call(T.admin, 'PATCH', `/support-tickets/${ticketP1.id}/classify`, { category: 'GPS' });
+    check('el administrador no puede clasificar (acción exclusiva de Super Admin, 403)', r.status === 403, `HTTP ${r.status}`);
+    const monthNow = new Date().toISOString().slice(0, 7);
+    r = await call(T.admin, 'GET', `/support-tickets/metrics?month=${monthNow}`);
+    check('el administrador no puede ver las métricas de la mesa de servicio (403)', r.status === 403, `HTTP ${r.status}`);
+
+    // R9. Métricas del mes: forma de la respuesta (abiertos por prioridad, SLA%, MTTR, P1)
+    r = await call(TSK, 'GET', `/support-tickets/metrics?month=${monthNow}`);
+    check(
+      'las métricas del mes traen abiertos por prioridad, SLA% y MTTR',
+      r.status === 200 && typeof r.json.totalTickets === 'number' && !!r.json.openByPriority && 'slaResponsePct' in r.json && 'slaResolutionPct' in r.json && 'mttrHours' in r.json && 'p1Count' in r.json,
+      JSON.stringify(r.json),
+    );
+    check('el MTTR promedio del mes es un número (hubo al menos un ticket resuelto)', typeof r.json.mttrHours === 'number', r.json.mttrHours);
+
+    // R10. Una respuesta tardía hace bajar el % de SLA de respuesta del mes
+    r = await call(T.admin, 'POST', '/support-tickets', { subject: 'SLA vencido de prueba', message: 'Mensaje de prueba e2e', type: 'INCIDENTE', category: 'OTRO', impact: 'ALTO', urgency: 'ALTA' });
+    check('crear el ticket para la prueba de SLA vencido', r.status === 201 && !!r.json.id, `HTTP ${r.status} ${msg(r)}`);
+    const lateTicket = r.json;
+    await prisma.supportTicket.update({ where: { id: lateTicket.id }, data: { createdAt: new Date(Date.now() - 5 * 3600e3) } }); // P1: SLA de respuesta = 30min
+    await call(TSK, 'PATCH', `/support-tickets/${lateTicket.id}/classify`, { category: 'OTRO' }); // fija firstResponseAt ahora, 5h despues de "creado"
+    r = await call(TSK, 'GET', `/support-tickets/metrics?month=${monthNow}`);
+    check('un ticket respondido 5h después de creado (SLA 30min) hace bajar el % de SLA de respuesta', typeof r.json.slaResponsePct === 'number' && r.json.slaResponsePct < 100, r.json.slaResponsePct);
+
+    // Limpieza de este bloque -- supportTicket/problemRecord no los borra la limpieza general de abajo
+    await prisma.supportTicket.deleteMany({ where: { organizationId: { in: [orgA.id, orgB.id, orgD.id] } } });
+    await prisma.problemRecord.deleteMany({ where: { id: { in: problemIdsCreated } } });
+    await prisma.person.delete({ where: { id: superS.id } }).catch(() => null);
+
     // ═════════ J. CONSISTENCIA FINAL ═════════
     head('J. Consistencia de datos');
     await prisma.queueEntry.deleteMany({ where: { organizationId: orgA.id } });

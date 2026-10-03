@@ -1976,23 +1976,59 @@ export async function markNoticesRead(): Promise<void> {
   await request('/notices/mark-read', { method: 'POST' });
 }
 
-// ─── Soporte (13 sept 2026, reemplaza el placeholder de Super Admin) ─────────
-// El Administrador reporta un problema desde su propio panel; Super Admin ve
-// la cola completa cruzando todas las asociaciones y responde.
-export type SupportTicketStatus = 'ABIERTO' | 'EN_PROGRESO' | 'RESUELTO';
+// ─── Soporte ITIL 4 (2 oct 2026, tesis OE4) ──────────────────────────────────
+// El Administrador reporta incidentes/solicitudes desde su propio panel;
+// Super Admin clasifica (N1), escala (N2/N3), resuelve y cierra, cruzando
+// todas las asociaciones. Mesa de servicio + Problemas (KEDB) de la tesis.
+export type SupportTicketStatus = 'ABIERTO' | 'EN_ANALISIS' | 'ESCALADO' | 'EN_ESPERA' | 'RESUELTO' | 'CERRADO';
+export type SupportTicketType = 'INCIDENTE' | 'SOLICITUD';
+export type SupportTicketCategory = 'ACCESO' | 'COLA' | 'MANIFIESTO' | 'GPS' | 'ASISTENTE_IA' | 'REPORTES' | 'OTRO';
+export type SupportTicketImpact = 'ALTO' | 'MEDIO' | 'BAJO';
+export type SupportTicketUrgency = 'ALTA' | 'MEDIA' | 'BAJA';
+export type SupportTicketPriority = 'P1' | 'P2' | 'P3' | 'P4';
+export type SupportLevel = 'N1' | 'N2' | 'N3';
+
+export interface SupportTicketHistoryEntry {
+  id: string;
+  action: string;
+  actorRole: string;
+  before: string | null;
+  after: string | null;
+  reason: string | null;
+  createdAt: string;
+}
 
 export interface SupportTicket {
   id: string;
   organizationId: string;
   organizationName?: string; // solo presente en la vista cruzada de Super Admin
   authorName: string;
+  code: string;
   subject: string;
   message: string;
+  type: SupportTicketType;
+  category: SupportTicketCategory;
+  impact: SupportTicketImpact;
+  urgency: SupportTicketUrgency;
+  priority: SupportTicketPriority;
+  supportLevel: SupportLevel;
+  assigneeName: string | null;
   status: SupportTicketStatus;
   response: string | null;
   respondedAt: string | null;
   respondedBy: string | null;
+  firstResponseAt: string | null;
+  resolvedAt: string | null;
+  closedAt: string | null;
+  resolution: string | null;
+  evidenceUrl: string | null;
+  slaResponseMin: number | null;
+  slaResolutionMin: number | null;
+  problemId: string | null;
+  problem?: { code: string; title: string } | null;
+  rfcRef: string | null;
   createdAt: string;
+  history?: SupportTicketHistoryEntry[];
 }
 
 interface RawSupportTicket extends Omit<SupportTicket, 'organizationName'> {
@@ -2004,20 +2040,163 @@ function adaptSupportTicket(raw: RawSupportTicket): SupportTicket {
   return { ...rest, organizationName: organization?.name };
 }
 
-export async function fetchSupportTickets(organizationId?: string): Promise<SupportTicket[]> {
-  const qs = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
-  const raw = await request<RawSupportTicket[]>(`/support-tickets${qs}`);
+// Estado del SLA contra el reloj de horas calendario (no horas hábiles) --
+// antes de la primera respuesta se mide contra slaResponseMin, después
+// (o ya resuelto/cerrado) contra slaResolutionMin.
+export type SlaState = 'ok' | 'riesgo' | 'vencido' | 'sin_limite';
+
+export function ticketSlaState(t: SupportTicket, now: number = Date.now()): SlaState {
+  const created = new Date(t.createdAt).getTime();
+  if (t.status === 'CERRADO' || t.status === 'RESUELTO') {
+    if (t.slaResolutionMin == null) return 'sin_limite';
+    const endMs = t.resolvedAt ? new Date(t.resolvedAt).getTime() : now;
+    return (endMs - created) / 60000 <= t.slaResolutionMin ? 'ok' : 'vencido';
+  }
+  if (!t.firstResponseAt && t.slaResponseMin != null) {
+    const minutes = (now - created) / 60000;
+    if (minutes > t.slaResponseMin) return 'vencido';
+    return minutes > t.slaResponseMin * 0.8 ? 'riesgo' : 'ok';
+  }
+  if (t.slaResolutionMin == null) return 'sin_limite';
+  const minutes = (now - created) / 60000;
+  if (minutes > t.slaResolutionMin) return 'vencido';
+  return minutes > t.slaResolutionMin * 0.8 ? 'riesgo' : 'ok';
+}
+
+export interface SupportTicketFilters {
+  priority?: SupportTicketPriority;
+  status?: SupportTicketStatus;
+  supportLevel?: SupportLevel;
+  organizationId?: string;
+}
+
+function ticketQueryString(filters: SupportTicketFilters): string {
+  const qs = new URLSearchParams();
+  if (filters.organizationId) qs.set('organizationId', filters.organizationId);
+  if (filters.priority) qs.set('priority', filters.priority);
+  if (filters.status) qs.set('status', filters.status);
+  if (filters.supportLevel) qs.set('supportLevel', filters.supportLevel);
+  const s = qs.toString();
+  return s ? `?${s}` : '';
+}
+
+export async function fetchSupportTickets(filters: SupportTicketFilters = {}): Promise<SupportTicket[]> {
+  const raw = await request<RawSupportTicket[]>(`/support-tickets${ticketQueryString(filters)}`);
   return raw.map(adaptSupportTicket);
 }
 
-export async function createSupportTicket(subject: string, message: string): Promise<SupportTicket> {
-  const raw = await request<RawSupportTicket>('/support-tickets', { method: 'POST', body: JSON.stringify({ subject, message }) });
+export async function fetchSupportTicket(id: string): Promise<SupportTicket> {
+  const raw = await request<RawSupportTicket & { history: SupportTicketHistoryEntry[] }>(`/support-tickets/${id}`);
   return adaptSupportTicket(raw);
 }
 
-export async function respondSupportTicket(id: string, status: 'EN_PROGRESO' | 'RESUELTO', response?: string): Promise<SupportTicket> {
-  const raw = await request<RawSupportTicket>(`/support-tickets/${id}`, { method: 'PATCH', body: JSON.stringify({ status, response }) });
+export interface CreateSupportTicketInput {
+  subject: string;
+  message: string;
+  type: SupportTicketType;
+  category: SupportTicketCategory;
+  impact: SupportTicketImpact;
+  urgency: SupportTicketUrgency;
+  evidenceUrl?: string;
+}
+
+export async function createSupportTicket(input: CreateSupportTicketInput): Promise<SupportTicket> {
+  const raw = await request<RawSupportTicket>('/support-tickets', { method: 'POST', body: JSON.stringify(input) });
   return adaptSupportTicket(raw);
+}
+
+export async function classifySupportTicket(id: string, input: { category?: SupportTicketCategory; impact?: SupportTicketImpact; urgency?: SupportTicketUrgency }): Promise<SupportTicket> {
+  const raw = await request<RawSupportTicket>(`/support-tickets/${id}/classify`, { method: 'PATCH', body: JSON.stringify(input) });
+  return adaptSupportTicket(raw);
+}
+
+export async function assignSupportTicket(id: string, assigneeName: string): Promise<SupportTicket> {
+  const raw = await request<RawSupportTicket>(`/support-tickets/${id}/assign`, { method: 'PATCH', body: JSON.stringify({ assigneeName }) });
+  return adaptSupportTicket(raw);
+}
+
+export async function escalateSupportTicket(id: string, input: { supportLevel: 'N2' | 'N3'; assigneeName?: string; note: string }): Promise<SupportTicket> {
+  const raw = await request<RawSupportTicket>(`/support-tickets/${id}/escalate`, { method: 'PATCH', body: JSON.stringify(input) });
+  return adaptSupportTicket(raw);
+}
+
+export async function resolveSupportTicket(id: string, input: { resolution: string; evidenceUrl?: string }): Promise<SupportTicket> {
+  const raw = await request<RawSupportTicket>(`/support-tickets/${id}/resolve`, { method: 'PATCH', body: JSON.stringify(input) });
+  return adaptSupportTicket(raw);
+}
+
+export async function closeSupportTicket(id: string, note?: string): Promise<SupportTicket> {
+  const raw = await request<RawSupportTicket>(`/support-tickets/${id}/close`, { method: 'PATCH', body: JSON.stringify({ note }) });
+  return adaptSupportTicket(raw);
+}
+
+export async function updateSupportTicketStatus(id: string, status: 'ABIERTO' | 'EN_ANALISIS' | 'EN_ESPERA', note?: string): Promise<SupportTicket> {
+  const raw = await request<RawSupportTicket>(`/support-tickets/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status, note }) });
+  return adaptSupportTicket(raw);
+}
+
+export async function linkSupportTicketProblem(id: string, input: { problemId?: string; rfcRef?: string }): Promise<SupportTicket> {
+  const raw = await request<RawSupportTicket>(`/support-tickets/${id}/link-problem`, { method: 'PATCH', body: JSON.stringify(input) });
+  return adaptSupportTicket(raw);
+}
+
+export interface SupportTicketMetrics {
+  month: string;
+  totalTickets: number;
+  openByPriority: Record<SupportTicketPriority, number>;
+  p1Count: number;
+  slaResponsePct: number | null;
+  slaResolutionPct: number | null;
+  mttrHours: number | null;
+}
+
+export async function fetchSupportTicketMetrics(month: string): Promise<SupportTicketMetrics> {
+  return request<SupportTicketMetrics>(`/support-tickets/metrics?month=${encodeURIComponent(month)}`);
+}
+
+// ─── Problemas / KEDB (2 oct 2026, Super Admin, ITIL 4 Problem Management) ───
+export type ProblemStatus = 'REGISTRADO' | 'EN_INVESTIGACION' | 'ERROR_CONOCIDO' | 'EN_SOLUCION' | 'CERRADO';
+
+export interface ProblemRecord {
+  id: string;
+  code: string;
+  title: string;
+  description: string;
+  rootCause: string | null;
+  workaround: string | null;
+  knownError: boolean;
+  proposedSolution: string | null;
+  rfcRef: string | null;
+  status: ProblemStatus;
+  createdAt: string;
+  _count?: { tickets: number };
+  tickets?: Array<{ id: string; code: string; subject: string; status: SupportTicketStatus; priority: SupportTicketPriority; organizationId: string }>;
+}
+
+export interface CreateProblemInput {
+  title: string;
+  description: string;
+  rootCause?: string;
+  workaround?: string;
+  proposedSolution?: string;
+  rfcRef?: string;
+  knownError?: boolean;
+}
+
+export function fetchProblems(): Promise<ProblemRecord[]> {
+  return request<ProblemRecord[]>('/problems');
+}
+
+export function fetchProblem(id: string): Promise<ProblemRecord> {
+  return request<ProblemRecord>(`/problems/${id}`);
+}
+
+export function createProblem(input: CreateProblemInput): Promise<ProblemRecord> {
+  return request<ProblemRecord>('/problems', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function updateProblem(id: string, input: Partial<CreateProblemInput> & { status?: ProblemStatus }): Promise<ProblemRecord> {
+  return request<ProblemRecord>(`/problems/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
 }
 
 // ─── Métricas de negocio y onboarding (13 sept 2026, Super Admin) ────────────

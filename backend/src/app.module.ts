@@ -33,6 +33,7 @@ import { RouteGeofenceModule } from './route-geofence/route-geofence.module';
 import { PassengerProfilesModule } from './passenger-profiles/passenger-profiles.module';
 import { HealthMonitorModule } from './health-monitor/health-monitor.module';
 import { SupportTicketsModule } from './support-tickets/support-tickets.module';
+import { ProblemsModule } from './problems/problems.module';
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { SupportTicketsModule } from './support-tickets/support-tickets.module';
     PassengerProfilesModule,
     HealthMonitorModule,
     SupportTicketsModule,
+    ProblemsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

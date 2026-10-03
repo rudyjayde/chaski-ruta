@@ -5,6 +5,7 @@ import {
   AlertTriangle, CheckCircle, Users,
   FileText, AlertCircle, RefreshCw, ChevronDown,
   RotateCcw, Upload, ImageIcon, MapPin, Search, Map, LogIn, Pencil, ChevronLeft, Globe, Sparkles,
+  BookOpen, Clock, Download, Link2,
 } from 'lucide-react';
 import Shell, { type NavItem } from '../../components/layout/Shell';
 import TerminalMapPicker from '../../components/TerminalMapPicker';
@@ -22,7 +23,12 @@ import {
   fetchCommercialRequestOnboardingSuggestion,
   fetchComplaints, respondComplaint,
   fetchVehicles, setVehicleGpsDevice, broadcastNotice,
-  fetchSupportTickets, respondSupportTicket, type SupportTicket, type SupportTicketStatus,
+  fetchSupportTickets, classifySupportTicket, assignSupportTicket, escalateSupportTicket, resolveSupportTicket,
+  closeSupportTicket, linkSupportTicketProblem, fetchSupportTicketMetrics, ticketSlaState,
+  type SupportTicket, type SupportTicketStatus, type SupportTicketPriority, type SupportTicketCategory,
+  type SupportTicketImpact, type SupportTicketUrgency, type SupportLevel, type SupportTicketMetrics, type SlaState,
+  fetchProblems, fetchProblem, createProblem, updateProblem, type ProblemRecord, type ProblemStatus,
+  fetchOrganizationsDirectory, type OrganizationDirectoryEntry,
   fetchOrganizationMetrics, type OrganizationMetrics,
   fetchOrganizationOnboarding, type OrganizationOnboardingStatus,
   fetchEngineLockRequests, confirmEngineLock, cancelEngineLock, restoreEngineLock, requestEngineLockDirect, fetchEngineLockPendingSummary, type EngineLockRequest,
@@ -65,7 +71,7 @@ function resizeImageFile(file: File, maxDimension = 480): Promise<string> {
 
 type Section =
   | 'resumen' | 'asociaciones' | 'gps-overview' | 'pasajeros' | 'solicitudes' | 'landing' | 'libro-reclamaciones'
-  | 'salud' | 'soporte' | 'auditoria'
+  | 'salud' | 'soporte' | 'problemas' | 'auditoria'
   | 'configuracion' | 'nueva-org';
 
 // "Planes y suscripciones", "Pagos" e "Inventario GPS" se eliminaron (11 sept
@@ -84,6 +90,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'libro-reclamaciones', label: 'Libro de Reclamaciones', icon: AlertCircle },
   { id: 'salud', label: 'Salud técnica', icon: Activity },
   { id: 'soporte', label: 'Soporte', icon: HeadphonesIcon },
+  { id: 'problemas', label: 'Problemas', icon: BookOpen },
   { id: 'auditoria', label: 'Auditoría', icon: ShieldCheck },
   { id: 'configuracion', label: 'Configuración SaaS', icon: Settings },
 ];
@@ -4116,145 +4123,538 @@ function SABroadcastNotice() {
   );
 }
 
-// Cola real de soporte (13 sept 2026, decidido con Jayde) -- reemplaza el
-// placeholder fijo que tenia esta pantalla. El Administrador de cada
-// asociacion reporta desde su propio panel (SupportPage.tsx); aca se ve la
-// cola completa cruzando TODAS las asociaciones, mas reciente y ABIERTO
-// primero (mismo orden que ya aplica el backend).
+// Mesa de servicio ITIL 4 (2 oct 2026, rehecha para la tesis -- OE4). Ve la
+// cola completa cruzando TODAS las asociaciones; clasifica (N1), asigna,
+// escala a N2/N3, resuelve, cierra y vincula a un Problema/RFC. Reemplaza el
+// "Responder" simple de 13 sept 2026.
 const TICKET_STATUS_LABEL: Record<SupportTicketStatus, string> = {
   ABIERTO: 'Abierto',
-  EN_PROGRESO: 'En progreso',
+  EN_ANALISIS: 'En análisis',
+  ESCALADO: 'Escalado',
+  EN_ESPERA: 'En espera',
   RESUELTO: 'Resuelto',
+  CERRADO: 'Cerrado',
 };
 const TICKET_STATUS_STYLE: Record<SupportTicketStatus, string> = {
   ABIERTO: 'bg-warn/10 text-warn',
-  EN_PROGRESO: 'bg-primary/10 text-primary',
+  EN_ANALISIS: 'bg-primary/10 text-primary',
+  ESCALADO: 'bg-danger/10 text-danger',
+  EN_ESPERA: 'bg-muted/20 text-t2',
   RESUELTO: 'bg-ok/10 text-ok',
+  CERRADO: 'bg-muted/20 text-t2',
 };
+const PRIORITY_STYLE: Record<SupportTicketPriority, string> = {
+  P1: 'bg-danger/10 text-danger',
+  P2: 'bg-warn/10 text-warn',
+  P3: 'bg-primary/10 text-primary',
+  P4: 'bg-muted/20 text-t2',
+};
+const SLA_LABEL: Record<SlaState, string> = { ok: 'Dentro de SLA', riesgo: 'SLA por vencer', vencido: 'SLA vencido', sin_limite: 'Sin límite de SLA' };
+const SLA_STYLE: Record<SlaState, string> = { ok: 'bg-ok/10 text-ok', riesgo: 'bg-warn/10 text-warn', vencido: 'bg-danger/10 text-danger', sin_limite: 'bg-muted/20 text-t2' };
+const CATEGORY_LABEL: Record<SupportTicketCategory, string> = { ACCESO: 'Acceso', COLA: 'Cola', MANIFIESTO: 'Manifiesto', GPS: 'GPS', ASISTENTE_IA: 'Asistente IA', REPORTES: 'Reportes', OTRO: 'Otro' };
+const IMPACT_LABEL: Record<SupportTicketImpact, string> = { ALTO: 'Alto', MEDIO: 'Medio', BAJO: 'Bajo' };
+const URGENCY_LABEL: Record<SupportTicketUrgency, string> = { ALTA: 'Alta', MEDIA: 'Media', BAJA: 'Baja' };
+
+function downloadCsv(filename: string, headers: string[], rows: (string | number)[][]) {
+  const escape = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
+  const csv = [headers, ...rows].map(row => row.map(escape).join(',')).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+type TicketActionKind = 'classify' | 'assign' | 'escalate' | 'resolve' | 'close' | 'link';
+interface TicketActionDraft {
+  id: string;
+  kind: TicketActionKind;
+  category: SupportTicketCategory;
+  impact: SupportTicketImpact;
+  urgency: SupportTicketUrgency;
+  assigneeName: string;
+  supportLevel: 'N2' | 'N3';
+  note: string;
+  resolution: string;
+  evidenceUrl: string;
+  problemId: string;
+  rfcRef: string;
+}
 
 function SASupportTickets() {
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [organizations, setOrganizations] = useState<OrganizationDirectoryEntry[]>([]);
+  const [problems, setProblems] = useState<ProblemRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState<'todos' | SupportTicketStatus>('todos');
-  const [replyDraft, setReplyDraft] = useState<{ id: string; status: 'EN_PROGRESO' | 'RESUELTO'; response: string } | null>(null);
-  const [replyBusy, setReplyBusy] = useState(false);
-  const [replyError, setReplyError] = useState('');
+
+  const [priorityFilter, setPriorityFilter] = useState<'todas' | SupportTicketPriority>('todas');
+  const [statusFilter, setStatusFilter] = useState<'todos' | SupportTicketStatus>('todos');
+  const [levelFilter, setLevelFilter] = useState<'todos' | SupportLevel>('todos');
+  const [orgFilter, setOrgFilter] = useState<string>('todas');
+
+  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [metrics, setMetrics] = useState<SupportTicketMetrics | null>(null);
+  const [metricsError, setMetricsError] = useState('');
+
+  const [draft, setDraft] = useState<TicketActionDraft | null>(null);
+  const [draftBusy, setDraftBusy] = useState(false);
+  const [draftError, setDraftError] = useState('');
 
   const load = useCallback(() => {
     setLoading(true);
     setError('');
-    fetchSupportTickets()
+    fetchSupportTickets({
+      priority: priorityFilter === 'todas' ? undefined : priorityFilter,
+      status: statusFilter === 'todos' ? undefined : statusFilter,
+      supportLevel: levelFilter === 'todos' ? undefined : levelFilter,
+      organizationId: orgFilter === 'todas' ? undefined : orgFilter,
+    })
       .then(setTickets)
       .catch(err => setError(err instanceof Error ? err.message : 'No se pudieron cargar los tickets.'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [priorityFilter, statusFilter, levelFilter, orgFilter]);
 
   useEffect(load, [load]);
+  useEffect(() => { fetchOrganizationsDirectory().then(setOrganizations).catch(() => {}); }, []);
+  useEffect(() => { fetchProblems().then(setProblems).catch(() => {}); }, []);
+  useEffect(() => {
+    setMetricsError('');
+    fetchSupportTicketMetrics(month).then(setMetrics).catch(err => setMetricsError(err instanceof Error ? err.message : 'No se pudieron cargar los indicadores.'));
+  }, [month]);
 
-  const filtered = filter === 'todos' ? tickets : tickets.filter(t => t.status === filter);
-  const openCount = tickets.filter(t => t.status === 'ABIERTO').length;
+  const openCount = tickets.filter(t => t.status !== 'CERRADO').length;
 
-  const handleReplySubmit = async () => {
-    if (!replyDraft) return;
-    setReplyBusy(true);
-    setReplyError('');
+  const openAction = (t: SupportTicket, kind: TicketActionKind) => {
+    setDraftError('');
+    setDraft({
+      id: t.id, kind,
+      category: t.category, impact: t.impact, urgency: t.urgency,
+      assigneeName: t.assigneeName ?? '',
+      supportLevel: t.supportLevel === 'N3' ? 'N3' : 'N2',
+      note: '', resolution: t.resolution ?? '', evidenceUrl: t.evidenceUrl ?? '',
+      problemId: t.problemId ?? '', rfcRef: t.rfcRef ?? '',
+    });
+  };
+
+  const submitDraft = async () => {
+    if (!draft) return;
+    setDraftBusy(true);
+    setDraftError('');
     try {
-      const updated = await respondSupportTicket(replyDraft.id, replyDraft.status, replyDraft.response.trim() || undefined);
+      let updated: SupportTicket;
+      if (draft.kind === 'classify') {
+        updated = await classifySupportTicket(draft.id, { category: draft.category, impact: draft.impact, urgency: draft.urgency });
+      } else if (draft.kind === 'assign') {
+        if (!draft.assigneeName.trim()) { setDraftError('Indica el nombre del responsable.'); setDraftBusy(false); return; }
+        updated = await assignSupportTicket(draft.id, draft.assigneeName.trim());
+      } else if (draft.kind === 'escalate') {
+        if (!draft.note.trim()) { setDraftError('Indica el motivo de la escalada.'); setDraftBusy(false); return; }
+        updated = await escalateSupportTicket(draft.id, { supportLevel: draft.supportLevel, assigneeName: draft.assigneeName.trim() || undefined, note: draft.note.trim() });
+      } else if (draft.kind === 'resolve') {
+        if (!draft.resolution.trim()) { setDraftError('Describe la resolución.'); setDraftBusy(false); return; }
+        updated = await resolveSupportTicket(draft.id, { resolution: draft.resolution.trim(), evidenceUrl: draft.evidenceUrl || undefined });
+      } else if (draft.kind === 'close') {
+        updated = await closeSupportTicket(draft.id, draft.note.trim() || undefined);
+      } else {
+        updated = await linkSupportTicketProblem(draft.id, { problemId: draft.problemId, rfcRef: draft.rfcRef.trim() || undefined });
+      }
       setTickets(prev => prev.map(t => (t.id === updated.id ? updated : t)));
-      setReplyDraft(null);
+      setDraft(null);
     } catch (err) {
-      setReplyError(err instanceof Error ? err.message : 'No se pudo guardar la respuesta.');
+      setDraftError(err instanceof Error ? err.message : 'No se pudo guardar la acción.');
     } finally {
-      setReplyBusy(false);
+      setDraftBusy(false);
     }
+  };
+
+  const handleExportCsv = () => {
+    const headers = ['Código', 'Asociación', 'Asunto', 'Tipo', 'Categoría', 'Impacto', 'Urgencia', 'Prioridad', 'Nivel', 'Estado', 'SLA', 'Asignado a', 'Creado'];
+    const rows = tickets.map(t => [
+      t.code, t.organizationName ?? '', t.subject, t.type, CATEGORY_LABEL[t.category], IMPACT_LABEL[t.impact], URGENCY_LABEL[t.urgency],
+      t.priority, t.supportLevel, TICKET_STATUS_LABEL[t.status], SLA_LABEL[ticketSlaState(t)], t.assigneeName ?? '', new Date(t.createdAt).toLocaleString('es-PE'),
+    ]);
+    downloadCsv(`tickets-soporte-${month}.csv`, headers, rows);
   };
 
   return (
     <div className="p-6 lg:p-8 space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold text-t1">Soporte</h1>
-        <p className="text-sm text-t2 mt-0.5">
-          Tickets reales reportados por administradores de cualquier asociación{openCount > 0 ? ` · ${openCount} abierto(s)` : ''}.
-        </p>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-t1">Soporte</h1>
+          <p className="text-sm text-t2 mt-0.5">
+            Tickets reales reportados por administradores de cualquier asociación{openCount > 0 ? ` · ${openCount} abierto(s)` : ''}.
+          </p>
+        </div>
+        <button onClick={handleExportCsv} className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-lg text-t2 hover:bg-hover">
+          <Download size={14} /> Exportar CSV
+        </button>
       </div>
 
-      <div className="flex gap-1.5">
-        {(['todos', 'ABIERTO', 'EN_PROGRESO', 'RESUELTO'] as const).map(f => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-2.5 py-1.5 text-xs rounded border transition-colors ${filter === f ? 'bg-primary text-white border-primary' : 'border-border text-t2 hover:bg-hover'}`}
-          >
-            {f === 'todos' ? 'Todos' : TICKET_STATUS_LABEL[f]}
-          </button>
-        ))}
+      <div className="bg-surface border border-border rounded-lg p-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+          <h2 className="text-sm font-semibold text-t1">Indicadores del mes</h2>
+          <input type="month" value={month} onChange={e => setMonth(e.target.value)} className="h-8 px-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+        </div>
+        {metricsError ? (
+          <p className="text-sm text-danger">{metricsError}</p>
+        ) : !metrics ? (
+          <p className="text-sm text-t2">Cargando indicadores…</p>
+        ) : (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {(['P1', 'P2', 'P3', 'P4'] as const).map(p => (
+              <div key={p} className="border border-border rounded-lg p-3">
+                <p className="text-xs text-t2">Abiertos {p}</p>
+                <p className={`text-xl font-bold mt-0.5 ${p === 'P1' ? 'text-danger' : 'text-t1'}`}>{metrics.openByPriority[p]}</p>
+              </div>
+            ))}
+            <div className="border border-border rounded-lg p-3">
+              <p className="text-xs text-t2">P1 del mes</p>
+              <p className="text-xl font-bold text-danger mt-0.5">{metrics.p1Count}</p>
+            </div>
+            <div className="border border-border rounded-lg p-3">
+              <p className="text-xs text-t2">% dentro de SLA (respuesta)</p>
+              <p className="text-xl font-bold text-t1 mt-0.5">{metrics.slaResponsePct != null ? `${metrics.slaResponsePct}%` : '—'}</p>
+            </div>
+            <div className="border border-border rounded-lg p-3">
+              <p className="text-xs text-t2">% dentro de SLA (resolución)</p>
+              <p className="text-xl font-bold text-t1 mt-0.5">{metrics.slaResolutionPct != null ? `${metrics.slaResolutionPct}%` : '—'}</p>
+            </div>
+            <div className="border border-border rounded-lg p-3">
+              <p className="text-xs text-t2">MTTR promedio</p>
+              <p className="text-xl font-bold text-t1 mt-0.5">{metrics.mttrHours != null ? `${metrics.mttrHours} h` : '—'}</p>
+            </div>
+          </div>
+        )}
+        <p className="text-[11px] text-muted mt-2">El SLA se mide en horas calendario, no horas hábiles.</p>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <select value={priorityFilter} onChange={e => setPriorityFilter(e.target.value as 'todas' | SupportTicketPriority)} className="h-8 px-2 border border-border rounded text-xs focus:outline-none focus:ring-2 focus:ring-primary">
+          <option value="todas">Toda prioridad</option>
+          {(['P1', 'P2', 'P3', 'P4'] as const).map(p => <option key={p} value={p}>{p}</option>)}
+        </select>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as 'todos' | SupportTicketStatus)} className="h-8 px-2 border border-border rounded text-xs focus:outline-none focus:ring-2 focus:ring-primary">
+          <option value="todos">Todo estado</option>
+          {Object.entries(TICKET_STATUS_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+        <select value={levelFilter} onChange={e => setLevelFilter(e.target.value as 'todos' | SupportLevel)} className="h-8 px-2 border border-border rounded text-xs focus:outline-none focus:ring-2 focus:ring-primary">
+          <option value="todos">Todo nivel</option>
+          <option value="N1">N1</option><option value="N2">N2</option><option value="N3">N3</option>
+        </select>
+        <select value={orgFilter} onChange={e => setOrgFilter(e.target.value)} className="h-8 px-2 border border-border rounded text-xs focus:outline-none focus:ring-2 focus:ring-primary">
+          <option value="todas">Toda asociación</option>
+          {organizations.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+        </select>
       </div>
 
       {loading ? (
         <p className="text-sm text-t2">Cargando tickets…</p>
       ) : error ? (
         <p className="text-sm text-danger">{error}</p>
-      ) : filtered.length === 0 ? (
+      ) : tickets.length === 0 ? (
         <p className="text-sm text-t2 bg-surface border border-border rounded-lg p-8 text-center">Sin tickets en este filtro.</p>
       ) : (
         <div className="space-y-3">
-          {filtered.map(t => (
-            <div key={t.id} className="bg-surface border border-border rounded-lg p-4">
-              <div className="flex items-start justify-between gap-3 flex-wrap">
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs px-2 py-0.5 bg-t2/10 text-t2 rounded-full font-medium">{t.organizationName ?? 'Asociación'}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${TICKET_STATUS_STYLE[t.status]}`}>{TICKET_STATUS_LABEL[t.status]}</span>
+          {tickets.map(t => {
+            const sla = ticketSlaState(t);
+            return (
+              <div key={t.id} className="bg-surface border border-border rounded-lg p-4">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-mono text-t2">{t.code}</span>
+                      <span className="text-xs px-2 py-0.5 bg-t2/10 text-t2 rounded-full font-medium">{t.organizationName ?? 'Asociación'}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${PRIORITY_STYLE[t.priority]}`}>{t.priority}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${TICKET_STATUS_STYLE[t.status]}`}>{TICKET_STATUS_LABEL[t.status]}</span>
+                      <span className="text-xs px-2 py-0.5 bg-muted/20 text-t2 rounded-full font-medium">{t.supportLevel}</span>
+                      <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${SLA_STYLE[sla]}`}><Clock size={11} />{SLA_LABEL[sla]}</span>
+                    </div>
+                    <h3 className="text-sm font-semibold text-t1 mt-1.5">{t.subject}</h3>
+                    <p className="text-sm text-t2 mt-1 whitespace-pre-wrap">{t.message}</p>
+                    {t.evidenceUrl && <img src={t.evidenceUrl} alt="Captura adjunta" className="mt-2 h-20 rounded-lg border border-border object-contain" />}
+                    <p className="text-xs text-muted mt-1.5">
+                      Por {t.authorName} · {new Date(t.createdAt).toLocaleString('es-PE')} · {t.type === 'INCIDENTE' ? 'Incidente' : 'Solicitud'} · {CATEGORY_LABEL[t.category]} · Impacto {IMPACT_LABEL[t.impact]} · Urgencia {URGENCY_LABEL[t.urgency]}
+                      {t.assigneeName ? ` · Asignado a ${t.assigneeName}` : ''}
+                      {t.problem ? ` · Vinculado a ${t.problem.code}` : ''}
+                      {t.rfcRef ? ` · RFC ${t.rfcRef}` : ''}
+                    </p>
+                    <p className="text-[11px] text-muted mt-1">SLA medido en horas calendario, no horas hábiles.</p>
                   </div>
-                  <h3 className="text-sm font-semibold text-t1 mt-1.5">{t.subject}</h3>
-                  <p className="text-sm text-t2 mt-1 whitespace-pre-wrap">{t.message}</p>
-                  <p className="text-xs text-muted mt-1.5">Por {t.authorName} · {new Date(t.createdAt).toLocaleString('es-PE')}</p>
+                  {t.status !== 'CERRADO' && (
+                    <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                      <button onClick={() => openAction(t, 'classify')} className="px-2.5 py-1 text-xs font-medium text-primary border border-primary/30 rounded hover:bg-primary/5">Clasificar</button>
+                      <button onClick={() => openAction(t, 'assign')} className="px-2.5 py-1 text-xs font-medium text-t2 border border-border rounded hover:bg-hover">Asignar</button>
+                      {t.supportLevel !== 'N3' && <button onClick={() => openAction(t, 'escalate')} className="px-2.5 py-1 text-xs font-medium text-warn border border-warn/30 rounded hover:bg-warn/5">Escalar</button>}
+                      {t.status !== 'RESUELTO' && <button onClick={() => openAction(t, 'resolve')} className="px-2.5 py-1 text-xs font-medium text-ok border border-ok/30 rounded hover:bg-ok/5">Resolver</button>}
+                      {t.status === 'RESUELTO' && <button onClick={() => openAction(t, 'close')} className="px-2.5 py-1 text-xs font-medium text-t2 border border-border rounded hover:bg-hover">Cerrar</button>}
+                      <button onClick={() => openAction(t, 'link')} className="px-2.5 py-1 text-xs font-medium text-t2 border border-border rounded hover:bg-hover flex items-center gap-1"><Link2 size={12} />Problema/RFC</button>
+                    </div>
+                  )}
                 </div>
-                {t.status !== 'RESUELTO' && (
-                  <button
-                    onClick={() => setReplyDraft({ id: t.id, status: 'EN_PROGRESO', response: t.response ?? '' })}
-                    className="px-2.5 py-1 text-xs font-medium text-primary border border-primary/30 rounded hover:bg-primary/5 shrink-0"
-                  >
-                    Responder
-                  </button>
+
+                {draft?.id === t.id && (
+                  <div className="mt-3 space-y-2 border-t border-border pt-3">
+                    {draft.kind === 'classify' && (
+                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+                        <select value={draft.category} onChange={e => setDraft(d => d && { ...d, category: e.target.value as SupportTicketCategory })} className="h-8 px-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+                          {Object.entries(CATEGORY_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                        <select value={draft.impact} onChange={e => setDraft(d => d && { ...d, impact: e.target.value as SupportTicketImpact })} className="h-8 px-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+                          {Object.entries(IMPACT_LABEL).map(([v, l]) => <option key={v} value={v}>Impacto {l}</option>)}
+                        </select>
+                        <select value={draft.urgency} onChange={e => setDraft(d => d && { ...d, urgency: e.target.value as SupportTicketUrgency })} className="h-8 px-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+                          {Object.entries(URGENCY_LABEL).map(([v, l]) => <option key={v} value={v}>Urgencia {l}</option>)}
+                        </select>
+                        <p className="text-[11px] text-muted lg:col-span-3">Al corregir impacto/urgencia se recalcula la prioridad y el SLA; queda en Auditoría con el valor anterior.</p>
+                      </div>
+                    )}
+                    {draft.kind === 'assign' && (
+                      <input value={draft.assigneeName} onChange={e => setDraft(d => d && { ...d, assigneeName: e.target.value })} placeholder="Nombre del responsable" className="w-full h-8 px-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                    )}
+                    {draft.kind === 'escalate' && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <select value={draft.supportLevel} onChange={e => setDraft(d => d && { ...d, supportLevel: e.target.value as 'N2' | 'N3' })} className="h-8 px-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+                            <option value="N2">Escalar a N2</option>
+                            <option value="N3">Escalar a N3</option>
+                          </select>
+                          <input value={draft.assigneeName} onChange={e => setDraft(d => d && { ...d, assigneeName: e.target.value })} placeholder="Responsable (opcional)" className="flex-1 h-8 px-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                        </div>
+                        <textarea value={draft.note} onChange={e => setDraft(d => d && { ...d, note: e.target.value })} placeholder="Motivo de la escalada…" rows={2} className="w-full px-2.5 py-1.5 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-none" />
+                      </div>
+                    )}
+                    {draft.kind === 'resolve' && (
+                      <textarea value={draft.resolution} onChange={e => setDraft(d => d && { ...d, resolution: e.target.value })} placeholder="¿Cómo se resolvió?" rows={3} className="w-full px-2.5 py-1.5 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-none" />
+                    )}
+                    {draft.kind === 'close' && (
+                      <textarea value={draft.note} onChange={e => setDraft(d => d && { ...d, note: e.target.value })} placeholder="Nota de cierre (opcional)…" rows={2} className="w-full px-2.5 py-1.5 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-none" />
+                    )}
+                    {draft.kind === 'link' && (
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                        <select value={draft.problemId} onChange={e => setDraft(d => d && { ...d, problemId: e.target.value })} className="h-8 px-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+                          <option value="">Sin problema vinculado</option>
+                          {problems.map(p => <option key={p.id} value={p.id}>{p.code} · {p.title}</option>)}
+                        </select>
+                        <input value={draft.rfcRef} onChange={e => setDraft(d => d && { ...d, rfcRef: e.target.value })} placeholder="Referencia de RFC (opcional)" className="h-8 px-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <button onClick={submitDraft} disabled={draftBusy} className="px-2.5 py-1 text-xs font-medium bg-primary text-white rounded hover:bg-primary-h disabled:opacity-50">
+                        {draftBusy ? 'Guardando…' : 'Guardar'}
+                      </button>
+                      <button onClick={() => setDraft(null)} className="px-2.5 py-1 text-xs font-medium text-t2 border border-border rounded hover:bg-hover">Cancelar</button>
+                    </div>
+                    {draftError && <p className="text-xs text-danger">{draftError}</p>}
+                  </div>
                 )}
               </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
-              {t.response && replyDraft?.id !== t.id && (
-                <div className="mt-3 bg-bg border border-border rounded-lg p-3">
-                  <p className="text-xs font-medium text-t1 mb-1">Tu respuesta{t.respondedBy ? ` · ${t.respondedBy}` : ''}</p>
-                  <p className="text-sm text-t2 whitespace-pre-wrap">{t.response}</p>
-                </div>
-              )}
+// Problemas / KEDB (2 oct 2026, Super Admin, ITIL 4 -- OE4 tesis): causa
+// raíz, workaround y solución propuesta, con los tickets que afectan.
+const PROBLEM_STATUS_LABEL: Record<ProblemStatus, string> = {
+  REGISTRADO: 'Registrado',
+  EN_INVESTIGACION: 'En investigación',
+  ERROR_CONOCIDO: 'Error conocido',
+  EN_SOLUCION: 'En solución',
+  CERRADO: 'Cerrado',
+};
+const PROBLEM_STATUS_STYLE: Record<ProblemStatus, string> = {
+  REGISTRADO: 'bg-warn/10 text-warn',
+  EN_INVESTIGACION: 'bg-primary/10 text-primary',
+  ERROR_CONOCIDO: 'bg-danger/10 text-danger',
+  EN_SOLUCION: 'bg-primary/10 text-primary',
+  CERRADO: 'bg-ok/10 text-ok',
+};
 
-              {replyDraft?.id === t.id && (
-                <div className="mt-3 space-y-2 border-t border-border pt-3">
-                  <textarea
-                    value={replyDraft.response}
-                    onChange={e => setReplyDraft(d => d && { ...d, response: e.target.value })}
-                    placeholder="Respuesta para el administrador…"
-                    rows={3}
-                    className="w-full px-2.5 py-1.5 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <select
-                      value={replyDraft.status}
-                      onChange={e => setReplyDraft(d => d && { ...d, status: e.target.value as 'EN_PROGRESO' | 'RESUELTO' })}
-                      className="h-8 px-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                    >
-                      <option value="EN_PROGRESO">Marcar en progreso</option>
-                      <option value="RESUELTO">Marcar resuelto</option>
-                    </select>
-                    <button onClick={handleReplySubmit} disabled={replyBusy} className="px-2.5 py-1 text-xs font-medium bg-primary text-white rounded hover:bg-primary-h disabled:opacity-50">
-                      {replyBusy ? 'Guardando…' : 'Guardar respuesta'}
-                    </button>
-                    <button onClick={() => setReplyDraft(null)} className="px-2.5 py-1 text-xs font-medium text-t2 border border-border rounded hover:bg-hover">Cancelar</button>
+function SAProblems() {
+  const [problems, setProblems] = useState<ProblemRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [selected, setSelected] = useState<ProblemRecord | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState({ title: '', description: '', rootCause: '', workaround: '', proposedSolution: '', rfcRef: '', knownError: false });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [editForm, setEditForm] = useState<{ status: ProblemStatus; rootCause: string; workaround: string; proposedSolution: string; rfcRef: string; knownError: boolean } | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError('');
+    fetchProblems().then(setProblems).catch(err => setError(err instanceof Error ? err.message : 'No se pudieron cargar los problemas.')).finally(() => setLoading(false));
+  }, []);
+  useEffect(load, [load]);
+
+  const openDetail = async (p: ProblemRecord) => {
+    try {
+      const full = await fetchProblem(p.id);
+      setSelected(full);
+      setEditForm({ status: full.status, rootCause: full.rootCause ?? '', workaround: full.workaround ?? '', proposedSolution: full.proposedSolution ?? '', rfcRef: full.rfcRef ?? '', knownError: full.knownError });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo cargar el problema.');
+    }
+  };
+
+  const handleCreate = async () => {
+    if (!form.title.trim() || !form.description.trim() || saving) return;
+    setSaving(true);
+    setSaveError('');
+    try {
+      const created = await createProblem({
+        title: form.title.trim(), description: form.description.trim(),
+        rootCause: form.rootCause.trim() || undefined, workaround: form.workaround.trim() || undefined,
+        proposedSolution: form.proposedSolution.trim() || undefined, rfcRef: form.rfcRef.trim() || undefined,
+        knownError: form.knownError,
+      });
+      setProblems(prev => [created, ...prev]);
+      setForm({ title: '', description: '', rootCause: '', workaround: '', proposedSolution: '', rfcRef: '', knownError: false });
+      setCreating(false);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'No se pudo crear el problema.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!selected || !editForm || saving) return;
+    setSaving(true);
+    setSaveError('');
+    try {
+      const updated = await updateProblem(selected.id, {
+        status: editForm.status, rootCause: editForm.rootCause.trim() || undefined, workaround: editForm.workaround.trim() || undefined,
+        proposedSolution: editForm.proposedSolution.trim() || undefined, rfcRef: editForm.rfcRef.trim() || undefined, knownError: editForm.knownError,
+      });
+      setProblems(prev => prev.map(p => (p.id === updated.id ? { ...p, ...updated } : p)));
+      setSelected(prev => prev && { ...prev, ...updated });
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'No se pudo guardar el problema.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (selected && editForm) {
+    return (
+      <div className="p-6 lg:p-8 space-y-5 max-w-3xl">
+        <button onClick={() => { setSelected(null); setEditForm(null); }} className="text-sm text-t2 hover:text-t1 flex items-center gap-1"><ChevronLeft size={14} /> Volver a Problemas</button>
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-mono text-t2">{selected.code}</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${PROBLEM_STATUS_STYLE[editForm.status]}`}>{PROBLEM_STATUS_LABEL[editForm.status]}</span>
+            {editForm.knownError && <span className="text-xs px-2 py-0.5 bg-danger/10 text-danger rounded-full font-medium">Error conocido</span>}
+          </div>
+          <h1 className="text-2xl font-bold text-t1 mt-1">{selected.title}</h1>
+          <p className="text-sm text-t2 mt-1 whitespace-pre-wrap">{selected.description}</p>
+        </div>
+
+        <div className="bg-surface border border-border rounded-lg p-4 space-y-3">
+          <h2 className="text-sm font-semibold text-t1">Diagnóstico y solución</h2>
+          <div>
+            <label className="block text-xs font-medium text-t1 mb-1">Causa raíz</label>
+            <textarea value={editForm.rootCause} onChange={e => setEditForm(f => f && { ...f, rootCause: e.target.value })} rows={2} className="w-full px-2.5 py-1.5 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-none" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-t1 mb-1">Solución temporal (workaround)</label>
+            <textarea value={editForm.workaround} onChange={e => setEditForm(f => f && { ...f, workaround: e.target.value })} rows={2} className="w-full px-2.5 py-1.5 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-none" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-t1 mb-1">Solución propuesta</label>
+            <textarea value={editForm.proposedSolution} onChange={e => setEditForm(f => f && { ...f, proposedSolution: e.target.value })} rows={2} className="w-full px-2.5 py-1.5 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-none" />
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <select value={editForm.status} onChange={e => setEditForm(f => f && { ...f, status: e.target.value as ProblemStatus })} className="h-8 px-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+              {Object.entries(PROBLEM_STATUS_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+            <input value={editForm.rfcRef} onChange={e => setEditForm(f => f && { ...f, rfcRef: e.target.value })} placeholder="Referencia de RFC" className="h-8 px-2 border border-border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+            <label className="flex items-center gap-1.5 text-sm text-t1">
+              <input type="checkbox" checked={editForm.knownError} onChange={e => setEditForm(f => f && { ...f, knownError: e.target.checked })} />
+              Error conocido (KEDB)
+            </label>
+          </div>
+          <button onClick={handleUpdate} disabled={saving} className="px-3 py-1.5 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary-h disabled:opacity-50">
+            {saving ? 'Guardando…' : 'Guardar cambios'}
+          </button>
+          {saveError && <p className="text-sm text-danger">{saveError}</p>}
+        </div>
+
+        <div className="bg-surface border border-border rounded-lg p-4">
+          <h2 className="text-sm font-semibold text-t1 mb-2">Tickets vinculados ({selected.tickets?.length ?? 0})</h2>
+          {!selected.tickets || selected.tickets.length === 0 ? (
+            <p className="text-sm text-t2">Ningún ticket vinculado todavía.</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {selected.tickets.map(t => (
+                <div key={t.id} className="py-2 flex items-center justify-between gap-3">
+                  <span className="text-sm text-t1">{t.code} · {t.subject}</span>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${PRIORITY_STYLE[t.priority]}`}>{t.priority}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${TICKET_STATUS_STYLE[t.status]}`}>{TICKET_STATUS_LABEL[t.status]}</span>
                   </div>
-                  {replyError && <p className="text-xs text-danger">{replyError}</p>}
                 </div>
-              )}
+              ))}
             </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 lg:p-8 space-y-5">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-t1">Problemas</h1>
+          <p className="text-sm text-t2 mt-0.5">Base de errores conocidos (KEDB) -- causa raíz, workaround y solución, vinculados a los tickets que afectan.</p>
+        </div>
+        <button onClick={() => setCreating(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-white rounded-lg hover:bg-primary-h">
+          <Plus size={14} /> Nuevo problema
+        </button>
+      </div>
+
+      {creating && (
+        <div className="bg-surface border border-border rounded-lg p-4 space-y-3">
+          <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="Título del problema" className="w-full h-9 px-3 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+          <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Descripción del problema…" rows={3} className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-none" />
+          <div className="flex items-center gap-2">
+            <button onClick={handleCreate} disabled={saving || !form.title.trim() || !form.description.trim()} className="px-3 py-1.5 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary-h disabled:opacity-50">
+              {saving ? 'Creando…' : 'Crear problema'}
+            </button>
+            <button onClick={() => setCreating(false)} className="px-3 py-1.5 text-sm font-medium text-t2 border border-border rounded-lg hover:bg-hover">Cancelar</button>
+          </div>
+          {saveError && <p className="text-sm text-danger">{saveError}</p>}
+        </div>
+      )}
+
+      {loading ? (
+        <p className="text-sm text-t2">Cargando problemas…</p>
+      ) : error ? (
+        <p className="text-sm text-danger">{error}</p>
+      ) : problems.length === 0 ? (
+        <p className="text-sm text-t2 bg-surface border border-border rounded-lg p-8 text-center">Todavía no hay problemas registrados.</p>
+      ) : (
+        <div className="bg-surface border border-border rounded-lg divide-y divide-border">
+          {problems.map(p => (
+            <button key={p.id} onClick={() => openDetail(p)} className="w-full text-left p-4 hover:bg-hover flex items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono text-t2">{p.code}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${PROBLEM_STATUS_STYLE[p.status]}`}>{PROBLEM_STATUS_LABEL[p.status]}</span>
+                  {p.knownError && <span className="text-xs px-2 py-0.5 bg-danger/10 text-danger rounded-full font-medium">Error conocido</span>}
+                </div>
+                <h3 className="text-sm font-semibold text-t1 mt-1">{p.title}</h3>
+              </div>
+              <span className="text-xs text-t2 shrink-0">{p._count?.tickets ?? 0} ticket(s)</span>
+            </button>
           ))}
         </div>
       )}
@@ -4347,6 +4747,7 @@ export default function SuperAdminApp({
       {section === 'libro-reclamaciones' && <SAComplaintBook />}
       {section === 'salud' && <SATechHealth />}
       {section === 'soporte' && <SASupportTickets />}
+      {section === 'problemas' && <SAProblems />}
       {section === 'auditoria' && <SAAudit />}
       {section === 'configuracion' && <SABroadcastNotice />}
     </Shell>

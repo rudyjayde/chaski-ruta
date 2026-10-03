@@ -649,8 +649,51 @@ model Notice {
 
 enum SupportTicketStatus {
   ABIERTO
-  EN_PROGRESO
+  EN_ANALISIS
+  ESCALADO
+  EN_ESPERA
   RESUELTO
+  CERRADO
+}
+
+enum SupportTicketType {
+  INCIDENTE
+  SOLICITUD
+}
+
+enum SupportTicketCategory {
+  ACCESO
+  COLA
+  MANIFIESTO
+  GPS
+  ASISTENTE_IA
+  REPORTES
+  OTRO
+}
+
+enum SupportTicketImpact {
+  ALTO
+  MEDIO
+  BAJO
+}
+
+enum SupportTicketUrgency {
+  ALTA
+  MEDIA
+  BAJA
+}
+
+enum SupportTicketPriority {
+  P1
+  P2
+  P3
+  P4
+}
+
+enum SupportLevel {
+  N1
+  N2
+  N3
 }
 
 /// Ticket de soporte real (13 sept 2026, decidido con Jayde): el
@@ -668,19 +711,90 @@ model SupportTicket {
   author         Person       @relation("SupportTicketAuthor", fields: [authorId], references: [id])
   authorName     String
 
+  // TCK-0001, correlativo global (common/sequence.ts, mismo helper que manifiestos y reclamos).
+  code String @unique
+
   subject String
   message String
+
+  // Mesa de servicio ITIL 4 (OE4 tesis, 2 oct 2026): clasificacion + prioridad calculada por el
+  // servidor (nunca por el cliente) con la matriz impacto x urgencia -- ver support-tickets.service.ts.
+  type     SupportTicketType
+  category SupportTicketCategory
+  impact   SupportTicketImpact
+  urgency  SupportTicketUrgency
+  priority SupportTicketPriority
+
+  supportLevel SupportLevel @default(N1)
+  assigneeName String? // nombre de quien lo atiende en Super Admin, denormalizado (igual que authorName)
 
   status      SupportTicketStatus @default(ABIERTO)
   response    String?
   respondedAt DateTime?
   respondedBy String? // nombre de quien respondio en Super Admin, denormalizado
 
+  // Se fija SOLO: la primera vez que el Super Admin actua sobre el ticket (clasificar, asignar,
+  // escalar o responder) -- nunca un campo que alguien pueda escribir a mano.
+  firstResponseAt DateTime?
+  resolvedAt      DateTime?
+  closedAt        DateTime?
+  resolution      String?
+  evidenceUrl     String? // Cloudinary, mismo endpoint de subida que logos/QR (uploads.service.ts)
+
+  // SLA en HORAS CALENDARIO (no habiles), fijado segun la prioridad al crear/clasificar el ticket
+  // (ver la tabla de minutos en support-tickets.service.ts). "Dentro de SLA / vencido" se calcula
+  // al leer (nunca se guarda), comparando contra firstResponseAt/resolvedAt o la hora actual.
+  slaResponseMin   Int?
+  slaResolutionMin Int?
+
+  problemId String?
+  problem   ProblemRecord? @relation(fields: [problemId], references: [id])
+  rfcRef    String?
+
   createdAt DateTime @default(now())
 
   @@index([organizationId, createdAt])
   @@index([status])
+  @@index([priority, status])
   @@map("support_tickets")
+}
+
+enum ProblemStatus {
+  REGISTRADO
+  EN_INVESTIGACION
+  ERROR_CONOCIDO
+  EN_SOLUCION
+  CERRADO
+}
+
+/// Gestion de problemas (KEDB, ITIL 4 -- OE4 tesis, 2 oct 2026). A proposito SIN organizationId:
+/// es un catalogo interno de Super Admin (un problema casi siempre afecta o podria afectar a mas
+/// de una asociacion), no un dato propio de un tenant -- igual criterio que el catalogo de
+/// dispositivos GPS. Por eso tampoco queda en AuditEntry (esa tabla exige organizationId); si en
+/// el futuro hace falta su propio historial, se agrega aparte.
+model ProblemRecord {
+  id String @id @default(cuid())
+
+  // PRB-001, correlativo global (mismo helper de secuencia).
+  code String @unique
+
+  title       String
+  description String
+
+  rootCause        String?
+  workaround       String?
+  knownError       Boolean       @default(false)
+  proposedSolution String?
+  rfcRef           String?
+  status           ProblemStatus @default(REGISTRADO)
+
+  tickets SupportTicket[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@map("problem_records")
 }
 
 /// Parámetros configurables por asociación para las reglas antifraude

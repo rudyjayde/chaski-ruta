@@ -730,6 +730,76 @@ export class MailService {
       );
     }
   }
+
+  /**
+   * Mesa de servicio ITIL 4 (OE4 tesis, 2 oct 2026): acuse de recibo al crear un ticket, con su
+   * codigo (TCK-xxxx) y la prioridad calculada.
+   */
+  async sendSupportTicketAck(params: { to: string; name: string; code: string; subject: string; priority: string }): Promise<void> {
+    const apiKey = this.config.get<string>('RESEND_API_KEY');
+    if (!apiKey) {
+      this.logger.warn(`RESEND_API_KEY no configurada -- no se envió el acuse del ticket ${params.code} a ${params.to}.`);
+      return;
+    }
+    const from = this.config.get<string>('RESEND_FROM_EMAIL') || 'CHASKI AI <onboarding@resend.dev>';
+    const subject = `Recibimos tu ticket ${params.code} -- CHASKI AI`;
+    const html = `<!doctype html>
+<html lang="es">
+  <body style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;">
+    <p>Hola ${escapeHtml(params.name)},</p>
+    <p>Recibimos tu ticket <strong>${escapeHtml(params.code)}</strong>: "${escapeHtml(params.subject)}".</p>
+    <p>Quedó clasificado con prioridad <strong>${escapeHtml(params.priority)}</strong>. Te avisaremos por aquí cada vez que cambie de estado.</p>
+  </body>
+</html>`;
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to: params.to, subject, html }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        this.logger.error(`Resend respondio ${res.status} enviando el acuse del ticket ${params.code}: ${text}`);
+      }
+    } catch (err) {
+      this.logger.error(`Error enviando el acuse del ticket ${params.code}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * Un solo metodo reusado para CADA cambio de estado del ticket (escalar, resolver, en espera,
+   * cerrar) -- el mensaje ya viene redactado por quien llama, aqui solo se arma el correo.
+   */
+  async sendSupportTicketStatusUpdate(params: { to: string; name: string; code: string; subject: string; message: string }): Promise<void> {
+    const apiKey = this.config.get<string>('RESEND_API_KEY');
+    if (!apiKey) {
+      this.logger.warn(`RESEND_API_KEY no configurada -- no se notificó el cambio del ticket ${params.code} a ${params.to}.`);
+      return;
+    }
+    const from = this.config.get<string>('RESEND_FROM_EMAIL') || 'CHASKI AI <onboarding@resend.dev>';
+    const subject = `Novedad en tu ticket ${params.code} -- CHASKI AI`;
+    const html = `<!doctype html>
+<html lang="es">
+  <body style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;">
+    <p>Hola ${escapeHtml(params.name)},</p>
+    <p>Tu ticket <strong>${escapeHtml(params.code)}</strong> ("${escapeHtml(params.subject)}") tiene una novedad:</p>
+    <p style="padding:12px 16px;background:#f1f5f9;border-radius:8px;">${escapeHtml(params.message)}</p>
+  </body>
+</html>`;
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to: params.to, subject, html }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        this.logger.error(`Resend respondio ${res.status} notificando el ticket ${params.code}: ${text}`);
+      }
+    } catch (err) {
+      this.logger.error(`Error notificando el ticket ${params.code}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 }
 
 function escapeHtml(value: string): string {
