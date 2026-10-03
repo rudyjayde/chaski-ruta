@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import type { Person } from '@prisma/client';
 import { GoogleProfile } from './google.strategy';
 import { JwtPayload } from './jwt.strategy';
 import { VisitorAuthService } from '../visitor-auth/visitor-auth.service';
@@ -177,9 +178,22 @@ export class AuthService {
     // verifico), aqui solo se emite el JWT de sesion -- nunca se toca el
     // estado de verificacion de Google de la cuenta.
     if (!payload.googleId) {
-      return this.issueToken(person);
+      return this.issueToken(await this.activateIfPending(person));
     }
     return this.activateAndIssue(person.id, payload.googleId);
+  }
+
+  /**
+   * Un login por contraseña exitoso ya demostró que la persona controla ese
+   * correo -- si esta fila seguia PENDIENTE (p. ej. se le dio de alta como
+   * Conductor/Socio despues de que otra fila del mismo correo ya tenia
+   * contraseña, asi que nunca paso por resetPassword ni por Google), queda
+   * ACTIVO aqui mismo. Sin esto se quedaba atascada en "Pendientes" para
+   * siempre aunque ya pudiera entrar con normalidad (ver selectProfile).
+   */
+  private async activateIfPending(person: Person): Promise<Person> {
+    if (person.status !== 'PENDIENTE') return person;
+    return this.prisma.person.update({ where: { id: person.id }, data: { status: 'ACTIVO' } });
   }
 
   private verifySelectToken(selectToken: string): SelectTokenPayload {
@@ -218,7 +232,7 @@ export class AuthService {
     }
 
     if (withPassword.length === 1) {
-      return this.issueToken(reference);
+      return this.issueToken(await this.activateIfPending(reference));
     }
     const selectToken = this.jwt.sign(
       { purpose: 'select-profile', email: normalized } satisfies SelectTokenPayload,

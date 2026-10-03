@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   LayoutDashboard, Building2, Activity,
   HeadphonesIcon, ShieldCheck, Settings, Plus, X, ChevronRight, ArrowRight,
@@ -260,11 +260,16 @@ function SADashboard({ onNavigate }: { onNavigate: (s: Section) => void }) {
   // "Resumen" solo mostraba salud operativa; esto agrega cuantas
   // asociaciones hay por plan, altas recientes y adopcion de GPS Vehicular.
   const [metrics, setMetrics] = useState<OrganizationMetrics | null>(null);
+  // Tickets de soporte abiertos, cruzando asociaciones (3 oct 2026) -- mismo
+  // dato que alimenta el badge del menu, para que "Resumen" tambien refleje
+  // el control total de la mesa de servicio, no solo GPS/negocio.
+  const [openSupportTickets, setOpenSupportTickets] = useState<SupportTicket[]>([]);
   useEffect(() => {
     let cancelled = false;
     fetchOrganizations().then(list => { if (!cancelled) setOrgs(list); }).catch(() => { /* se degrada a lista vacia */ });
     fetchCommercialRequests().then(list => { if (!cancelled) setCommercialRequests(list); }).catch(() => { /* se degrada a lista vacia */ });
     fetchOrganizationMetrics().then(m => { if (!cancelled) setMetrics(m); }).catch(() => { /* se degrada sin metricas */ });
+    fetchSupportTickets({ status: 'ABIERTO' }).then(list => { if (!cancelled) setOpenSupportTickets(list); }).catch(() => { /* se degrada sin tickets */ });
     const pollAlerts = () => {
       fetchSuperAdminUrgentGpsAlerts().then(list => { if (!cancelled) setUrgentAlerts(list); }).catch(() => { /* se degrada sin alertas */ });
     };
@@ -277,6 +282,7 @@ function SADashboard({ onNavigate }: { onNavigate: (s: Section) => void }) {
   const suspended = orgs.filter(o => o.status === 'SUSPENDIDA').length;
   const incident = 0; // el estado CON_INCIDENCIA no existe en el backend real (OrgStatus solo tiene 3 valores)
   const newRequests = commercialRequests.filter(r => r.status === 'NUEVA').length;
+  const openSupportP1 = openSupportTickets.filter(t => t.priority === 'P1').length;
 
   return (
     <div className="p-6 lg:p-8 space-y-6">
@@ -335,6 +341,21 @@ function SADashboard({ onNavigate }: { onNavigate: (s: Section) => void }) {
               <span className="text-sm font-medium text-primary">{newRequests} solicitud{newRequests > 1 ? 'es' : ''} comercial{newRequests > 1 ? 'es' : ''} nueva{newRequests > 1 ? 's' : ''}</span>
             </div>
             <p className="text-sm text-t2 flex items-center gap-1">Ir a Solicitudes <ArrowRight size={13} /></p>
+          </button>
+        )}
+        {openSupportTickets.length > 0 && (
+          <button
+            onClick={() => onNavigate('soporte')}
+            className={`border rounded-lg p-4 text-left transition-colors ${openSupportP1 > 0 ? 'bg-danger/5 border-danger/20 hover:bg-danger/10' : 'bg-warn/5 border-warn/20 hover:bg-warn/10'}`}
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <HeadphonesIcon size={14} className={openSupportP1 > 0 ? 'text-danger' : 'text-warn'} />
+              <span className={`text-sm font-medium ${openSupportP1 > 0 ? 'text-danger' : 'text-warn'}`}>
+                {openSupportTickets.length} ticket{openSupportTickets.length > 1 ? 's' : ''} de soporte sin clasificar
+                {openSupportP1 > 0 ? ` (${openSupportP1} P1)` : ''}
+              </span>
+            </div>
+            <p className="text-sm text-t2 flex items-center gap-1">Ir a Soporte <ArrowRight size={13} /></p>
           </button>
         )}
       </div>
@@ -4691,6 +4712,25 @@ export default function SuperAdminApp({
   // normal (sin pasar por una solicitud) siga arrancando en blanco.
   const [newOrgFromRequest, setNewOrgFromRequest] = useState<{ contactName: string; suggestion: OnboardingSuggestion } | null>(null);
 
+  // Badge de "Soporte" en el menu (3 oct 2026, pedido por Jayde tras probar en
+  // produccion): cuenta tickets ABIERTO (recien llegados, todavia sin
+  // clasificar) cruzando todas las asociaciones -- igual de visible que el
+  // 🔒 de bloqueos pendientes en Asociaciones.
+  const [openTicketsCount, setOpenTicketsCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      fetchSupportTickets({ status: 'ABIERTO' }).then(list => { if (!cancelled) setOpenTicketsCount(list.length); }).catch(() => { /* se degrada sin badge */ });
+    };
+    poll();
+    const id = setInterval(poll, 20000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+  const navItems = useMemo(
+    () => NAV_ITEMS.map(item => (item.id === 'soporte' ? { ...item, badge: openTicketsCount || undefined } : item)),
+    [openTicketsCount],
+  );
+
   // Igual que en AdminApp: cambiar de seccion aqui era solo estado interno de
   // React, nunca tocaba la URL/historial del navegador -- por eso "atras"
   // saltaba directo al portal en vez de a la pantalla anterior del panel.
@@ -4719,7 +4759,7 @@ export default function SuperAdminApp({
 
   return (
     <Shell
-      navItems={NAV_ITEMS}
+      navItems={navItems}
       activeSection={section === 'nueva-org' ? 'asociaciones' : section}
       onNavigate={(id) => nav(id as Section)}
       isSuperAdmin
