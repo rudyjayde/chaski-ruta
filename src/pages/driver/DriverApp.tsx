@@ -635,7 +635,8 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
 
   useEffect(() => {
     reload();
-    const id = setInterval(reload, 15000);
+    // 5s (antes 15s): pantalla donde el conductor espera que lo llamen.
+    const id = setInterval(reload, 5000);
     return () => clearInterval(id);
   }, [reload]);
 
@@ -1188,7 +1189,8 @@ function DriverQueue() {
 
   useEffect(() => {
     reload();
-    const id = setInterval(reload, 15000);
+    // 5s (antes 15s): pantalla donde el conductor espera que lo llamen.
+    const id = setInterval(reload, 5000);
     return () => clearInterval(id);
   }, [reload]);
 
