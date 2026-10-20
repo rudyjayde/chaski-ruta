@@ -68,11 +68,17 @@ nota para revisar más adelante, no una decisión cerrada para siempre.
 corre el contenedor resultante.
 
 **Configuración real de hoy:**
-- Conectado al repositorio `rudyjayde/chaski-ruta`, rama `main`, con
-  **Root Directory = `backend`** (el monorepo tiene la web en la raíz y el
-  backend en esa carpeta — Railway solo construye esa parte).
-- Despliegue automático: cada push a `main` que toque `backend/` dispara
-  sola una construcción y despliegue nuevo.
+- **Corrección (20 de octubre de 2026):** el servicio **no** está conectado
+  a GitHub (sin repositorio de origen ni Root Directory). Un push a `main`
+  no despliega nada. Se despliega a mano desde la carpeta `backend`, que es
+  donde está el `Dockerfile`:
+  `railway link --project intuitive-luck --environment production --service chaski-ruta`
+  y luego `railway up --service chaski-ruta --detach` (en la CLI el
+  proyecto aparece como `intuitive-luck`).
+- **Las migraciones de Prisma no se aplican solas** (el contenedor solo
+  corre `node dist/src/main.js`). Después de cada despliegue con migración
+  nueva: `railway ssh --service chaski-ruta -- npx -y prisma@5.22.0 migrate deploy`
+  (fijar 5.x: `prisma` es dependencia de desarrollo y `npx` bajaría la última).
 - Variables de entorno: las mismas que usaba Cloud Run (claves de Google
   OAuth, Cloudinary, Anthropic, Traccar, Resend, JWT), cargadas a mano una
   vez durante la migración — las secretas se copiaron directamente desde
