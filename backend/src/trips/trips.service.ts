@@ -7,6 +7,7 @@ import { CompleteTripDto } from './dto/complete-trip.dto';
 import { ResolveIncidentDto } from './dto/resolve-incident.dto';
 import { CancelTripDto } from './dto/cancel-trip.dto';
 import { isStaff, redactPerson } from '../common/redact';
+import { NoticesService } from '../notices/notices.service';
 
 // El hash de la contraseña NUNCA debe llegar al navegador (mismo criterio
 // que people.service.ts / vehicles.service.ts) -- select explicito en vez
@@ -18,6 +19,7 @@ export class TripsService {
   constructor(
     private prisma: PrismaService,
     private gps: GpsService,
+    private notices: NoticesService,
   ) {}
 
   // El conductor ve SUS viajes, el socio los de SUS unidades y el administrador todos. Antes cualquier
@@ -146,6 +148,20 @@ export class TripsService {
         reason: dto.note,
       },
     });
+    // Boton de alerta de la app (plan-operacion.md §3.7): el administrador se entera
+    // al instante (aviso + push), no solo cuando revisa la lista de viajes.
+    const [admins, detail] = await Promise.all([
+      this.prisma.person.findMany({
+        where: { organizationId, role: 'ADMINISTRADOR', status: { notIn: ['SUSPENDIDO', 'ELIMINADO'] } },
+        select: { id: true },
+      }),
+      this.prisma.trip.findUnique({
+        where: { id },
+        select: { vehicle: { select: { code: true } }, driver: { select: { name: true, phone: true } } },
+      }),
+    ]);
+    const who = `${detail?.driver?.name ?? 'Un conductor'} (unidad ${detail?.vehicle?.code ?? '—'}${detail?.driver?.phone ? `, cel. ${detail.driver.phone}` : ''})`;
+    await this.notices.createSystemNoticeMany(organizationId, admins.map((a) => a.id), 'Alerta de conductor en ruta', `${who}: ${dto.note}`);
     return updated;
   }
 
