@@ -4,6 +4,8 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { MobileAuthController } from './mobile-auth.controller';
+import { MobileAuthService } from './mobile-auth.service';
 import { GoogleStrategy } from './google.strategy';
 import { JwtStrategy } from './jwt.strategy';
 import { GoogleAuthGuard } from './google-auth.guard';
@@ -24,8 +26,8 @@ import { MailModule } from '../mail/mail.module';
       }),
     }),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, GoogleStrategy, JwtStrategy, GoogleAuthGuard],
+  controllers: [AuthController, MobileAuthController],
+  providers: [AuthService, MobileAuthService, GoogleStrategy, JwtStrategy, GoogleAuthGuard],
   exports: [AuthService],
 })
 export class AuthModule {}

@@ -188,12 +188,43 @@ model Person {
   noticesAsAuthor              Notice[]                     @relation("NoticeAuthor")
   noticesAsTarget              Notice[]                     @relation("NoticeTarget")
   supportTicketsAsAuthor       SupportTicket[]              @relation("SupportTicketAuthor")
+  mobileSessions               MobileSession[]
 
   @@unique([email, role])
   @@index([organizationId])
   @@index([email])
   @@index([googleId])
   @@map("people")
+}
+
+enum MobilePlatform {
+  ANDROID
+  IOS
+}
+
+/// Sesion de la app nativa (Flutter, 20 oct 2026): una fila por instalacion con
+/// sesion abierta. La web sigue con su JWT de siempre y nunca crea filas aqui.
+/// El token de renovacion se guarda solo como hash (sha256) y rota en cada uso.
+/// deviceId es el identificador de instalacion que genera la app; viaja firmado
+/// dentro del JWT (did) y es el que se compara con Person.boundDeviceId al
+/// inscribirse en cola. pushToken es el token de Firebase Cloud Messaging.
+model MobileSession {
+  id               String         @id @default(cuid())
+  personId         String
+  person           Person         @relation(fields: [personId], references: [id], onDelete: Cascade)
+  refreshTokenHash String         @unique
+  deviceId         String
+  platform         MobilePlatform
+  appVersion       String?
+  pushToken        String?
+  createdAt        DateTime       @default(now())
+  lastUsedAt       DateTime       @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+
+  @@index([personId, revokedAt])
+  @@index([pushToken])
+  @@map("mobile_sessions")
 }
 
 /// Registro de auditoria: actor, fecha, motivo y cambio — obligatorio para toda excepcion/intervencion manual

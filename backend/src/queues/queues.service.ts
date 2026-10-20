@@ -8,6 +8,7 @@ import { AdvanceQueueDto } from './dto/advance-queue.dto';
 import { OverrideQueueDto } from './dto/override-queue.dto';
 import { redactPerson } from '../common/redact';
 import { NoticesService } from '../notices/notices.service';
+import { PushService } from '../push/push.service';
 import { routeLabel } from '../common/route-labels';
 
 type RouteDir = 'JULI_PUNO' | 'PUNO_JULI';
@@ -77,6 +78,7 @@ export class QueuesService {
     private prisma: PrismaService,
     private gps: GpsService,
     private notices: NoticesService,
+    private push: PushService,
   ) {}
 
   private async getConfig(organizationId: string) {
@@ -190,6 +192,11 @@ export class QueuesService {
         after: 'LLAMADO',
         reason: 'No habia ninguna unidad en Llamando en esta cola -- se paso automaticamente a la siguiente inscrita',
       },
+    });
+    this.push.notifyPeople([next.driverId], {
+      title: 'Estás LLAMANDO',
+      body: 'Es tu turno. Abre tu manifiesto y registra a tus pasajeros.',
+      data: { type: 'LLAMANDO', route },
     });
   }
 

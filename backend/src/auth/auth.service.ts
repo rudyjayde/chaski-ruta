@@ -336,20 +336,24 @@ export class AuthService {
     return this.issueToken(updated);
   }
 
-  issueToken(person: {
-    id: string;
-    organizationId: string | null;
-    role: string;
-    email: string;
-  }) {
+  issueToken(
+    person: {
+      id: string;
+      organizationId: string | null;
+      role: string;
+      email: string;
+    },
+    mobile?: { sessionId: string; deviceId: string; expiresIn: string },
+  ) {
     const payload: JwtPayload = {
       sub: person.id,
       organizationId: person.organizationId,
       role: person.role,
       email: person.email,
+      ...(mobile ? { sid: mobile.sessionId, did: mobile.deviceId } : {}),
     };
     return {
-      accessToken: this.jwt.sign(payload),
+      accessToken: mobile ? this.jwt.sign(payload, { expiresIn: mobile.expiresIn }) : this.jwt.sign(payload),
       person: payload,
     };
   }

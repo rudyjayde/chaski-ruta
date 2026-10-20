@@ -3,17 +3,21 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateNoticeDto } from './dto/create-notice.dto';
 import { BroadcastNoticeDto } from './dto/broadcast-notice.dto';
 import { JwtPayload } from '../auth/jwt.strategy';
+import { PushService } from '../push/push.service';
 
 @Injectable()
 export class NoticesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private push: PushService,
+  ) {}
 
   async create(organizationId: string, actor: JwtPayload, dto: CreateNoticeDto) {
     const author = await this.prisma.person.findUnique({ where: { id: actor.sub } });
     if (!author) {
       throw new NotFoundException('No se encontró tu cuenta para firmar el aviso.');
     }
-    return this.prisma.notice.create({
+    const notice = await this.prisma.notice.create({
       data: {
         organizationId,
         authorId: author.id,
@@ -23,6 +27,8 @@ export class NoticesService {
         audience: dto.audience,
       },
     });
+    this.push.notifyAudience([organizationId], dto.audience, { title: dto.title, body: dto.body, data: { type: 'NOTICE' } });
+    return notice;
   }
 
   /**
@@ -76,6 +82,11 @@ export class NoticesService {
         }),
       ),
     ]);
+    this.push.notifyAudience(
+      targetOrgs.map((o) => o.id),
+      dto.audience,
+      { title: dto.title, body: dto.body, data: { type: 'NOTICE' } },
+    );
 
     return { sent: targetOrgs.length, organizations: targetOrgs.map((o) => o.name) };
   }
@@ -132,6 +143,7 @@ export class NoticesService {
         targetPersonId,
       },
     });
+    this.push.notifyPeople([targetPersonId], { title, body, data: { type: 'NOTICE' } });
   }
   /** El mismo aviso privado para varias personas (transparencia de colas: se avisa a todos los conductores). */
   async createSystemNoticeMany(organizationId: string, targetPersonIds: string[], title: string, body: string) {
@@ -147,5 +159,6 @@ export class NoticesService {
         targetPersonId,
       })),
     });
+    this.push.notifyPeople(targetPersonIds, { title, body, data: { type: 'NOTICE' } });
   }
 }

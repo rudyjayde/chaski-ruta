@@ -43,8 +43,12 @@ export class QueuesController {
     @Query('organizationId') organizationId?: string,
   ) {
     const orgId = resolveOrgId(user, organizationId);
-    // Celular o no, segun lo que el navegador dice de si mismo (mismo criterio
-    // que src/lib/device.ts en el frontend).
+    // App nativa: el celular y su identificador vienen firmados en la sesion
+    // (did), no del cuerpo de la peticion. Web: celular o no segun lo que el
+    // navegador dice de si mismo (mismo criterio que src/lib/device.ts).
+    if (user.did) {
+      return this.queues.join(orgId, user, parseRoute(route), { ...dto, deviceId: user.did }, true);
+    }
     const isMobile = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(String(req.headers['user-agent'] ?? ''));
     return this.queues.join(orgId, user, parseRoute(route), dto, isMobile);
   }

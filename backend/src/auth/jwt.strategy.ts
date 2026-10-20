@@ -9,6 +9,10 @@ export interface JwtPayload {
   organizationId: string | null;
   role: string;
   email: string;
+  // Solo en tokens de la app nativa (ver MobileAuthService): la sesion movil y
+  // el identificador de instalacion, firmados por el servidor.
+  sid?: string;
+  did?: string;
 }
 
 const DEFAULT_STATUS_CACHE_MS = 30_000;

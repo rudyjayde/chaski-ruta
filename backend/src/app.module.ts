@@ -34,6 +34,7 @@ import { PassengerProfilesModule } from './passenger-profiles/passenger-profiles
 import { HealthMonitorModule } from './health-monitor/health-monitor.module';
 import { SupportTicketsModule } from './support-tickets/support-tickets.module';
 import { ProblemsModule } from './problems/problems.module';
+import { PushModule } from './push/push.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { ProblemsModule } from './problems/problems.module';
     ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 120 }]),
     ScheduleModule.forRoot(),
     PrismaModule,
+    PushModule,
     AuthModule,
     OrganizationsModule,
     CompaniesModule,
