@@ -29,11 +29,22 @@ export default function AssistantConversationList({ compact = false, onOpen }: {
     );
   }
 
+  // El plazo lo aplica el backend (assistant-retention.service.ts, 60 dias).
+  const retentionNote = (
+    <p className="text-[11px] text-muted px-2.5 pt-2 pb-1">Las conversaciones se borran solas después de 2 meses sin uso.</p>
+  );
+
   if (conversations.length === 0) {
-    return <p className="text-xs text-t2 px-3 py-4 text-center">Todavía no tienes consultas anteriores.</p>;
+    return (
+      <>
+        <p className="text-xs text-t2 px-3 py-4 text-center">Todavía no tienes consultas anteriores.</p>
+        {retentionNote}
+      </>
+    );
   }
 
   return (
+    <>
     <ul className="space-y-0.5">
       {conversations.map((c) => (
         <li key={c.id} className="group relative">
@@ -62,5 +73,7 @@ export default function AssistantConversationList({ compact = false, onOpen }: {
         </li>
       ))}
     </ul>
+    {retentionNote}
+    </>
   );
 }
