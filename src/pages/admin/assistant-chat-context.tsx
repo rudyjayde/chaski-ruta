@@ -42,6 +42,9 @@ export function AssistantChatProvider({ orgName, children }: { orgName?: string 
     try {
       setConversations(await fetchAssistantConversations());
     } catch (err: any) {
+      // Lista vacia en vez de dejarla en null: si no, el panel quedaria con
+      // el spinner girando para siempre.
+      setConversations([]);
       setError(err?.message || 'No se pudo cargar el historial.');
     }
   }, []);

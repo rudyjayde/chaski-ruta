@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { createMap, dotIcon, fitToTerminals, L } from '../lib/map';
+import { createMap, dotIcon, escapeHtml, fitToTerminals, L } from '../lib/map';
 import { routeLabel, type LiveVehiclePosition, type OperationalConfig, type Organization } from '../lib/operacion-api';
 
 // Mapa real de flota en vivo (OpenStreetMap + posiciones de Traccar) --
@@ -26,8 +26,8 @@ interface LiveFleetMapProps {
 function popupHtml(p: LiveVehiclePosition, org: Organization | null): string {
   return (
     `<div style="font-family:sans-serif;font-size:13px;line-height:1.5">` +
-      `<b>Unidad ${p.code}</b><br/>${p.companyName}<br/>` +
-      `${p.route ? routeLabel(p.route, org) : 'Sin ruta activa'}<br/>` +
+      `<b>Unidad ${escapeHtml(p.code)}</b><br/>${escapeHtml(p.companyName)}<br/>` +
+      `${p.route ? escapeHtml(routeLabel(p.route, org)) : 'Sin ruta activa'}<br/>` +
       `${p.speedKmh} km/h &middot; actualizado ${new Date(p.lastUpdate).toLocaleTimeString('es-PE')}` +
     `</div>`
   );

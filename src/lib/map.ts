@@ -25,7 +25,19 @@ export function createMap(el: HTMLElement, opts: { center?: L.LatLngExpression; 
   });
   map.attributionControl.setPrefix(false);
   L.tileLayer(TILE_URL, { maxZoom: 19, subdomains: 'abc', attribution: ATTRIBUTION }).addTo(map);
+  // Leaflet solo escucha el resize de la ventana: si el contenedor cambia de
+  // tamano por otra causa (contraer el menu lateral, un panel que se abre),
+  // el mapa dejaria una franja gris sin mosaicos.
+  const observer = new ResizeObserver(() => map.invalidateSize());
+  observer.observe(el);
+  map.on('unload', () => observer.disconnect());
   return map;
+}
+
+// Para textos de la base de datos (codigo de unidad, nombre de empresa) que
+// se meten en el HTML de un popup o de un icono.
+export function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
 // Punto circular con borde blanco y, opcionalmente, un texto adentro (codigo
@@ -35,7 +47,7 @@ export function dotIcon(color: string, size: number, label?: string, fontSize = 
   const html =
     `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:${borderWidth}px solid #fff;` +
     `box-shadow:0 1px 3px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;` +
-    `color:#fff;font:700 ${fontSize}px/1 sans-serif;box-sizing:border-box">${label ?? ''}</div>`;
+    `color:#fff;font:700 ${fontSize}px/1 sans-serif;box-sizing:border-box">${escapeHtml(label ?? '')}</div>`;
   return L.divIcon({ html, className: '', iconSize: [size, size], iconAnchor: [size / 2, size / 2], popupAnchor: [0, -size / 2] });
 }
 
