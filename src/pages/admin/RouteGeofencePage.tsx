@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { MapPin, Undo2, Trash2, Save, Loader2 } from 'lucide-react';
-import { loadGoogleMaps, getGoogleMaps } from '../../lib/google-maps';
+import { useState, useEffect, useRef } from 'react';
+import { Undo2, Trash2, Save, Loader2 } from 'lucide-react';
+import { createMap, dotIcon, fitToTerminals, L } from '../../lib/map';
 import { fetchOperationalConfig, fetchRouteGeofence, saveRouteGeofence, type OperationalConfig, type GeofencePoint } from '../../lib/operacion-api';
 
 // Corredor autorizado (12 sept 2026, decidido con Jayde): el administrador
@@ -10,36 +10,76 @@ import { fetchOperationalConfig, fetchRouteGeofence, saveRouteGeofence, type Ope
 // la alerta FUERA_DE_RUTA (gps-alerts.service.ts): una unidad con viaje
 // activo cuya posicion cae fuera de este poligono.
 //
-// Dibujo por CLIC (12 sept 2026, tras revertir el modo "lapiz" de arrastre
-// continuo): el modo lapiz producia un error interno real de la propia
-// libreria de Google Maps ("Cannot read properties of undefined (reading
-// '__e3_')") que rompia el dibujo -- persistio incluso despues de sacar la
-// libreria 'geometry', asi que el problema era el patron mousedown/
-// mousemove en si, no una libreria puntual. Se volvio a este modo, que es
-// el que se probo estable desde el principio: un clic = un punto nuevo.
+// Dibujo por CLIC: un clic = un punto nuevo (el modo "lapiz" de arrastre
+// continuo se descarto el 12 sept 2026 por inestable).
 //
-// El poligono se crea UNA SOLA VEZ y su `path` se muta en el lugar
-// (push/pop) -- nunca se destruye y se vuelve a crear en cada clic. Una vez
-// que hay 3+ puntos, el poligono queda `editable` (funcion nativa de Google
-// Maps): arrastrar cualquier vertice lo mueve, arrastrar el punto medio de
-// un borde agrega uno nuevo ahi, clic derecho sobre un vertice lo borra.
+// Edicion (1 nov 2026, al pasar de Google Maps a Leaflet, que no trae
+// poligonos editables de serie): cada vertice es un marcador arrastrable,
+// clic derecho sobre un vertice lo borra, y con 3+ puntos aparece un punto
+// tenue en la mitad de cada borde -- clic sobre el agrega un vertice nuevo
+// ahi. Cada cambio vuelve a dibujar la capa entera desde pointsRef, que es
+// la unica fuente de verdad.
+const ZONE_COLOR = '#dc2626';
+
 export default function RouteGeofencePage() {
   const [config, setConfig] = useState<OperationalConfig | null>(null);
   const [points, setPoints] = useState<GeofencePoint[]>([]);
   const [savedAt, setSavedAt] = useState<string | null>(null);
-  const [mapStatus, setMapStatus] = useState<'cargando' | 'listo' | 'sin_api_key'>('cargando');
+  const [mapReady, setMapReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [dirty, setDirty] = useState(false);
 
   const mapRef = useRef<HTMLDivElement>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mapObjRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const polygonRef = useRef<any>(null);
+  const mapObjRef = useRef<L.Map | null>(null);
+  const layerRef = useRef<L.LayerGroup | null>(null);
   const pointsRef = useRef<GeofencePoint[]>([]);
-  const syncingFromPathRef = useRef(false);
+  const redrawRef = useRef<() => void>(() => {});
+
+  const commit = (next: GeofencePoint[]) => {
+    pointsRef.current = next;
+    setPoints(next);
+    setDirty(true);
+    redrawRef.current();
+  };
+
+  redrawRef.current = () => {
+    const map = mapObjRef.current;
+    if (!map) return;
+    layerRef.current?.remove();
+    const group = L.layerGroup().addTo(map);
+    layerRef.current = group;
+    const pts = pointsRef.current;
+    if (pts.length === 0) return;
+
+    // No interactivo: un clic dentro de la zona tambien agrega un punto.
+    const polygon = L.polygon(pts, { color: ZONE_COLOR, weight: 2, fillColor: ZONE_COLOR, fillOpacity: 0.15, interactive: false }).addTo(group);
+
+    pts.forEach((p, i) => {
+      const vertex = L.marker(p, { draggable: true, icon: dotIcon(ZONE_COLOR, 14), zIndexOffset: 1000 }).addTo(group);
+      const moved = () => {
+        const { lat, lng } = vertex.getLatLng();
+        return pointsRef.current.map((q, j) => (j === i ? { lat, lng } : q));
+      };
+      vertex.on('drag', () => polygon.setLatLngs(moved()));
+      vertex.on('dragend', () => commit(moved()));
+      vertex.on('contextmenu', (e: L.LeafletMouseEvent) => {
+        L.DomEvent.preventDefault(e.originalEvent);
+        commit(pointsRef.current.filter((_, j) => j !== i));
+      });
+    });
+
+    if (pts.length >= 3) {
+      pts.forEach((p, i) => {
+        const q = pts[(i + 1) % pts.length];
+        const mid = { lat: (p.lat + q.lat) / 2, lng: (p.lng + q.lng) / 2 };
+        L.marker(mid, { icon: dotIcon(ZONE_COLOR, 10, undefined, 11, 1), opacity: 0.55, title: 'Agregar punto aquí' })
+          .on('click', () => commit([...pointsRef.current.slice(0, i + 1), mid, ...pointsRef.current.slice(i + 1)]))
+          .addTo(group);
+      });
+    }
+  };
 
   useEffect(() => {
     Promise.all([fetchOperationalConfig(), fetchRouteGeofence()])
@@ -55,119 +95,36 @@ export default function RouteGeofencePage() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Crea el poligono UNA SOLA VEZ (si todavia no existe) con los puntos
-  // actuales, y engancha los listeners de edicion sobre su `path` -- que
-  // vive mientras exista el poligono, nunca se vuelve a enganchar.
-  const ensurePolygon = useCallback((): // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  any | null => {
-    const g = getGoogleMaps();
-    const map = mapObjRef.current;
-    if (!g || !map) return null;
-    if (polygonRef.current) return polygonRef.current;
-
-    const polygon = new g.Polygon({
-      paths: pointsRef.current,
-      strokeColor: '#dc2626',
-      strokeWeight: 2,
-      fillColor: '#dc2626',
-      fillOpacity: 0.15,
-      editable: pointsRef.current.length >= 3,
-      draggable: false, // mover el poligono ENTERO no tiene sentido aca -- solo vertices
-      map,
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const map = createMap(mapRef.current);
+    mapObjRef.current = map;
+    map.on('click', (e: L.LeafletMouseEvent) => {
+      commit([...pointsRef.current, { lat: e.latlng.lat, lng: e.latlng.lng }]);
     });
-    polygonRef.current = polygon;
-
-    const syncFromPath = () => {
-      if (syncingFromPathRef.current) return; // evita el eco: nosotros mismos disparamos el evento al hacer push/pop
-      const path = polygon.getPath();
-      const next: GeofencePoint[] = [];
-      path.forEach((latLng: { lat: () => number; lng: () => number }) => next.push({ lat: latLng.lat(), lng: latLng.lng() }));
-      pointsRef.current = next;
-      setPoints(next);
-      setDirty(true);
+    setMapReady(true);
+    return () => {
+      map.remove();
+      mapObjRef.current = null;
+      layerRef.current = null;
     };
-    const path = polygon.getPath();
-    g.event.addListener(path, 'insert_at', syncFromPath);
-    g.event.addListener(path, 'remove_at', syncFromPath);
-    g.event.addListener(path, 'set_at', syncFromPath);
-
-    return polygon;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Centra el mapa en los terminales reales de ESTA asociación, y dibuja el
+  // corredor ya guardado (si existe) apenas el mapa y los datos están listos.
   useEffect(() => {
-    let cancelled = false;
-    loadGoogleMaps()
-      .then(() => {
-        if (cancelled || !mapRef.current) return;
-        const g = getGoogleMaps();
-        const map = new g.Map(mapRef.current, {
-          zoom: 10,
-          center: { lat: -16.02, lng: -69.74 },
-          zoomControl: true,
-          streetViewControl: false,
-        });
-        mapObjRef.current = map;
-
-        map.addListener('click', (e: { latLng: { lat: () => number; lng: () => number } }) => {
-          const p = { lat: e.latLng.lat(), lng: e.latLng.lng() };
-          if (!polygonRef.current) {
-            // Primer punto: el poligono se crea RECIEN aca, con este punto
-            // ya adentro -- nunca con `paths: []` vacio (eso era la causa
-            // real del error interno de Google Maps: "Cannot read
-            // properties of undefined (reading '__e3_')", confirmado en
-            // pruebas reales el 12 sept 2026).
-            pointsRef.current = [p];
-            setPoints(pointsRef.current);
-            setDirty(true);
-            ensurePolygon();
-            return;
-          }
-          syncingFromPathRef.current = true;
-          polygonRef.current.getPath().push(new g.LatLng(p.lat, p.lng));
-          syncingFromPathRef.current = false;
-          pointsRef.current = [...pointsRef.current, p];
-          setPoints(pointsRef.current);
-          setDirty(true);
-          if (pointsRef.current.length >= 3) polygonRef.current.setEditable(true);
-        });
-
-        setMapStatus('listo');
-      })
-      .catch(() => setMapStatus('sin_api_key'));
-    return () => { cancelled = true; };
-  }, [ensurePolygon]);
-
-  // Centra el mapa en los terminales reales de ESTA asociación, y crea el
-  // poligono con el corredor ya guardado (si existe) apenas el mapa y los
-  // datos están listos.
-  useEffect(() => {
-    if (mapStatus !== 'listo' || !config) return;
-    const g = getGoogleMaps();
-    const bounds = new g.LatLngBounds();
-    bounds.extend({ lat: config.terminalOriginLat, lng: config.terminalOriginLng });
-    bounds.extend({ lat: config.terminalDestinationLat, lng: config.terminalDestinationLng });
-    mapObjRef.current.fitBounds(bounds, 60);
-    if (pointsRef.current.length >= 2) ensurePolygon();
-  }, [mapStatus, config, ensurePolygon]);
+    if (!mapReady || !config || !mapObjRef.current) return;
+    fitToTerminals(mapObjRef.current, config, 60);
+    redrawRef.current();
+  }, [mapReady, config]);
 
   const handleUndo = () => {
-    const polygon = polygonRef.current;
-    if (!polygon || pointsRef.current.length === 0) return;
-    syncingFromPathRef.current = true;
-    polygon.getPath().pop();
-    syncingFromPathRef.current = false;
-    pointsRef.current = pointsRef.current.slice(0, -1);
-    setPoints(pointsRef.current);
-    setDirty(true);
+    if (pointsRef.current.length === 0) return;
+    commit(pointsRef.current.slice(0, -1));
   };
 
-  const handleClear = () => {
-    if (polygonRef.current) polygonRef.current.setMap(null);
-    polygonRef.current = null;
-    pointsRef.current = [];
-    setPoints([]);
-    setDirty(true);
-  };
+  const handleClear = () => commit([]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -210,26 +167,17 @@ export default function RouteGeofencePage() {
       </div>
 
       <p className="text-xs text-t2">
-        Haz clic en el mapa para ir agregando puntos, siguiendo la carretera real, hasta encerrar el corredor. Con 3 o más puntos, puedes arrastrar cualquiera para ajustarlo, arrastrar el punto medio de un borde para agregar uno nuevo ahí, o hacer clic derecho sobre un punto para borrarlo.
+        Haz clic en el mapa para ir agregando puntos, siguiendo la carretera real, hasta encerrar el corredor. Puedes arrastrar cualquier punto para ajustarlo o hacer clic derecho sobre él para borrarlo. Con 3 o más puntos, haz clic en el punto tenue de la mitad de un borde para agregar uno nuevo ahí.
       </p>
 
       {/* El <div> del mapa se renderiza SIEMPRE, nunca detrás de un `loading ?`
-          -- Google Maps necesita que el contenedor ya exista en el DOM en el
-          momento en que se crea el mapa (useEffect de montaje). */}
-      <div className="relative h-[60vh] min-h-[360px] bg-bg border border-border rounded-lg overflow-hidden">
+          -- el mapa necesita que el contenedor ya exista en el DOM en el
+          momento en que se crea (useEffect de montaje). */}
+      <div className="relative isolate h-[60vh] min-h-[360px] bg-bg border border-border rounded-lg overflow-hidden">
         <div ref={mapRef} className="absolute inset-0" />
         {loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-bg">
+          <div className="absolute z-[1000] inset-0 flex items-center justify-center bg-bg">
             <Loader2 size={20} className="animate-spin text-muted" />
-          </div>
-        )}
-        {!loading && mapStatus === 'sin_api_key' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-bg">
-            <div className="text-center max-w-sm px-4">
-              <MapPin size={22} className="mx-auto text-muted mb-1.5" />
-              <p className="text-sm text-t1 font-medium">Mapa en configuración</p>
-              <p className="text-sm text-t2 mt-1">Falta la clave de Google Maps (VITE_GOOGLE_MAPS_API_KEY) en el entorno.</p>
-            </div>
           </div>
         )}
       </div>

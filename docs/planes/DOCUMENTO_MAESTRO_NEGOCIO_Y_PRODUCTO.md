@@ -660,7 +660,7 @@ Antes de considerar implementado el negocio, verificar:
 - Politica aprobada de ausencia y tolerancia en colas.
 - Formula de compensacion por reubicaciones.
 - Lista final de alertas GPS y umbrales de velocidad.
-- Alcance exacto de Google Maps y costos de API.
+- Mapas: desde el 1 nov 2026 se usa Leaflet + OpenStreetMap (gratis, sin clave). Revisar proveedor de mosaicos si el trafico crece mucho.
 - Textos legales finales revisados por un profesional.
 - Fecha y condiciones para venta publica de pasajes; no forma parte del alcance operativo inicial.
 - Comportamiento de una unidad PRO ante perdida de senal GPS en el momento de inscribirse en cola: si cae al mecanismo de respaldo de Operacion (chequeo por celular) o si queda marcada "Sin senal" para intervencion manual del gerente (ver §7.2.1).

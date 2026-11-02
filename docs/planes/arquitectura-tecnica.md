@@ -11,7 +11,7 @@ Decisiones tomadas en conversación de producto (agosto 2026). Este documento es
 - **GPS/telemetría (PRO y GPS Vehicular):** Teltonika FMC130 → servidor Traccar (ya corriendo en un VPS de DigitalOcean) → backend CHASKI AI → app/web.
 - **Asistente conversacional:** API de Claude, con function/tool calling contra datos reales — nunca genera cifras libremente. Dos canales: panel admin (alcance amplio) y WhatsApp (alcance acotado a cola general + perfil propio). Ver `plan-pro.md` §6 y §8.
 - **WhatsApp:** WhatsApp Business Platform (Meta Cloud API, vía un proveedor tipo Twilio/360dialog/Gupshup) — no la app normal de WhatsApp Business.
-- **Mini-mapa del conductor:** API de Google Maps (JavaScript), posición desde `navigator.geolocation` del navegador — ya implementado, es privado y no depende del backend de GPS de flota.
+- **Mini-mapa del conductor:** Leaflet + OpenStreetMap (desde el 1 nov 2026; antes Google Maps — ver `src/lib/map.ts`), posición desde `navigator.geolocation` del navegador — ya implementado, es privado y no depende del backend de GPS de flota.
 
 ## 2. Dominio y correo
 

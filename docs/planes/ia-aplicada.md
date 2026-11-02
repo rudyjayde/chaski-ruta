@@ -232,7 +232,7 @@ ambos terminales).
 (`RouteRiskService#getRiskPoints()`, agrupa eventos por celda de mapa) +
 endpoint `GET /route-risk` (mismo guard de Plan PRO que `/gps/live`) +
 pantalla "Mapa de riesgo" en el panel de administrador (`RouteRiskPage.tsx`,
-`RouteRiskMap.tsx` con círculos de severidad sobre Google Maps), dentro del
+`RouteRiskMap.tsx` con círculos de severidad sobre OpenStreetMap), dentro del
 grupo GPS PRO del menú.
 
 ### 3.3 Pronóstico de demanda con contexto real

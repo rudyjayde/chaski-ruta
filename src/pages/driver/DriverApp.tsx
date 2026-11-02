@@ -13,6 +13,7 @@ import GpsAlertBanner from '../../components/GpsAlertBanner';
 import GpsFallbackNotice from '../../components/GpsFallbackNotice';
 import EnrollmentAuthNotice from '../../components/EnrollmentAuthNotice';
 import ProductionReportView from '../../components/ProductionReportView';
+import { createMap, dotIcon, L } from '../../lib/map';
 import type { Passenger, PaymentMethod, Person, Unit, QueueEntry, Manifest, Trip, TripStatus, VehicleType, RouteDir } from '../../types';
 import {
   fetchQueue, fetchVehicles, joinQueue, confirmArrival, declareLater, getOrCreateDeviceId,
@@ -2308,97 +2309,50 @@ function DriverGPS() {
 function DriverLiveMapView() {
   const containerRef = useRef<HTMLDivElement>(null);
   const watchIdRef = useRef<number | null>(null);
-  const [status, setStatus] = useState<'cargando' | 'listo' | 'sin_permiso' | 'sin_senal' | 'sin_api_key' | 'error'>('cargando');
+  const [status, setStatus] = useState<'cargando' | 'listo' | 'sin_permiso' | 'sin_senal' | 'error'>('cargando');
   const [speedKmh, setSpeedKmh] = useState<number | null>(null);
   const [lastUpdate, setLastUpdate] = useState('');
 
   useEffect(() => {
-    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
-    if (!apiKey) {
-      setStatus('sin_api_key');
-      return;
-    }
+    if (!containerRef.current) return;
     if (!('geolocation' in navigator)) {
       setStatus('error');
       return;
     }
 
     let cancelled = false;
+    const map = createMap(containerRef.current, { center: [-15.8402, -70.0219], zoom: 16 });
+    let marker: L.Marker | null = null;
 
-    function loadGoogleMaps(): Promise<void> {
-      const w = window as unknown as { google?: { maps: unknown } };
-      if (w.google?.maps) return Promise.resolve();
-      return new Promise((resolve, reject) => {
-        const existing = document.getElementById('chaski-google-maps-script');
-        if (existing) {
-          existing.addEventListener('load', () => resolve());
-          existing.addEventListener('error', () => reject(new Error('load-error')));
-          return;
-        }
-        const script = document.createElement('script');
-        script.id = 'chaski-google-maps-script';
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}`;
-        script.async = true;
-        script.onload = () => resolve();
-        script.onerror = () => reject(new Error('load-error'));
-        document.head.appendChild(script);
-      });
-    }
-
-    loadGoogleMaps()
-      .then(() => {
-        if (cancelled || !containerRef.current) return;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const g = (window as any).google;
-        const map = new g.maps.Map(containerRef.current, {
-          zoom: 16,
-          center: { lat: -15.8402, lng: -70.0219 },
-          disableDefaultUI: true,
-          zoomControl: true,
-        });
-        const marker = new g.maps.Marker({ map, title: 'Mi ubicación' });
-
-        watchIdRef.current = navigator.geolocation.watchPosition(
-          pos => {
-            if (cancelled) return;
-            const { latitude, longitude, speed } = pos.coords;
-            const point = { lat: latitude, lng: longitude };
-            map.setCenter(point);
-            marker.setPosition(point);
-            setSpeedKmh(typeof speed === 'number' && speed >= 0 ? Math.round(speed * 3.6) : null);
-            setLastUpdate(new Date(pos.timestamp).toLocaleTimeString('es-PE'));
-            setStatus('listo');
-          },
-          err => {
-            if (cancelled) return;
-            setStatus(err.code === err.PERMISSION_DENIED ? 'sin_permiso' : 'sin_senal');
-          },
-          { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setStatus('error');
-      });
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      pos => {
+        if (cancelled) return;
+        const { latitude, longitude, speed } = pos.coords;
+        const point: L.LatLngExpression = [latitude, longitude];
+        map.setView(point, map.getZoom());
+        if (marker) marker.setLatLng(point);
+        else marker = L.marker(point, { icon: dotIcon('#4285F4', 18), title: 'Mi ubicación' }).addTo(map);
+        setSpeedKmh(typeof speed === 'number' && speed >= 0 ? Math.round(speed * 3.6) : null);
+        setLastUpdate(new Date(pos.timestamp).toLocaleTimeString('es-PE'));
+        setStatus('listo');
+      },
+      err => {
+        if (cancelled) return;
+        setStatus(err.code === err.PERMISSION_DENIED ? 'sin_permiso' : 'sin_senal');
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+    );
 
     return () => {
       cancelled = true;
       if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
+      map.remove();
     };
   }, []);
 
-  if (status === 'sin_api_key') {
-    return (
-      <div className="border border-border rounded-lg p-6 text-center space-y-2 bg-surface">
-        <MapPin size={22} className="mx-auto text-muted" />
-        <p className="text-sm text-t1 font-medium">Mapa en vivo en configuración</p>
-        <p className="text-xs text-t2">Esta función está siendo activada por el equipo de CHASKI. Vuelve a intentarlo más tarde.</p>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-3">
-      <div ref={containerRef} className="w-full h-72 rounded-lg border border-border bg-bg" />
+      <div ref={containerRef} className="isolate w-full h-72 rounded-lg border border-border bg-bg" />
       <p className="text-xs text-t2">
         {status === 'cargando' && 'Obteniendo tu ubicación…'}
         {status === 'listo' && `Actualizado ${lastUpdate}${speedKmh !== null ? ` · ${speedKmh} km/h` : ''}`}

@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { MapPin } from 'lucide-react';
 import { fetchGpsHistory, type GpsHistoryPoint } from '../lib/operacion-api';
-import { loadGoogleMaps, getGoogleMaps } from '../lib/google-maps';
+import { createMap, dotIcon, L } from '../lib/map';
 import { localDateStr } from '../lib/dates';
 
-// Recorrido real pintado en Google Maps (12 sept 2026, decidido con Jayde):
+// Recorrido real pintado en el mapa (12 sept 2026, decidido con Jayde):
 // compartido entre Socio (su propia unidad) y Super Admin (cualquier
 // unidad) -- Administrador NUNCA lo usa, es informacion privada del GPS
 // Vehicular individual del socio (ver plan-gps-vehicular.md §4). Mismo
@@ -44,17 +43,12 @@ export default function GpsRouteHistoryView({ vehicleId, code, plate }: { vehicl
   const [points, setPoints] = useState<GpsHistoryPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [mapStatus, setMapStatus] = useState<'cargando' | 'listo' | 'sin_api_key'>('cargando');
+  const [mapReady, setMapReady] = useState(false);
 
   const mapRef = useRef<HTMLDivElement>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mapObjRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const polylineRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const markersRef = useRef<any[]>([]);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const infoWindowRef = useRef<any>(null);
+  const mapObjRef = useRef<L.Map | null>(null);
+  const polylineRef = useRef<L.Polyline | null>(null);
+  const markersRef = useRef<L.Marker[]>([]);
 
   const from = period === 'hoy' ? today : period === '7dias' ? weekAgo : period === 'mes' ? monthAgo : dateFrom;
   const to = period === 'personalizado' ? dateTo : today;
@@ -91,69 +85,47 @@ export default function GpsRouteHistoryView({ vehicleId, code, plate }: { vehicl
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    let cancelled = false;
-    loadGoogleMaps()
-      .then(() => {
-        if (cancelled || !mapRef.current) return;
-        const g = getGoogleMaps();
-        mapObjRef.current = new g.Map(mapRef.current, {
-          zoom: 12,
-          center: { lat: -16.02, lng: -69.74 },
-          disableDefaultUI: true,
-          zoomControl: true,
-        });
-        infoWindowRef.current = new g.InfoWindow();
-        setMapStatus('listo');
-      })
-      .catch(() => setMapStatus('sin_api_key'));
-    return () => { cancelled = true; };
+    if (!mapRef.current) return;
+    const map = createMap(mapRef.current, { zoom: 12 });
+    mapObjRef.current = map;
+    setMapReady(true);
+    return () => {
+      map.remove();
+      mapObjRef.current = null;
+      polylineRef.current = null;
+      markersRef.current = [];
+    };
   }, []);
 
   useEffect(() => {
-    if (mapStatus !== 'listo') return;
-    const g = getGoogleMaps();
     const map = mapObjRef.current;
-    if (polylineRef.current) { polylineRef.current.setMap(null); polylineRef.current = null; }
-    markersRef.current.forEach(m => m.setMap(null));
+    if (!mapReady || !map) return;
+    if (polylineRef.current) { polylineRef.current.remove(); polylineRef.current = null; }
+    markersRef.current.forEach(m => m.remove());
     markersRef.current = [];
     if (points.length === 0) return;
 
     // Popup real al hacer clic en cualquier punto (12 sept 2026, a pedido de
     // Jayde): velocidad, kilometraje acumulado, curso y hora -- los 4 datos
     // ya vienen de Traccar, ninguno se calcula "bonito" ni se inventa.
-    const openInfo = (marker: unknown, p: GpsHistoryPoint & { cumulativeKm: number }) => {
-      infoWindowRef.current.setContent(
-        `<div style="font-family:sans-serif;font-size:12.5px;line-height:1.6;color:#1a1a18">` +
-          `<strong>Velocidad:</strong> ${p.speedKmh} km/h<br/>` +
-          `<strong>Kilometraje:</strong> ${p.cumulativeKm.toFixed(1)} km<br/>` +
-          `<strong>Curso:</strong> ${courseToCompass(p.course)} ${Math.round(p.course)}°<br/>` +
-          `<strong>Hora:</strong> ${new Date(p.fixTime).toLocaleString('es-PE')}` +
-        `</div>`,
-      );
-      infoWindowRef.current.open(map, marker);
-    };
+    const infoHtml = (p: GpsHistoryPoint & { cumulativeKm: number }) =>
+      `<div style="font-family:sans-serif;font-size:12.5px;line-height:1.6;color:#1a1a18">` +
+        `<strong>Velocidad:</strong> ${p.speedKmh} km/h<br/>` +
+        `<strong>Kilometraje:</strong> ${p.cumulativeKm.toFixed(1)} km<br/>` +
+        `<strong>Curso:</strong> ${courseToCompass(p.course)} ${Math.round(p.course)}°<br/>` +
+        `<strong>Hora:</strong> ${new Date(p.fixTime).toLocaleString('es-PE')}` +
+      `</div>`;
 
     if (!hasRealMovement) {
       // Nunca hubo un desplazamiento real en el periodo: no se dibuja
       // ninguna linea (seria inventar un recorrido que no existio). Se
       // marca solo la ultima posicion conocida.
       const last = points[points.length - 1];
-      const marker = new g.Marker({
-        position: { lat: last.lat, lng: last.lng },
-        map,
-        icon: {
-          path: g.SymbolPath.CIRCLE,
-          scale: 9,
-          fillColor: '#6b7280',
-          fillOpacity: 1,
-          strokeColor: '#fff',
-          strokeWeight: 2,
-        },
-      });
-      marker.addListener('click', () => openInfo(marker, { ...last, cumulativeKm: 0 }));
+      const marker = L.marker([last.lat, last.lng], { icon: dotIcon('#6b7280', 18) })
+        .bindPopup(infoHtml({ ...last, cumulativeKm: 0 }))
+        .addTo(map);
       markersRef.current = [marker];
-      map.setCenter({ lat: last.lat, lng: last.lng });
-      map.setZoom(17);
+      map.setView([last.lat, last.lng], 17);
       return;
     }
 
@@ -177,35 +149,24 @@ export default function GpsRouteHistoryView({ vehicleId, code, plate }: { vehicl
       if (stepKm * 1000 >= MIN_SEGMENT_METERS) drawPoints.push({ ...p, cumulativeKm: last.cumulativeKm + stepKm });
     }
 
-    const path = drawPoints.map(p => ({ lat: p.lat, lng: p.lng }));
-    polylineRef.current = new g.Polyline({
-      path, map, geodesic: true, strokeColor: '#1d3fb8', strokeWeight: 4, strokeOpacity: 0.85,
-    });
-    const bounds = new g.LatLngBounds();
-    path.forEach(pt => bounds.extend(pt));
-    map.fitBounds(bounds, 40);
+    const path = drawPoints.map(p => L.latLng(p.lat, p.lng));
+    polylineRef.current = L.polyline(path, { color: '#1d3fb8', weight: 4, opacity: 0.85 }).addTo(map);
+    map.fitBounds(L.latLngBounds(path), { padding: [40, 40] });
 
+    // Puntos intermedios primero y A/B al final, para que los extremos queden
+    // siempre encima.
     const pointMarkers = drawPoints.map((p, i) => {
       const isStart = i === 0;
       const isEnd = i === drawPoints.length - 1;
-      const marker = new g.Marker({
-        position: { lat: p.lat, lng: p.lng },
-        map,
-        label: isStart ? { text: 'A', color: '#fff', fontSize: '11px', fontWeight: '700' } : isEnd ? { text: 'B', color: '#fff', fontSize: '11px', fontWeight: '700' } : undefined,
-        icon: {
-          path: g.SymbolPath.CIRCLE,
-          scale: isStart || isEnd ? 9 : 5,
-          fillColor: isStart ? '#0f9d58' : isEnd ? '#b3261e' : '#1d3fb8',
-          fillOpacity: 1,
-          strokeColor: '#fff',
-          strokeWeight: isStart || isEnd ? 2 : 1,
-        },
-      });
-      marker.addListener('click', () => openInfo(marker, p));
-      return marker;
+      const icon = isStart || isEnd
+        ? dotIcon(isStart ? '#0f9d58' : '#b3261e', 20, isStart ? 'A' : 'B')
+        : dotIcon('#1d3fb8', 11, undefined, 11, 1);
+      return L.marker([p.lat, p.lng], { icon, zIndexOffset: isStart || isEnd ? 1000 : 0 })
+        .bindPopup(infoHtml(p))
+        .addTo(map);
     });
     markersRef.current = pointMarkers;
-  }, [points, mapStatus, hasRealMovement]);
+  }, [points, mapReady, hasRealMovement]);
 
   const totalKm = hasRealMovement && points.length > 1
     ? points.reduce((sum, p, i) => i === 0 ? 0 : sum + haversineKm(points[i - 1], p), 0)
@@ -245,24 +206,15 @@ export default function GpsRouteHistoryView({ vehicleId, code, plate }: { vehicl
         ))}
       </div>
 
-      <div className="relative h-96 bg-bg border border-border rounded-lg overflow-hidden">
+      <div className="relative isolate h-96 bg-bg border border-border rounded-lg overflow-hidden">
         <div ref={mapRef} className="absolute inset-0" />
-        {mapStatus === 'sin_api_key' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-bg">
-            <div className="text-center max-w-sm px-4">
-              <MapPin size={22} className="mx-auto text-muted mb-1.5" />
-              <p className="text-sm text-t1 font-medium">Mapa en configuración</p>
-              <p className="text-sm text-t2 mt-1">Falta la clave de Google Maps (VITE_GOOGLE_MAPS_API_KEY) en el entorno.</p>
-            </div>
-          </div>
-        )}
-        {mapStatus === 'listo' && !loading && points.length === 0 && (
-          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-surface border border-border rounded-lg shadow px-3 py-1.5 text-sm text-t2 text-center max-w-[90%]">
+        {mapReady && !loading && points.length === 0 && (
+          <div className="absolute z-[1000] bottom-2 left-1/2 -translate-x-1/2 bg-surface border border-border rounded-lg shadow px-3 py-1.5 text-sm text-t2 text-center max-w-[90%]">
             Sin registros de posición en el rango elegido
           </div>
         )}
-        {mapStatus === 'listo' && !loading && points.length > 0 && !hasRealMovement && (
-          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-surface border border-border rounded-lg shadow px-3 py-1.5 text-sm text-t2 text-center max-w-[90%]">
+        {mapReady && !loading && points.length > 0 && !hasRealMovement && (
+          <div className="absolute z-[1000] bottom-2 left-1/2 -translate-x-1/2 bg-surface border border-border rounded-lg shadow px-3 py-1.5 text-sm text-t2 text-center max-w-[90%]">
             La unidad permaneció en el mismo lugar en este periodo — no hubo un recorrido real que mostrar
           </div>
         )}

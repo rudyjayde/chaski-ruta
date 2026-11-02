@@ -162,7 +162,7 @@ Pensado para celular — quien está manejando en ruta o parado en terminal.
 - **Avisos** — solo lectura, filtrados por audiencia "conductores".
 - **Mi perfil** — datos propios, mini-mapa privado de su ubicación en vivo
   (nunca compartido con nadie, nunca guardado como historial, activable por
-  asociación desde Super Admin por costo de la API de Google Maps).
+  asociación desde Super Admin (antes por costo de Google Maps; desde nov 2026 el mapa es OpenStreetMap, sin costo)).
 - **Botón de alerta** — para averías/choques reales; el Administrador
   resuelve la excepción manualmente.
 
