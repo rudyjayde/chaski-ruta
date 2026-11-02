@@ -1010,18 +1010,38 @@ export interface AssistantChatTurn {
 export interface AssistantChatResponse {
   reply: string;
   assistantName: string;
+  conversationId: string;
+  title: string;
+}
+
+export interface AssistantConversationSummary {
+  id: string;
+  title: string;
+  updatedAt: string;
 }
 
 /**
- * Envia un mensaje al asistente del panel admin. `history` es la conversacion
- * previa (el backend no guarda memoria entre requests): se manda completa cada
- * vez para que el asistente pueda seguir el hilo ("y el otro vehiculo?").
+ * Envia un mensaje al asistente del panel admin. Sin `conversationId` el
+ * backend abre una conversacion nueva y devuelve su id; con el, el backend
+ * lee de la base de datos los turnos previos para seguir el hilo.
  */
-export async function sendAssistantMessage(message: string, history: AssistantChatTurn[]): Promise<AssistantChatResponse> {
+export async function sendAssistantMessage(message: string, conversationId: string | null): Promise<AssistantChatResponse> {
   return request<AssistantChatResponse>('/assistant/chat', {
     method: 'POST',
-    body: JSON.stringify({ message, history }),
+    body: JSON.stringify(conversationId ? { message, conversationId } : { message }),
   });
+}
+
+export async function fetchAssistantConversations(): Promise<AssistantConversationSummary[]> {
+  return request<AssistantConversationSummary[]>('/assistant/conversations');
+}
+
+export async function fetchAssistantConversation(id: string): Promise<{ id: string; title: string; messages: AssistantChatTurn[] }> {
+  return request(`/assistant/conversations/${encodeURIComponent(id)}`);
+}
+
+export async function deleteAssistantConversation(id: string): Promise<void> {
+  await request(`/assistant/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 // ─── GPS en vivo (GPS PRO / GPS Vehicular, plan-gps-vehicular.md) ───────────

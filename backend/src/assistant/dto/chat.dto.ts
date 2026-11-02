@@ -10,14 +10,21 @@ class ChatTurnDto {
   content: string;
 }
 
-// message: lo que acaba de escribir el usuario. history: turnos previos de esta
-// misma conversacion (el frontend la mantiene; el backend no guarda memoria
-// entre requests) para que el asistente pueda responder cosas como "y el otro
-// vehiculo que te pregunte antes?".
+// message: lo que acaba de escribir el usuario. conversationId: la
+// conversacion guardada a la que pertenece (sin el, se crea una nueva). El
+// contexto previo lo lee el backend de la base de datos.
+//
+// history: forma anterior, cuando el frontend mantenia la conversacion en
+// memoria. Se sigue aceptando para que un frontend viejo no reciba 400
+// mientras se despliegan backend y frontend por separado.
 export class ChatDto {
   @IsString()
   @MaxLength(2000)
   message: string;
+
+  @IsOptional()
+  @IsString()
+  conversationId?: string;
 
   @IsOptional()
   @IsArray()

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import { Sparkles, Send, Loader2, X } from 'lucide-react';
+import { Sparkles, Send, Loader2, X, SquarePen, History, ArrowLeft } from 'lucide-react';
 import { useAssistantChat } from './assistant-chat-context';
+import AssistantConversationList from './AssistantConversationList';
 import { routeLabel } from '../../lib/operacion-api';
 import { useAdminDemo } from './AdminApp';
 
@@ -18,8 +19,9 @@ const suggestionsFor = (queueRoute: string) => [
 export default function AssistantWidget() {
   const { org } = useAdminDemo();
   const SUGGESTIONS = suggestionsFor(routeLabel('JULI_PUNO', org));
-  const { assistantName, messages, sending, error, send } = useAssistantChat();
+  const { assistantName, messages, sending, loadingConversation, error, send, newConversation } = useAssistantChat();
   const [open, setOpen] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -38,20 +40,64 @@ export default function AssistantWidget() {
         <div className="fixed bottom-24 right-5 z-50 w-[380px] max-w-[calc(100vw-2.5rem)] h-[540px] max-h-[70vh] bg-surface border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden">
           <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border bg-bg flex-shrink-0">
             <div className="flex items-center gap-2 min-w-0">
-              <Sparkles size={16} className="text-primary flex-shrink-0" />
-              <span className="text-sm font-semibold text-t1 truncate">{assistantName}</span>
+              {showHistory ? (
+                <button
+                  onClick={() => setShowHistory(false)}
+                  className="text-t2 hover:text-t1 p-1 -ml-1 rounded hover:bg-hover flex-shrink-0"
+                  aria-label="Volver al chat"
+                >
+                  <ArrowLeft size={16} />
+                </button>
+              ) : (
+                <Sparkles size={16} className="text-primary flex-shrink-0" />
+              )}
+              <span className="text-sm font-semibold text-t1 truncate">{showHistory ? 'Consultas anteriores' : assistantName}</span>
             </div>
-            <button
-              onClick={() => setOpen(false)}
-              className="text-t2 hover:text-t1 p-1 rounded hover:bg-hover flex-shrink-0"
-              aria-label="Cerrar"
-            >
-              <X size={16} />
-            </button>
+            <div className="flex items-center gap-0.5 flex-shrink-0">
+              {!showHistory && (
+                <>
+                  <button
+                    onClick={newConversation}
+                    disabled={sending}
+                    className="text-t2 hover:text-t1 p-1 rounded hover:bg-hover disabled:opacity-40"
+                    aria-label="Nueva conversación"
+                    title="Nueva conversación"
+                  >
+                    <SquarePen size={16} />
+                  </button>
+                  <button
+                    onClick={() => setShowHistory(true)}
+                    className="text-t2 hover:text-t1 p-1 rounded hover:bg-hover"
+                    aria-label="Consultas anteriores"
+                    title="Consultas anteriores"
+                  >
+                    <History size={16} />
+                  </button>
+                </>
+              )}
+              <button
+                onClick={() => setOpen(false)}
+                className="text-t2 hover:text-t1 p-1 rounded hover:bg-hover"
+                aria-label="Cerrar"
+              >
+                <X size={16} />
+              </button>
+            </div>
           </div>
 
+          {showHistory ? (
+            <div className="flex-1 overflow-y-auto p-1.5">
+              <AssistantConversationList compact onOpen={() => setShowHistory(false)} />
+            </div>
+          ) : (
+          <>
           <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
-            {messages.length === 0 && (
+            {loadingConversation && (
+              <div className="h-full flex items-center justify-center">
+                <Loader2 size={18} className="animate-spin text-muted" />
+              </div>
+            )}
+            {!loadingConversation && messages.length === 0 && (
               <div className="h-full flex flex-col items-center justify-center text-center gap-3 px-2">
                 <Sparkles size={24} className="text-primary/60" />
                 <p className="text-xs text-t2">Pregúntame por unidades, conductores, la cola o el resumen de hoy.</p>
@@ -68,7 +114,7 @@ export default function AssistantWidget() {
                 </div>
               </div>
             )}
-            {messages.map((m, i) => (
+            {!loadingConversation && messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div
                   className={`max-w-[85%] rounded-lg px-3 py-2 text-xs whitespace-pre-wrap ${
@@ -102,16 +148,18 @@ export default function AssistantWidget() {
               onChange={(e) => setInput(e.target.value)}
               placeholder={`Pregúntale a ${assistantName}...`}
               className="flex-1 text-xs border border-border rounded-lg px-2.5 py-2 bg-bg text-t1 outline-none focus:border-primary"
-              disabled={sending}
+              disabled={sending || loadingConversation}
             />
             <button
               type="submit"
-              disabled={sending || !input.trim()}
+              disabled={sending || loadingConversation || !input.trim()}
               className="p-2 rounded-lg bg-primary text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors flex-shrink-0"
             >
               <Send size={14} />
             </button>
           </form>
+          </>
+          )}
         </div>
       )}
 

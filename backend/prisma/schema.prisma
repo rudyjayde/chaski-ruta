@@ -101,6 +101,7 @@ model Organization {
   routeGeofence               RouteGeofence?
   passengerProfiles           PassengerProfile[]
   supportTickets              SupportTicket[]
+  assistantConversations      AssistantConversation[]
 
   @@map("organizations")
 }
@@ -189,6 +190,7 @@ model Person {
   noticesAsTarget              Notice[]                     @relation("NoticeTarget")
   supportTicketsAsAuthor       SupportTicket[]              @relation("SupportTicketAuthor")
   mobileSessions               MobileSession[]
+  assistantConversations       AssistantConversation[]
 
   @@unique([email, role])
   @@index([organizationId])
@@ -225,6 +227,37 @@ model MobileSession {
   @@index([personId, revokedAt])
   @@index([pushToken])
   @@map("mobile_sessions")
+}
+
+/// Historial del asistente del panel admin (2 nov 2026, a pedido de Jayde:
+/// "como ChatGPT"). Cada conversacion es privada de la persona que la tuvo
+/// dentro de UNA asociacion -- un Super Admin que entra a varias asociaciones
+/// tiene un historial separado por cada una.
+model AssistantConversation {
+  id             String             @id @default(cuid())
+  organizationId String
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  personId       String
+  person         Person             @relation(fields: [personId], references: [id], onDelete: Cascade)
+  title          String
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  messages       AssistantMessage[]
+
+  @@index([personId, organizationId, updatedAt])
+  @@map("assistant_conversations")
+}
+
+model AssistantMessage {
+  id             String                @id @default(cuid())
+  conversationId String
+  conversation   AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String // 'user' | 'assistant'
+  content        String
+  createdAt      DateTime              @default(now())
+
+  @@index([conversationId, createdAt])
+  @@map("assistant_messages")
 }
 
 /// Registro de auditoria: actor, fecha, motivo y cambio — obligatorio para toda excepcion/intervencion manual
