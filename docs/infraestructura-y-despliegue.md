@@ -129,6 +129,9 @@ compilado a HTML/JS/CSS) — no importa la cercanía geográfica del servidor,
 porque Vercel sirve los archivos ya compilados desde una red global de CDN.
 
 **Cómo verlo:** [vercel.com/chaski-ruta-pe/chaski-ruta](https://vercel.com/chaski-ruta-pe/chaski-ruta)
+— cuenta de Vercel `importstarperuvian-1253` (importstarperuvian@gmail.com),
+equipo "Chaski AI" (`chaski-ruta-pe`). Si la CLI responde "Not authorized",
+la sesión venció: `vercel login` con esa cuenta y luego `vercel --prod`.
 
 **Nota operativa:** el despliegue automático por push a GitHub no está
 conectado para el frontend — cada actualización se sube manualmente por
