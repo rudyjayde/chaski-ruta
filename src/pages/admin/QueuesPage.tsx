@@ -17,6 +17,9 @@ const OPERATIONAL_DATE = 'Jornada ' + new Date().toLocaleDateString('es-PE', { d
 // unidad que hubiera quedado en uno de esos estados tambien pueda salir.
 const CAN_DEPART = new Set(['LLAMADO', 'EN TERMINAL', 'EMBARCANDO', 'LISTO']);
 
+const slotDescription = (entry: QueueEntry | undefined, fallback: string) =>
+  entry?.driverSuspended ? 'Conductor suspendido' : fallback;
+
 const STATUS_COLOR: Record<QueueStatus, string> = {
   PREINSCRITO: 'bg-[#F4F4F5] text-t2',
   INSCRITO: 'bg-primary/10 text-primary',
@@ -116,10 +119,10 @@ function TerminalPositions({
   // Pendiente de definir con Jayde: notificacion de "listos" vs. configuracion
   // por asociacion (ver conversacion de producto, agosto 2026).
   const slots = [
-    { label: 'En cola 2', description: 'Siguiente en turno', entry: waiting[0], tone: 'ramp' as const },
-    { label: 'En cola 3', description: 'Siguiente en turno', entry: waiting[1], tone: 'ramp' as const },
-    { label: 'En cola 4', description: 'En espera', entry: waiting[2], tone: 'outside' as const },
-    { label: 'En cola 5', description: 'En espera', entry: waiting[3], tone: 'outside' as const },
+    { label: 'En cola 2', description: slotDescription(waiting[0], 'Siguiente en turno'), entry: waiting[0], tone: 'ramp' as const },
+    { label: 'En cola 3', description: slotDescription(waiting[1], 'Siguiente en turno'), entry: waiting[1], tone: 'ramp' as const },
+    { label: 'En cola 4', description: slotDescription(waiting[2], 'En espera'), entry: waiting[2], tone: 'outside' as const },
+    { label: 'En cola 5', description: slotDescription(waiting[3], 'En espera'), entry: waiting[3], tone: 'outside' as const },
   ];
   const generalQueue = waiting.slice(4);
   const { org } = useAdminDemo();
@@ -204,7 +207,10 @@ function QueueTable({ entries, allEntries, onSelect }: { entries: QueueEntry[]; 
               <td className="px-4 py-3 text-t2 text-sm">{entry.company}</td>
               <td className="px-4 py-3 text-t2 text-sm">{entry.vehicleType}</td>
               <td className="px-4 py-3 font-mono text-t1 text-sm">{entry.plate}</td>
-              <td className="px-4 py-3 text-t1 text-sm">{entry.driverName}</td>
+              <td className="px-4 py-3 text-t1 text-sm">
+                {entry.driverName}
+                {entry.driverSuspended && <span className="ml-2 px-1.5 py-0.5 rounded text-[11px] font-medium bg-danger/10 text-danger whitespace-nowrap">Suspendido</span>}
+              </td>
               <td className="px-4 py-3 font-mono text-t2 text-sm">{entry.registeredAt}</td>
               <td className="px-4 py-3 text-sm text-t2">{EVIDENCE_LABEL[entry.evidence]}</td>
               <td className="px-4 py-3">
@@ -273,7 +279,7 @@ export default function QueuesPage() {
     return matchSearch && matchStatus;
   });
 
-  const nextInscrito = rawEntries.find(e => e.status === 'INSCRITO');
+  const nextInscrito = rawEntries.find(e => e.status === 'INSCRITO' && !e.driverSuspended);
   const currentlyLlamado = rawEntries.find(e => e.status === 'LLAMADO');
   const canCallNext = !!nextInscrito && !currentlyLlamado;
   const routeCode = tab === 'jp' ? 'JULI_PUNO' : 'PUNO_JULI';
@@ -522,6 +528,12 @@ export default function QueuesPage() {
                 <span>{selected.phone}</span>
               </div>
 
+              {selected.driverSuspended && (
+                <p className="border border-danger/30 bg-danger/5 text-danger rounded-lg px-3 py-2 text-sm">
+                  Conductor suspendido: la unidad conserva su lugar en la cola, pero no opera hasta que lo reactives o le cambies el conductor.
+                </p>
+              )}
+
               {/* Actions */}
               <div className="pt-2 space-y-2">
                 {selected.status === 'PREINSCRITO' && (
@@ -534,7 +546,7 @@ export default function QueuesPage() {
                     Confirmar llegada (GPS)
                   </button>
                 )}
-                {selected.status === 'INSCRITO' && !currentlyLlamado && (
+                {selected.status === 'INSCRITO' && !currentlyLlamado && !selected.driverSuspended && (
                   <button
                     onClick={() => handleCall(selected)}
                     disabled={busyEntryId === selected.id}
@@ -544,7 +556,7 @@ export default function QueuesPage() {
                     Avanzar a LLAMADO
                   </button>
                 )}
-                {CAN_DEPART.has(selected.status) && (
+                {CAN_DEPART.has(selected.status) && !selected.driverSuspended && (
                   <button
                     onClick={() => handleDepart(selected)}
                     disabled={busyEntryId === selected.id}
@@ -677,7 +689,7 @@ export default function QueuesPage() {
                 <p className="text-sm text-muted italic py-6 text-center">Cargando vehículos…</p>
               ) : (
                 vehicles
-                  .filter(v => v.status === 'ACTIVO' && !alreadyQueuedCodes.has(v.code))
+                  .filter(v => v.status === 'ACTIVO' && !v.driverSuspended && !alreadyQueuedCodes.has(v.code))
                   .map(v => (
                     <button
                       key={v.id}
@@ -692,7 +704,7 @@ export default function QueuesPage() {
                     </button>
                   ))
               )}
-              {vehicles.length > 0 && vehicles.filter(v => v.status === 'ACTIVO' && !alreadyQueuedCodes.has(v.code)).length === 0 && (
+              {vehicles.length > 0 && vehicles.filter(v => v.status === 'ACTIVO' && !v.driverSuspended && !alreadyQueuedCodes.has(v.code)).length === 0 && (
                 <p className="text-sm text-muted italic py-6 text-center">No hay unidades activas disponibles para inscribir (todas están en esta cola o desactivadas).</p>
               )}
             </div>

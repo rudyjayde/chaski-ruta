@@ -32,7 +32,7 @@ const TERMINAL_SIN_UBICACION =
 // El hash de la contraseña NUNCA debe llegar al navegador (mismo criterio
 // que people.service.ts / vehicles.service.ts) -- select explicito en vez
 // de "driver: true" / "partner: true" / "currentDriver: true".
-const PERSON_QUEUE_SELECT = { id: true, name: true, dni: true, phone: true, email: true, code: true } as const;
+const PERSON_QUEUE_SELECT = { id: true, name: true, dni: true, phone: true, email: true, code: true, status: true } as const;
 
 const ADVANCE_ORDER = ['INSCRITO', 'LLAMADO', 'EN_TERMINAL', 'EMBARCANDO', 'LISTO'] as const;
 
@@ -43,6 +43,8 @@ const ADVANCE_ORDER = ['INSCRITO', 'LLAMADO', 'EN_TERMINAL', 'EMBARCANDO', 'LIST
 // opcional (el administrador los puede seguir usando si quiere trazabilidad
 // mas fina), pero dejan de ser un requisito bloqueante para "Marcar salida".
 const SELF_SERVICE_STATUSES = new Set(ADVANCE_ORDER.slice(1)); // LLAMADO en adelante
+
+const DRIVER_SUSPENDED = 'El conductor de esta unidad está suspendido. Reactívalo o cambia el conductor para continuar.';
 
 const QUEUE_CHANGED = 'Esta unidad ya cambió de estado. La cola se actualizó, revisa antes de continuar.';
 
@@ -177,8 +179,9 @@ export class QueuesService {
     });
     if (anyLlamando > 0) return;
 
+    // Una unidad con el conductor suspendido conserva su lugar, pero no se la llama.
     const next = await this.prisma.queueEntry.findFirst({
-      where: { organizationId, route, status: 'INSCRITO' },
+      where: { organizationId, route, status: 'INSCRITO', driver: { status: { not: 'SUSPENDIDO' } } },
       orderBy: { position: 'asc' },
     });
     if (!next) return;
@@ -216,6 +219,48 @@ export class QueuesService {
       body: 'Es tu turno. Abre tu manifiesto y registra a tus pasajeros.',
       data: { type: 'LLAMANDO', route },
     });
+  }
+
+  /**
+   * Conductor suspendido con su unidad en LLAMANDO (Mantis 3022, decidido con
+   * Jayde el 6 nov 2026): una suspension no detiene a las demas unidades. La
+   * unidad vuelve a INSCRITO sin perder su posicion, y entra la siguiente.
+   */
+  async pauseSuspendedDriver(organizationId: string, driverId: string) {
+    const calling = await this.prisma.queueEntry.findMany({ where: { organizationId, driverId, status: 'LLAMADO' } });
+    for (const entry of calling) {
+      await this.prisma.queueEntry.update({ where: { id: entry.id }, data: { status: 'INSCRITO' } });
+      await this.prisma.auditEntry.create({
+        data: {
+          organizationId,
+          actorId: null,
+          actorRole: 'SISTEMA',
+          action: 'LLAMANDO_EN_PAUSA_CONDUCTOR_SUSPENDIDO',
+          resource: `Cola ${entry.route}`,
+          resourceId: entry.id,
+          before: 'LLAMADO',
+          after: 'INSCRITO',
+          reason: 'Se suspendio al conductor: la unidad conserva su lugar y la cola pasa a la siguiente',
+        },
+      });
+      await this.maybeAutoPromote(organizationId, entry.route as RouteDir);
+    }
+  }
+
+  /** Tras reactivar o cambiar un conductor: si su cola quedo sin nadie en LLAMANDO, llama a quien corresponda. */
+  async refreshCalling(organizationId: string, owner: { driverId: string } | { vehicleId: string }) {
+    const entries = await this.prisma.queueEntry.findMany({
+      where: { organizationId, status: 'INSCRITO', ...owner },
+      select: { route: true },
+    });
+    for (const route of new Set(entries.map((e) => e.route))) {
+      await this.maybeAutoPromote(organizationId, route as RouteDir);
+    }
+  }
+
+  private async assertDriverNotSuspended(driverId: string) {
+    const driver = await this.prisma.person.findUnique({ where: { id: driverId }, select: { status: true } });
+    if (driver?.status === 'SUSPENDIDO') throw new ForbiddenException(DRIVER_SUSPENDED);
   }
 
   /**
@@ -273,6 +318,7 @@ export class QueuesService {
     }
     const driverId = vehicle.currentDriverId ?? actor.sub;
     const driverPerson = await this.prisma.person.findUnique({ where: { id: driverId } });
+    if (driverPerson?.status === 'SUSPENDIDO') throw new ForbiddenException(DRIVER_SUSPENDED);
 
     // Licencia vencida (QA 20 sept 2026): si el conductor tiene fecha de
     // vencimiento registrada y ya paso, no puede inscribirse. Un conductor
@@ -772,6 +818,7 @@ export class QueuesService {
   async advance(organizationId: string, actor: JwtPayload, entryId: string, dto: AdvanceQueueDto) {
     const entry = await this.getEntryOrThrow(organizationId, entryId);
     if (entry.status === dto.toStatus) throw new ConflictException(QUEUE_CHANGED);
+    await this.assertDriverNotSuspended(entry.driverId);
     if (entry.status !== 'INSCRITO') {
       throw new BadRequestException(`Solo se puede llamar a una unidad inscrita en la cola (esta unidad está en ${entry.status}).`);
     }
@@ -897,6 +944,7 @@ export class QueuesService {
    */
   async prepareTrip(organizationId: string, actor: JwtPayload, entryId: string) {
     const entry = await this.findOwnedEntry(organizationId, actor, entryId);
+    await this.assertDriverNotSuspended(entry.driverId);
     if (entry.status !== 'LLAMADO') {
       throw new BadRequestException('La unidad debe estar Llamada para preparar el manifiesto');
     }
@@ -931,6 +979,7 @@ export class QueuesService {
    */
   async depart(organizationId: string, actor: JwtPayload, entryId: string) {
     const entry = await this.findOwnedEntry(organizationId, actor, entryId);
+    await this.assertDriverNotSuspended(entry.driverId);
     if (!SELF_SERVICE_STATUSES.has(entry.status as (typeof ADVANCE_ORDER)[number])) {
       throw new BadRequestException('La unidad debe estar Llamada (o mas adelante en la fila) para salir a viaje');
     }

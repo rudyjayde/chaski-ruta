@@ -28,6 +28,7 @@ import { JwtService } from '@nestjs/jwt';
 import { GpsService } from '../src/gps/gps.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { QueuesService } from '../src/queues/queues.service';
+import { JwtStrategy } from '../src/auth/jwt.strategy';
 import { validationExceptionFactory } from '../src/common/validation-messages';
 import { hasValidRucCheckDigit } from '../src/common/validators';
 import { routeLabel as routeLabelOf } from '../src/common/route-labels';
@@ -362,6 +363,12 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     check('REGLA: con la orden EN_TRASLADO, la unidad llega a Puno y se inscribe en Puno→Juli', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
     const ordB = await call(T.adminB, 'POST', '/relocations', { fromTerminal: 'PUNO', toTerminal: 'JULI', reason: 'Desbalance de demanda', windowLabel: 'Hoy', compensation: 'Vacío', vehicleIds: [unitB.id] });
     check('REGLA: la primera orden de OTRA asociación se crea sin chocar con la numeración (antes error 500)', ordB.status === 201, `HTTP ${ordB.status} ${msg(ordB)}`);
+    const ordOrgB = await prisma.relocationOrder.count({ where: { organizationId: orgB.id } });
+    r = await call(T.adminB, 'POST', '/relocations', { fromTerminal: 'JULI', toTerminal: 'PUNO', reason: 'Intento con unidad ajena', windowLabel: 'Hoy', compensation: 'Vacío', vehicleIds: [unitB.id, u[0].id] });
+    check('SEGURIDAD: no se puede crear una reubicación con una unidad de OTRA asociación', r.status === 404 && !JSON.stringify(r.json).includes(u[0].plate), `HTTP ${r.status} ${msg(r)}`);
+    check('SEGURIDAD: ese intento no crea ninguna orden', (await prisma.relocationOrder.count({ where: { organizationId: orgB.id } })) === ordOrgB);
+    const ordVehicle = ordB.json?.units?.[0]?.vehicle ?? {};
+    check('SEGURIDAD: la reubicación no expone el equipo GPS ni la SIM de la unidad', !('simNumber' in ordVehicle) && !('traccarDeviceId' in ordVehicle) && ordVehicle.code === unitB.code, Object.keys(ordVehicle).join(','));
     r = await call(T.admin, 'POST', `/relocations/${ord.json.id}/complete`);
     check('completa la reubicación', r.status === 201 && r.json.status === 'COMPLETADA', `HTTP ${r.status} ${msg(r)}`);
 
@@ -537,6 +544,7 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     const tokenV = 'atp_' + Buffer.from(`${dxx.manifest.id}|${dxx.manifest.number}|${u[4].code}`).toString('base64url');
     const ver = await call(T.d[0], 'GET', `/manifests-public/verify/${tokenV}`);
     check('la verificación pública del manifiesto usa el nombre de ruta de SU asociación', ver.status === 200 && ver.json.routeLabel === 'Puno → Juliaca', `HTTP ${ver.status} ${ver.json.routeLabel ?? msg(ver)}`);
+    check('SEGURIDAD: la verificación pública no muestra el DNI completo', ver.json.passengers?.[0]?.dni === '****5671', ver.json.passengers?.[0]?.dni);
     // ─ Celular registrado: solo se registra si la inscripcion sale bien, y solo desde un celular ─
     const dvD = await mk(orgA.id, 'CONDUCTOR', 'Conductor Celular', 77);
     const dvV = await prisma.vehicle.create({ data: { organizationId: orgA.id, code: 'DV77', companyId: coA.id, vehicleType: 'HIACE', plate: `DV${stamp.slice(-1)}-777`, model: 'Toyota Hiace', year: 2024, currentDriverId: dvD.id } });
@@ -1170,6 +1178,63 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     check('la inscripción real queda con evidencia de presencia', realEntry?.evidence === 'PRESENCIA_TERMINAL', `evidencia=${realEntry?.evidence}`);
     const modoAudits = await prisma.auditEntry.count({ where: { organizationId: orgA.id, action: { in: ['MODO_PRESENTACION_ACTIVADO', 'MODO_PRESENTACION_DESACTIVADO'] } } });
     check('encender y apagar el modo quedan en Auditoría', modoAudits === 2, `${modoAudits} registros`);
+
+    // ═════════ U. CONDUCTOR SUSPENDIDO (Mantis 3022) ═════════
+    head('U. Conductor suspendido');
+    await wipeOps();
+    const setStatus = (i: number, status: string) => call(T.admin, 'POST', `/people/${drivers[i].id}/status`, { status, reason: 'prueba de suspensión' });
+    const stateOf = async (id: string) => (await prisma.queueEntry.findUnique({ where: { id } }))?.status;
+
+    const jwtStrategy = app.get(JwtStrategy, { strict: false }) as any;
+    jwtStrategy.cacheMs = 60000;
+    r = await call(T.d[5], 'GET', '/queues/JULI_PUNO');
+    check('antes de suspenderlo, el conductor opera (con el estado en memoria)', r.status === 200, `HTTP ${r.status}`);
+    await setStatus(5, 'SUSPENDIDO');
+    r = await call(T.d[5], 'GET', '/queues/JULI_PUNO');
+    check('la sesión se bloquea al instante, sin esperar a que venza la memoria', r.status === 401, `HTTP ${r.status}`);
+    await setStatus(5, 'ACTIVO');
+    r = await call(T.d[5], 'GET', '/queues/JULI_PUNO');
+    check('al reactivarlo, su sesión vuelve a funcionar al instante', r.status === 200, `HTTP ${r.status}`);
+    jwtStrategy.cacheMs = 0;
+
+    let [p1, p2, p3] = await seedQueue('JULI_PUNO', [0, 1, 2]);
+    await callUnit(p1.id);
+    await setStatus(0, 'SUSPENDIDO');
+    check('al suspender al conductor en LLAMANDO, su unidad vuelve a la cola', (await stateOf(p1.id)) === 'INSCRITO', String(await stateOf(p1.id)));
+    check('la cola avanza sola: entra la siguiente unidad', (await stateOf(p2.id)) === 'LLAMADO' && (await llamados('JULI_PUNO')) === 1, String(await stateOf(p2.id)));
+    check('la unidad conserva su lugar', (await prisma.queueEntry.findUnique({ where: { id: p1.id } }))?.position === 1);
+    const pausaAudit = await prisma.auditEntry.count({ where: { organizationId: orgA.id, action: 'LLAMANDO_EN_PAUSA_CONDUCTOR_SUSPENDIDO', resourceId: p1.id } });
+    check('la pausa queda en Auditoría', pausaAudit === 1, `${pausaAudit} registros`);
+    r = await callUnit(p1.id);
+    check('no se puede llamar a la unidad de un conductor suspendido', r.status === 403 && /suspendido/.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    r = await call(T.admin, 'POST', `/queues/entries/${p1.id}/depart`);
+    check('no se puede marcar la salida de esa unidad', r.status === 403 && /suspendido/.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    r = await call(T.admin, 'POST', `/queues/entries/${p1.id}/prepare-trip`);
+    check('no se puede preparar su viaje', r.status === 403 && /suspendido/.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    r = await call(T.admin, 'GET', '/queues/JULI_PUNO');
+    check('el administrador ve que el conductor está suspendido', r.json?.find((e: any) => e.id === p1.id)?.driver?.status === 'SUSPENDIDO');
+    r = await call(T.d[2], 'GET', '/queues/JULI_PUNO');
+    check('otro conductor no recibe el estado de la cuenta ajena', r.json?.find((e: any) => e.id === p1.id)?.driver?.status === undefined);
+
+    await call(T.admin, 'POST', `/queues/entries/${p2.id}/declare-later`);
+    check('con la unidad en pausa, el llamado automático la salta', (await stateOf(p3.id)) === 'LLAMADO' && (await stateOf(p1.id)) === 'INSCRITO', `${await stateOf(p1.id)} ${await stateOf(p3.id)}`);
+    await setStatus(0, 'ACTIVO');
+    check('al reactivarlo no le quita el turno a la unidad en LLAMANDO', (await stateOf(p3.id)) === 'LLAMADO' && (await stateOf(p1.id)) === 'INSCRITO');
+    await call(T.admin, 'POST', `/queues/entries/${p3.id}/declare-later`);
+    check('reactivado, recupera su lugar y le toca a él', (await stateOf(p1.id)) === 'LLAMADO', String(await stateOf(p1.id)));
+
+    await wipeOps();
+    await setStatus(0, 'SUSPENDIDO');
+    r = await call(T.admin, 'POST', '/queues/JULI_PUNO/join', { vehicleId: u[0].id, ...JULI });
+    check('no se puede inscribir la unidad de un conductor suspendido', r.status === 403 && /suspendido/.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    [p1] = await seedQueue('JULI_PUNO', [0]);
+    r = await call(T.admin, 'POST', `/vehicles/${u[1].id}/change-driver`, { currentDriverId: drivers[0].id, reason: 'prueba' });
+    check('no se puede asignar a un conductor suspendido', r.status === 400 && /suspendido/.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    r = await call(T.admin, 'POST', `/vehicles/${u[0].id}/change-driver`, { currentDriverId: drivers[6].id, reason: 'prueba' });
+    const reasignada = await prisma.queueEntry.findUnique({ where: { id: p1.id } });
+    check('al cambiar el conductor, la unidad retoma su lugar con el conductor nuevo', r.status === 201 && reasignada?.driverId === drivers[6].id && reasignada?.status === 'LLAMADO', `HTTP ${r.status} ${reasignada?.status}`);
+    await prisma.vehicle.update({ where: { id: u[0].id }, data: { currentDriverId: drivers[0].id } });
+    await setStatus(0, 'ACTIVO');
 
     await prisma.queueEntry.deleteMany({ where: { organizationId: orgA.id } });
     const orphanPos = await prisma.queueEntry.count({ where: { organizationId: orgA.id } });

@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 import type { AuthUser, Role } from '../types';
+import { SESSION_ENDED_EVENT } from '../lib/error-notice';
 
 const TOKEN_KEY = 'chaski-auth-token';
 
@@ -237,6 +238,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(TOKEN_KEY);
     setUser(null);
   }, []);
+
+  // Mantis 3022: un rechazo 401 significa que esta sesion ya no vale, asi que la
+  // pantalla no sigue mostrando el panel como si nada.
+  useEffect(() => {
+    window.addEventListener(SESSION_ENDED_EVENT, logout);
+    return () => window.removeEventListener(SESSION_ENDED_EVENT, logout);
+  }, [logout]);
 
   const refreshUser = useCallback(async () => {
     const token = localStorage.getItem(TOKEN_KEY);

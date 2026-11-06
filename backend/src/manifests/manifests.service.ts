@@ -625,7 +625,8 @@ Reglas estrictas:
       passengers: manifest.passengers.map((p) => ({
         seat: p.seat,
         name: p.name,
-        dni: p.dni,
+        // Pagina publica, abierta a quien tenga el enlace: nunca el documento completo (Ley 29733).
+        dni: `****${p.dni.slice(-4)}`,
         origin: p.origin,
         destination: p.destination,
         fare: p.fare,

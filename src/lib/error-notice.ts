@@ -37,6 +37,9 @@ export function subscribeErrorNotice(fn: Listener) {
   };
 }
 
+// La sesion dejo de valer (cuenta suspendida o eliminada, token vencido): AuthContext la cierra.
+export const SESSION_ENDED_EVENT = 'chaski:session-ended';
+
 export const CONNECTION_ERROR = 'No se pudo conectar con el servidor. Revisa tu internet e inténtalo de nuevo.';
 
 // Textos por defecto del servidor (en ingles, o sin explicacion). Los mensajes

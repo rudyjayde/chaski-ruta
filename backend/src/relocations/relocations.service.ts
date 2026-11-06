@@ -9,6 +9,12 @@ import { nextSequenceNumber } from '../common/sequence';
 // de "currentDriver: true".
 const PERSON_NAME_SELECT = { id: true, name: true } as const;
 
+// Solo lo que muestran las pantallas de reubicacion: nunca el vehiculo entero,
+// que trae el equipo GPS y el numero de SIM (Mantis 3020).
+const UNITS_INCLUDE = {
+  units: { include: { vehicle: { select: { id: true, code: true, plate: true, currentDriver: { select: PERSON_NAME_SELECT } } } } },
+} as const;
+
 @Injectable()
 export class RelocationsService {
   constructor(private prisma: PrismaService) {}
@@ -16,7 +22,7 @@ export class RelocationsService {
   findMany(organizationId: string) {
     return this.prisma.relocationOrder.findMany({
       where: { organizationId },
-      include: { units: { include: { vehicle: { include: { currentDriver: { select: PERSON_NAME_SELECT } } } } } },
+      include: UNITS_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -24,7 +30,7 @@ export class RelocationsService {
   async findOne(organizationId: string, id: string) {
     const order = await this.prisma.relocationOrder.findUnique({
       where: { id },
-      include: { units: { include: { vehicle: { include: { currentDriver: { select: PERSON_NAME_SELECT } } } } } },
+      include: UNITS_INCLUDE,
     });
     if (!order || order.organizationId !== organizationId) {
       throw new NotFoundException('Orden de reubicacion no encontrada');
@@ -33,6 +39,14 @@ export class RelocationsService {
   }
 
   async create(organizationId: string, actor: JwtPayload, dto: CreateRelocationDto) {
+    // Mantis 3020: sin esto, una asociacion podia crear una orden con el id de una unidad
+    // ajena y la respuesta le devolvia sus datos. Es el unico id que entra por el cuerpo aqui.
+    const vehicleIds = [...new Set(dto.vehicleIds)];
+    const owned = await this.prisma.vehicle.count({ where: { id: { in: vehicleIds }, organizationId } });
+    if (owned !== vehicleIds.length) {
+      throw new NotFoundException('Alguna de las unidades no existe en esta asociacion');
+    }
+
     // internalOrder es unico en TODO el sistema (no por asociacion): se calcula
     // sobre el maximo global y se reintenta si dos ordenes chocan a la vez.
     let order;
@@ -49,9 +63,9 @@ export class RelocationsService {
             windowLabel: dto.windowLabel,
             compensation: dto.compensation,
             internalOrder,
-            units: { create: dto.vehicleIds.map((vehicleId) => ({ vehicleId })) },
+            units: { create: vehicleIds.map((vehicleId) => ({ vehicleId })) },
           },
-          include: { units: { include: { vehicle: { include: { currentDriver: { select: PERSON_NAME_SELECT } } } } } },
+          include: UNITS_INCLUDE,
         });
         break;
       } catch (err) {

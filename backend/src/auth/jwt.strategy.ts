@@ -58,6 +58,11 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     return payload;
   }
 
+  // Al suspender o eliminar a alguien no se espera a que venza la memoria (Mantis 3022).
+  forgetStatus(personId: string) {
+    this.statusCache.delete(personId);
+  }
+
   private async isStillAllowed(personId: string): Promise<boolean> {
     const now = Date.now();
     const cached = this.statusCache.get(personId);

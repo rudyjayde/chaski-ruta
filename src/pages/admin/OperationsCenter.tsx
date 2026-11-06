@@ -187,7 +187,7 @@ export default function OperationsCenter({ onNavigate }: Props) {
   const FLEET_EN_RUTA_PJ = useMemo(() => trips.filter(t => t.route === 'PUNO_JULI' && ['ACTIVO', 'CON_INCIDENCIA'].includes(t.status)), [trips]);
 
   // Una sola unidad LLAMADO por cola: mientras haya una, no se ofrece llamar a otra.
-  const nextToCall = queueJP.some(e => e.status === 'LLAMADO') ? undefined : queueJP.find(e => e.status === 'INSCRITO');
+  const nextToCall = queueJP.some(e => e.status === 'LLAMADO') ? undefined : queueJP.find(e => e.status === 'INSCRITO' && !e.driverSuspended);
   const activeTrips = trips.filter(t => t.status === 'ACTIVO');
   const openManifests = manifests.filter(m => m.status === 'BORRADOR').length;
   const totalPassengers = manifests.reduce((s, m) => s + m.passengers.length, 0);

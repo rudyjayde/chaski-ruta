@@ -8,7 +8,7 @@ import type {
   DelayedRegistrationRequest, DelayedRegistrationStatus, DelayedRegistrationResolution,
 } from '../types';
 import { getActingOrgId } from './acting-org';
-import { CONNECTION_ERROR, friendlyErrorMessage, showErrorNotice } from './error-notice';
+import { CONNECTION_ERROR, SESSION_ENDED_EVENT, friendlyErrorMessage, showErrorNotice } from './error-notice';
 
 const TOKEN_KEY = 'chaski-auth-token';
 const DEVICE_ID_KEY = 'chaski-device-id';
@@ -97,6 +97,12 @@ async function request<T>(path: string, options: RequestInit & { silent?: boolea
       // sin cuerpo JSON, se usa el mensaje generico
     }
     const error = new ApiError(friendlyErrorMessage(res.status, message), data);
+    // Tambien en lecturas: puede ser lo primero que note que la cuenta fue suspendida.
+    if (res.status === 401 && token) {
+      showErrorNotice(error.message);
+      window.dispatchEvent(new Event(SESSION_ENDED_EVENT));
+      throw error;
+    }
     if (notifies && !(error.code && CODES_WITH_OWN_FLOW.has(error.code))) showErrorNotice(error.message);
     throw error;
   }
@@ -186,7 +192,7 @@ interface RawVehicle {
   vehicleType: VehicleType;
   company?: { name: string } | null;
   partner?: { id: string; name: string; dni: string | null; code: string | null } | null;
-  currentDriver?: { id: string; name: string } | null;
+  currentDriver?: { id: string; name: string; status?: string } | null;
   plateHistory?: { plate: string; fromDate: string; toDate: string | null }[];
   traccarDeviceId?: string | null;
   simOperator?: string | null;
@@ -200,6 +206,7 @@ interface RawVehicle {
 interface RawPerson {
   id: string;
   name: string;
+  status?: string;
   dni: string | null;
   phone: string | null;
   email: string;
@@ -273,6 +280,7 @@ function mapQueueEntry(raw: RawQueueEntry): QueueEntry {
     vehicleType: raw.vehicle?.vehicleType ?? 'SPRINTER',
     plate: raw.vehicle?.plate ?? '—',
     driverName: raw.driver?.name ?? '',
+    driverSuspended: raw.driver?.status === 'SUSPENDIDO',
     partnerName: raw.vehicle?.partner?.name ?? raw.driver?.name ?? '',
     partnerDni: raw.vehicle?.partner?.dni ?? raw.driver?.dni ?? '',
     phone: raw.driver?.phone ?? '',
@@ -552,6 +560,7 @@ export async function fetchVehicles(route?: RouteDir, organizationId?: string, i
     route: v.routeAssignment as Unit['route'],
     partnerId: v.partner?.id,
     currentDriverId: v.currentDriver?.id,
+    driverSuspended: v.currentDriver?.status === 'SUSPENDIDO',
     traccarDeviceId: v.traccarDeviceId ?? undefined,
     simOperator: v.simOperator ?? undefined,
     simNumber: v.simNumber ?? undefined,

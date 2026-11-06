@@ -10,6 +10,8 @@ import { isValidDocument, licenseDatesProblem } from '../common/validators';
 import { JwtPayload } from '../auth/jwt.strategy';
 import { MailService } from '../mail/mail.service';
 import { AuthService } from '../auth/auth.service';
+import { JwtStrategy } from '../auth/jwt.strategy';
+import { QueuesService } from '../queues/queues.service';
 
 // "12345678" -> "******78": en Auditoria nunca queda un documento completo.
 function maskId(value?: string | null): string {
@@ -23,6 +25,8 @@ export class PeopleService {
     private prisma: PrismaService,
     private mail: MailService,
     private auth: AuthService,
+    private jwt: JwtStrategy,
+    private queues: QueuesService,
   ) {}
 
   // El hash NUNCA debe llegar al navegador (ni al del admin que consulta a
@@ -262,6 +266,7 @@ export class PeopleService {
         },
       });
     });
+    this.jwt.forgetStatus(personId);
     return { ok: true, name: person.name };
   }
 
@@ -273,6 +278,7 @@ export class PeopleService {
       data: { status: dto.status },
       select: PeopleService.SAFE_SELECT,
     });
+    this.jwt.forgetStatus(personId);
     await this.prisma.auditEntry.create({
       data: {
         organizationId,
@@ -286,6 +292,9 @@ export class PeopleService {
         reason: dto.reason,
       },
     });
+
+    if (dto.status === 'SUSPENDIDO') await this.queues.pauseSuspendedDriver(organizationId, personId);
+    else await this.queues.refreshCalling(organizationId, { driverId: personId });
 
     // Reactivacion real (13 sept 2026, decidido con Jayde): para la persona
     // es como si la registraran de nuevo -- avisa igual que el alta, con

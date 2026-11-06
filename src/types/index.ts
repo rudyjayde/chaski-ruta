@@ -42,6 +42,7 @@ export interface QueueEntry {
   vehicleType: VehicleType;
   plate: string;
   driverName: string;
+  driverSuspended?: boolean;
   partnerName: string;
   partnerDni: string;
   phone: string;
@@ -176,6 +177,7 @@ export interface Unit {
   route: RouteDir | 'AMBAS';
   partnerId?: string;
   currentDriverId?: string;
+  driverSuspended?: boolean;
   // GPS PRO / GPS Vehicular: uniqueId del dispositivo Traccar vinculado a esta
   // unidad (normalmente el IMEI del Teltonika). Undefined = sin GPS real todavia.
   traccarDeviceId?: string;

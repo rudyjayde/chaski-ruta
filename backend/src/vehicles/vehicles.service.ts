@@ -10,6 +10,7 @@ import { SetGpsDeviceDto } from './dto/set-gps-device.dto';
 import { SetGpsVehicularPlanDto } from './dto/set-gps-vehicular-plan.dto';
 import { SetMaintenanceDto } from './dto/set-maintenance.dto';
 import { JwtPayload } from '../auth/jwt.strategy';
+import { QueuesService } from '../queues/queues.service';
 import { isStaff, redactPerson } from '../common/redact';
 
 // El hash de la contraseña NUNCA debe llegar al navegador (mismo criterio
@@ -39,7 +40,10 @@ const PERSON_SAFE_SELECT = {
 
 @Injectable()
 export class VehiclesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private queues: QueuesService,
+  ) {}
 
   // Socios y conductores ven la flota (codigos, placas, nombres) pero no el DNI, celular ni correo de los
   // demas, ni el equipo GPS de unidades ajenas. Antes recibian todo de todos.
@@ -252,6 +256,9 @@ export class VehiclesService {
     if (!driver || driver.organizationId !== organizationId || driver.role !== 'CONDUCTOR') {
       throw new BadRequestException('El conductor indicado no pertenece a esta asociacion');
     }
+    if (driver.status === 'SUSPENDIDO') {
+      throw new BadRequestException(`${driver.name} está suspendido. Reactívalo o elige otro conductor.`);
+    }
     const updated = await this.prisma.vehicle.update({
       where: { id: vehicleId },
       data: { currentDriverId: dto.currentDriverId },
@@ -270,6 +277,13 @@ export class VehiclesService {
         reason: dto.reason,
       },
     });
+    // La inscripcion vigente pasa al conductor nuevo: una unidad en pausa por su
+    // conductor suspendido retoma su lugar en la cola.
+    await this.prisma.queueEntry.updateMany({
+      where: { organizationId, vehicleId, status: { notIn: ['SALIO', 'AUSENTE', 'RETIRADO'] } },
+      data: { driverId: dto.currentDriverId },
+    });
+    await this.queues.refreshCalling(organizationId, { vehicleId });
     return updated;
   }
 
