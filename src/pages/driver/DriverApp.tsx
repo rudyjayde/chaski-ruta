@@ -1599,7 +1599,7 @@ function DriverManifest() {
     setOpeningManifest(true);
     setActionError('');
     try {
-      await openManifest(myTrip.id, seatMapCapacity(myTrip.vehicleType));
+      await openManifest(myTrip.id);
       await reload();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'No se pudo abrir el manifiesto');

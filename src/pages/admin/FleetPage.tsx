@@ -11,7 +11,7 @@ import {
 import type { Person, Unit } from '../../types';
 import { useAdminDemo } from './AdminApp';
 import { PLATE_ERROR, YEAR_ERROR, isValidPlate, isValidYear, sanitizePlate, sanitizeYear, yearMax, YEAR_MIN } from '../../lib/validators';
-import { VEHICLE_BRANDS, findVehicleBrand } from '../../lib/vehicle-catalog';
+import { VEHICLE_BRANDS, findVehicleBrand, passengerSeats } from '../../lib/vehicle-catalog';
 
 const UNIT_STATUS_STYLE: Record<string, string> = {
   ACTIVO: 'bg-ok/10 text-ok',
@@ -239,8 +239,8 @@ function UnitDetailPanel({ unit, people, gpsStatus, onClose, onChanged }: {
               { label: 'Modelo', value: unit.model },
               { label: 'Año', value: String(unit.year) },
               { label: 'Placa actual', value: unit.plate, mono: true },
-              { label: 'Cap. física', value: `${unit.vehicleType === 'SPRINTER' ? 20 : 15} pax` },
-              { label: 'Cap. vendible', value: `${unit.vehicleType === 'SPRINTER' ? 19 : 14} pax (excl. conductor)` },
+              { label: 'Cap. física', value: `${passengerSeats(unit.vehicleType) + 1} asientos (con conductor)` },
+              { label: 'Cap. vendible', value: `${passengerSeats(unit.vehicleType)} pasajeros` },
               { label: 'Historial de placas', value: `${unit.plateHistory.length} registros` },
             ].map(row => (
               <div key={row.label} className="flex justify-between px-3 py-2">

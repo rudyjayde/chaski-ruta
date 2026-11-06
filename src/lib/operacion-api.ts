@@ -404,8 +404,8 @@ export async function fetchManifests(): Promise<Manifest[]> {
   return raw.map(mapManifest);
 }
 
-export async function openManifest(tripId: string, capacity: number): Promise<Manifest> {
-  const raw = await request<RawManifest>('/manifests', { method: 'POST', body: JSON.stringify({ tripId, capacity }) });
+export async function openManifest(tripId: string): Promise<Manifest> {
+  const raw = await request<RawManifest>('/manifests', { method: 'POST', body: JSON.stringify({ tripId }) });
   return mapManifest(raw);
 }
 

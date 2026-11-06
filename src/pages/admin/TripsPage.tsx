@@ -3,6 +3,7 @@ import { Search, MapPin, AlertCircle, Loader2, CheckCircle2, FilePlus2, X, Ban }
 import { fetchTrips, completeTrip, cancelTrip, openManifest, routeLabel } from '../../lib/operacion-api';
 import type { Trip, TripStatus } from '../../types';
 import { useAdminDemo } from './AdminApp';
+import { passengerSeats } from '../../lib/vehicle-catalog';
 
 const STATUS_STYLE: Record<TripStatus, { label: string; cls: string }> = {
   PROGRAMADO: { label: 'Programado', cls: 'bg-t2/10 text-t2' },
@@ -28,7 +29,6 @@ export default function TripsPage() {
   const [loadError, setLoadError] = useState('');
   const [busyTripId, setBusyTripId] = useState<string | null>(null);
   const [manifestTrip, setManifestTrip] = useState<Trip | null>(null);
-  const [capacityInput, setCapacityInput] = useState('19');
   const [openingManifest, setOpeningManifest] = useState(false);
   const [cancelTripTarget, setCancelTripTarget] = useState<Trip | null>(null);
   const [cancelReason, setCancelReason] = useState('');
@@ -89,15 +89,10 @@ export default function TripsPage() {
 
   const handleOpenManifest = async () => {
     if (!manifestTrip) return;
-    const capacity = Number(capacityInput);
-    if (!Number.isInteger(capacity) || capacity <= 0) {
-      setLoadError('La capacidad tiene que ser un número entero mayor a 0');
-      return;
-    }
     setOpeningManifest(true);
     setLoadError('');
     try {
-      await openManifest(manifestTrip.id, capacity);
+      await openManifest(manifestTrip.id);
       await reload();
       setManifestTrip(null);
     } catch (err) {
@@ -234,7 +229,7 @@ export default function TripsPage() {
                     )}
                     {!t.manifestId && (
                       <button
-                        onClick={e => { e.stopPropagation(); setManifestTrip(t); setCapacityInput(String(t.vehicleType === 'SPRINTER' ? 20 : 15)); }}
+                        onClick={e => { e.stopPropagation(); setManifestTrip(t); }}
                         className="flex items-center gap-1.5 px-2 py-1 border border-primary text-primary rounded text-xs font-medium hover:bg-primary/5"
                         title="Abrir el manifiesto de este viaje"
                       >
@@ -278,14 +273,10 @@ export default function TripsPage() {
             <p className="text-sm text-t2 mb-4">
               Código {manifestTrip.code} — {manifestTrip.driverName} · {routeLabel(manifestTrip.route, org)}
             </p>
-            <label className="block text-sm font-medium text-t1 mb-1">Capacidad vendible <span className="text-danger">*</span></label>
-            <input
-              type="number"
-              min={1}
-              value={capacityInput}
-              onChange={e => setCapacityInput(e.target.value)}
-              className="w-full h-9 px-3 border border-border rounded-lg text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-primary"
-            />
+            <div className="flex justify-between border border-border rounded-lg px-3 py-2 text-sm mb-4">
+              <span className="text-t2">Capacidad vendible</span>
+              <span className="text-t1 font-medium">{passengerSeats(manifestTrip.vehicleType)} pasajeros</span>
+            </div>
             <div className="flex gap-3 justify-end">
               <button onClick={() => setManifestTrip(null)} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-hover">Cancelar</button>
               <button

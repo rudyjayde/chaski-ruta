@@ -11,6 +11,7 @@ import { DigitizeSuggestDto } from './dto/digitize-suggest.dto';
 import { AnthropicService } from '../ai/anthropic.service';
 import { MailService } from '../mail/mail.service';
 import { nextSequenceNumber } from '../common/sequence';
+import { passengerSeats } from '../vehicles/vehicle-catalog';
 
 // El hash de la contraseña NUNCA debe llegar al navegador (mismo criterio
 // que people.service.ts / vehicles.service.ts) -- select explicito en vez
@@ -122,7 +123,8 @@ export class ManifestsService {
       departureTime: trip.actualDeparture
         ? trip.actualDeparture.toISOString().slice(11, 16)
         : new Date().toISOString().slice(11, 16),
-      capacity: dto.capacity,
+      // Doc maestro 6.5: la capacidad procede del vehiculo, nunca de lo que mande la pantalla.
+      capacity: passengerSeats(trip.vehicle.vehicleType),
     });
 
     await this.prisma.auditEntry.create({

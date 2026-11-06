@@ -11,6 +11,12 @@ export const VEHICLE_CATALOG = [
 
 export type VehicleTypeCode = (typeof VEHICLE_CATALOG)[number]['type'];
 
+// Pasajeros vendibles, sin contar al conductor (Jayde, 6 nov 2026): Hiace y Master
+// llevan 16 asientos en total y Sprinter 21. Igual que el mapa de SeatMap.tsx.
+export function passengerSeats(vehicleType: string): number {
+  return vehicleType === 'SPRINTER' ? 20 : 15;
+}
+
 // Valor guardado en Vehicle.model: "Mercedes Benz Sprinter".
 export const VEHICLE_MODELS: string[] = VEHICLE_CATALOG.map((v) => `${v.brand} ${v.model}`);
 

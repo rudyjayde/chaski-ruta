@@ -16,4 +16,8 @@ export const VEHICLE_BRANDS: VehicleBrand[] = [
   { brand: 'Toyota', model: 'Hiace', type: 'HIACE' },
 ];
 
+// Pasajeros vendibles, sin contar al conductor: igual que el mapa de SeatMap.tsx y
+// que passengerSeats() en backend/src/vehicles/vehicle-catalog.ts.
+export const passengerSeats = (vehicleType: string) => (vehicleType === 'SPRINTER' ? 20 : 15);
+
 export const findVehicleBrand = (brand: string) => VEHICLE_BRANDS.find(b => b.brand === brand);
