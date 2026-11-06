@@ -27,6 +27,7 @@ import { AuthService } from '../src/auth/auth.service';
 import { JwtService } from '@nestjs/jwt';
 import { GpsService } from '../src/gps/gps.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { QueuesService } from '../src/queues/queues.service';
 import { validationExceptionFactory } from '../src/common/validation-messages';
 import { hasValidRucCheckDigit } from '../src/common/validators';
 import { routeLabel as routeLabelOf } from '../src/common/route-labels';
@@ -1040,11 +1041,82 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
 
     // ═════════ J. CONSISTENCIA FINAL ═════════
     head('J. Consistencia de datos');
+    // Se cuenta ANTES de borrar: al reves esta verificacion siempre daba 0.
+    const dupLlamado = await Promise.all(['JULI_PUNO', 'PUNO_JULI'].map((rt) => prisma.queueEntry.count({ where: { organizationId: orgA.id, route: rt as any, status: 'LLAMADO' } })));
+    check('nunca hay dos unidades LLAMADO en la misma cola', dupLlamado.every((n) => n <= 1));
+
+    // ═════════ S. UNA SOLA UNIDAD LLAMADO POR COLA (Mantis 3017) ═════════
+    head('S. Una sola unidad LLAMADO por cola');
+    const ROUNDS = 10;
+    const seedQueue = async (route: 'JULI_PUNO' | 'PUNO_JULI', units: number[]) => {
+      await prisma.queueEntry.deleteMany({ where: { organizationId: orgA.id, route } });
+      const made = [];
+      for (const [pos, i] of units.entries()) {
+        made.push(await prisma.queueEntry.create({ data: { organizationId: orgA.id, route, position: pos + 1, vehicleId: u[i].id, driverId: u[i].currentDriverId, status: 'INSCRITO' } }));
+      }
+      return made;
+    };
+    const callUnit = (id: string) => call(T.admin, 'POST', `/queues/entries/${id}/advance`, { toStatus: 'LLAMADO' });
+    const llamados = (route: string) => prisma.queueEntry.count({ where: { organizationId: orgA.id, route: route as any, status: 'LLAMADO' } });
+    const calledAudits = (ids: string[]) => prisma.auditEntry.count({ where: { organizationId: orgA.id, action: 'AVANZAR_COLA_LLAMADO', resourceId: { in: ids } } });
+    const clearAudits = (ids: string[]) => prisma.auditEntry.deleteMany({ where: { organizationId: orgA.id, resourceId: { in: ids } } });
+
+    let [a, b] = await seedQueue('JULI_PUNO', [0, 1]);
+    r = await callUnit(a.id);
+    check('se llama a la primera unidad', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    r = await callUnit(b.id);
+    check('con una unidad LLAMANDO, no se puede llamar a otra', r.status === 409, `HTTP ${r.status} ${msg(r)}`);
+    check('el mensaje dice qué unidad está LLAMANDO', msg(r).includes(u[0].code), msg(r));
+    r = await callUnit(a.id);
+    check('volver a llamar a la misma unidad (pantalla vieja) da 409, no 400', r.status === 409, `HTTP ${r.status} ${msg(r)}`);
+
+    const [other] = await seedQueue('PUNO_JULI', [2]);
+    r = await callUnit(other.id);
+    check('la otra cola tiene su propia unidad LLAMANDO', r.status === 201 && (await llamados('JULI_PUNO')) === 1 && (await llamados('PUNO_JULI')) === 1, `HTTP ${r.status} ${msg(r)}`);
+    await prisma.queueEntry.deleteMany({ where: { organizationId: orgA.id, route: 'PUNO_JULI' } });
+
+    let sameOk = true; let sameDetail = '';
+    for (let n = 0; n < ROUNDS && sameOk; n++) {
+      [a] = await seedQueue('JULI_PUNO', [0]);
+      await clearAudits([a.id]);
+      const codes = (await Promise.all([callUnit(a.id), callUnit(a.id)])).map((x) => x.status).sort();
+      const audits = await calledAudits([a.id]);
+      sameOk = codes[0] === 201 && codes[1] === 409 && audits === 1 && (await llamados('JULI_PUNO')) === 1;
+      sameDetail = `ronda ${n + 1}: HTTP ${codes.join('/')}, ${audits} auditorías`;
+    }
+    check(`dos administradores llaman a la MISMA unidad a la vez: 1 éxito y 1 rechazo (${ROUNDS} rondas)`, sameOk, sameDetail);
+
+    let diffOk = true; let diffDetail = '';
+    for (let n = 0; n < ROUNDS && diffOk; n++) {
+      [a, b] = await seedQueue('JULI_PUNO', [0, 1]);
+      await clearAudits([a.id, b.id]);
+      const codes = (await Promise.all([callUnit(a.id), callUnit(b.id)])).map((x) => x.status).sort();
+      const audits = await calledAudits([a.id, b.id]);
+      diffOk = codes[0] === 201 && codes[1] === 409 && audits === 1 && (await llamados('JULI_PUNO')) === 1;
+      diffDetail = `ronda ${n + 1}: HTTP ${codes.join('/')}, ${audits} auditorías`;
+    }
+    check(`dos administradores llaman a unidades DISTINTAS a la vez: 1 éxito y 1 rechazo (${ROUNDS} rondas)`, diffOk, diffDetail);
+
+    const queues = app.get(QueuesService) as any;
+    let autoOk = true; let autoDetail = '';
+    for (let n = 0; n < ROUNDS && autoOk; n++) {
+      const ids = (await seedQueue('JULI_PUNO', [0, 1])).map((e) => e.id);
+      await prisma.auditEntry.deleteMany({ where: { organizationId: orgA.id, action: 'AUTO_LLAMANDO_COLA_VACIA' } });
+      await Promise.all([1, 2, 3, 4].map(() => queues.maybeAutoPromote(orgA.id, 'JULI_PUNO')));
+      const audits = await prisma.auditEntry.count({ where: { organizationId: orgA.id, action: 'AUTO_LLAMANDO_COLA_VACIA', resourceId: { in: ids } } });
+      autoOk = audits === 1 && (await llamados('JULI_PUNO')) === 1;
+      autoDetail = `ronda ${n + 1}: ${audits} auditorías, ${await llamados('JULI_PUNO')} LLAMADO`;
+    }
+    check(`el llamado automático simultáneo deja una sola unidad y un solo registro (${ROUNDS} rondas)`, autoOk, autoDetail);
+
+    [a, b] = await seedQueue('JULI_PUNO', [0, 1]);
+    await prisma.queueEntry.update({ where: { id: a.id }, data: { status: 'LLAMADO' } });
+    const dbCode = await prisma.queueEntry.update({ where: { id: b.id }, data: { status: 'LLAMADO' } }).then(() => null, (e: any) => e.code);
+    check('la base de datos rechaza una segunda unidad LLAMADO aunque se salte el backend', dbCode === 'P2002', `código ${dbCode}`);
+
     await prisma.queueEntry.deleteMany({ where: { organizationId: orgA.id } });
     const orphanPos = await prisma.queueEntry.count({ where: { organizationId: orgA.id } });
     check('no quedan inscripciones sueltas al limpiar', orphanPos === 0);
-    const dupLlamado = await Promise.all(['JULI_PUNO', 'PUNO_JULI'].map((rt) => prisma.queueEntry.count({ where: { organizationId: orgA.id, route: rt as any, status: 'LLAMADO' } })));
-    check('nunca hay dos unidades LLAMADO en la misma cola', dupLlamado.every((n) => n <= 1));
     const audits = await prisma.auditEntry.count({ where: { organizationId: orgA.id, action: { in: ['INSCRIPCION_COLA', 'DESPACHAR_VIAJE', 'ABRIR_MANIFIESTO', 'COMPLETAR_VIAJE'] } } });
     check('las acciones importantes quedaron en Auditoría', audits >= 8, `${audits} registros`);
   } catch (e: any) {

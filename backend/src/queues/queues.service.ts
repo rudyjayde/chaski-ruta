@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { GpsService } from '../gps/gps.service';
 import { JwtPayload } from '../auth/jwt.strategy';
@@ -43,6 +43,13 @@ const ADVANCE_ORDER = ['INSCRITO', 'LLAMADO', 'EN_TERMINAL', 'EMBARCANDO', 'LIST
 // opcional (el administrador los puede seguir usando si quiere trazabilidad
 // mas fina), pero dejan de ser un requisito bloqueante para "Marcar salida".
 const SELF_SERVICE_STATUSES = new Set(ADVANCE_ORDER.slice(1)); // LLAMADO en adelante
+
+const QUEUE_CHANGED = 'Esta unidad ya cambió de estado. La cola se actualizó, revisa antes de continuar.';
+
+function alreadyCalling(code?: string): string {
+  const unit = code ? `la unidad ${code}` : 'otra unidad';
+  return `En esta cola ya está LLAMANDO ${unit}. Solo puede haber una a la vez.`;
+}
 
 // Cuanto hacia atras se mira para la cadena de predecesores (una jornada de trabajo). Es un
 // limite razonable, no una cifra del documento maestro.
@@ -176,10 +183,21 @@ export class QueuesService {
     });
     if (!next) return;
 
-    await this.prisma.queueEntry.update({
-      where: { id: next.id },
-      data: { status: 'LLAMADO' },
-    });
+    // Dos acciones simultaneas pueden llegar hasta aqui a la vez. Solo la que
+    // realmente hace el cambio audita y avisa al conductor; si otra ya lleno el
+    // unico LLAMADO de esta cola, el indice unico rechaza esta y no pasa nada.
+    let promoted: number;
+    try {
+      ({ count: promoted } = await this.prisma.queueEntry.updateMany({
+        where: { id: next.id, status: 'INSCRITO' },
+        data: { status: 'LLAMADO' },
+      }));
+    } catch (err) {
+      if ((err as { code?: string }).code === 'P2002') return;
+      throw err;
+    }
+    if (promoted === 0) return;
+
     await this.prisma.auditEntry.create({
       data: {
         organizationId,
@@ -733,29 +751,57 @@ export class QueuesService {
     return this.prisma.queueEntry.findUniqueOrThrow({ where: { id: entryId } });
   }
 
-  /** Transiciones manuales del gerente: llamar, marcar en terminal, embarcando, listo. */
+  /**
+   * Transiciones manuales del gerente: llamar, marcar en terminal, embarcando, listo.
+   *
+   * Mantis 3017 (6 nov 2026): cada cola tiene una sola unidad LLAMADO (la que
+   * esta llenando pasajeros), y dos administradores pueden pedir el mismo
+   * cambio a la vez. La escritura solo aplica si el estado sigue siendo el que
+   * se leyo, y el indice unico queue_entries_un_llamado_por_cola cubre lo que
+   * esta lectura previa no ve: dos llamados simultaneos a unidades distintas.
+   */
   async advance(organizationId: string, actor: JwtPayload, entryId: string, dto: AdvanceQueueDto) {
     const entry = await this.getEntryOrThrow(organizationId, entryId);
+    if (entry.status === dto.toStatus) throw new ConflictException(QUEUE_CHANGED);
     const currentIndex = ADVANCE_ORDER.indexOf(entry.status as (typeof ADVANCE_ORDER)[number]);
     const targetIndex = ADVANCE_ORDER.indexOf(dto.toStatus);
     if (currentIndex === -1 || targetIndex !== currentIndex + 1) {
       throw new BadRequestException(`No se puede pasar de ${entry.status} a ${dto.toStatus} directamente`);
     }
 
-    const updated = await this.prisma.queueEntry.update({ where: { id: entryId }, data: { status: dto.toStatus } });
-    await this.prisma.auditEntry.create({
-      data: {
-        organizationId,
-        actorId: actor.sub,
-        actorRole: actor.role,
-        action: `AVANZAR_COLA_${dto.toStatus}`,
-        resource: `Cola ${entry.route}`,
-        resourceId: entryId,
-        before: entry.status,
-        after: dto.toStatus,
-      },
-    });
-    return updated;
+    if (dto.toStatus === 'LLAMADO') {
+      const current = await this.prisma.queueEntry.findFirst({
+        where: { organizationId, route: entry.route, status: 'LLAMADO' },
+        select: { vehicle: { select: { code: true } } },
+      });
+      if (current) throw new ConflictException(alreadyCalling(current.vehicle.code));
+    }
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const { count } = await tx.queueEntry.updateMany({
+          where: { id: entryId, organizationId, status: entry.status },
+          data: { status: dto.toStatus },
+        });
+        if (count === 0) throw new ConflictException(QUEUE_CHANGED);
+        await tx.auditEntry.create({
+          data: {
+            organizationId,
+            actorId: actor.sub,
+            actorRole: actor.role,
+            action: `AVANZAR_COLA_${dto.toStatus}`,
+            resource: `Cola ${entry.route}`,
+            resourceId: entryId,
+            before: entry.status,
+            after: dto.toStatus,
+          },
+        });
+        return tx.queueEntry.findUniqueOrThrow({ where: { id: entryId } });
+      });
+    } catch (err) {
+      if ((err as { code?: string }).code === 'P2002') throw new ConflictException(alreadyCalling());
+      throw err;
+    }
   }
 
   /**

@@ -1000,6 +1000,9 @@ model QueueEntry {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  // Ademas existe queue_entries_un_llamado_por_cola, un indice unico PARCIAL
+  // (una sola unidad LLAMADO por cola) que Prisma no puede declarar aqui: vive
+  // solo en la migracion 20261106000000_un_llamado_por_cola.
   @@unique([organizationId, route, vehicleId])
   @@index([organizationId, route, position])
   @@map("queue_entries")
