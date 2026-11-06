@@ -8,6 +8,7 @@ import type {
   DelayedRegistrationRequest, DelayedRegistrationStatus, DelayedRegistrationResolution,
 } from '../types';
 import { getActingOrgId } from './acting-org';
+import { CONNECTION_ERROR, friendlyErrorMessage, showErrorNotice } from './error-notice';
 
 const TOKEN_KEY = 'chaski-auth-token';
 const DEVICE_ID_KEY = 'chaski-device-id';
@@ -59,16 +60,32 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+// Errores que la pantalla ya resuelve con su propio flujo (restaurar la empresa
+// eliminada): no llevan la notificacion general.
+const CODES_WITH_OWN_FLOW = new Set(['EMPRESA_ELIMINADA']);
+
+// Solo las acciones (POST/PATCH/PUT/DELETE) avisan con la ventana de error. Las
+// lecturas no: muchas se repiten solas cada pocos segundos y una caida de red
+// abriria una ventana tras otra. `silent` es para acciones en segundo plano que
+// el usuario no pidio.
+async function request<T>(path: string, options: RequestInit & { silent?: boolean } = {}): Promise<T> {
+  const { silent, ...init } = options;
+  const notifies = !silent && (init.method ?? 'GET') !== 'GET';
   const token = localStorage.getItem(TOKEN_KEY);
-  const res = await fetch(`${apiUrl()}${withActingOrg(path)}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers ?? {}),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${apiUrl()}${withActingOrg(path)}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init.headers ?? {}),
+      },
+    });
+  } catch {
+    if (notifies) showErrorNotice(CONNECTION_ERROR);
+    throw new ApiError(CONNECTION_ERROR);
+  }
   if (!res.ok) {
     let message = `Error ${res.status}`;
     let data: Record<string, unknown> = {};
@@ -79,7 +96,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     } catch {
       // sin cuerpo JSON, se usa el mensaje generico
     }
-    throw new ApiError(message, data);
+    const error = new ApiError(friendlyErrorMessage(res.status, message), data);
+    if (notifies && !(error.code && CODES_WITH_OWN_FLOW.has(error.code))) showErrorNotice(error.message);
+    throw error;
   }
   if (res.status === 204) return undefined as T;
   // Un GET que devuelve null (ej. "todavia no hay corredor dibujado para
@@ -1993,7 +2012,7 @@ export async function fetchNoticesUnreadCount(): Promise<{ count: number }> {
 }
 
 export async function markNoticesRead(): Promise<void> {
-  await request('/notices/mark-read', { method: 'POST' });
+  await request('/notices/mark-read', { method: 'POST', silent: true });
 }
 
 // ─── Soporte ITIL 4 (2 oct 2026, tesis OE4) ──────────────────────────────────

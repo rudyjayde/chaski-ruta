@@ -7,6 +7,7 @@ import {
 } from '../../lib/operacion-api';
 import { getOperationalState, getOperationalPosition, getQueueDisplayOrder } from '../../lib/queue-ui';
 import { useAdminDemo } from './AdminApp';
+import { showErrorNotice } from '../../lib/error-notice';
 
 const OPERATIONAL_DATE = 'Jornada ' + new Date().toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
@@ -291,7 +292,9 @@ export default function QueuesPage() {
       await fn();
       await reload();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : `No se pudo ${label}`);
+      // Si otro administrador se adelanto, esta pantalla estaba desactualizada.
+      await reload();
+      showErrorNotice(err instanceof Error ? err.message : `No se pudo ${label}`);
     }
   };
 

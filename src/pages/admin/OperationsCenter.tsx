@@ -186,7 +186,8 @@ export default function OperationsCenter({ onNavigate }: Props) {
   const FLEET_EN_RUTA_JP = useMemo(() => trips.filter(t => t.route === 'JULI_PUNO' && t.status === 'ACTIVO'), [trips]);
   const FLEET_EN_RUTA_PJ = useMemo(() => trips.filter(t => t.route === 'PUNO_JULI' && ['ACTIVO', 'CON_INCIDENCIA'].includes(t.status)), [trips]);
 
-  const nextToCall = queueJP.find(e => e.status === 'INSCRITO');
+  // Una sola unidad LLAMADO por cola: mientras haya una, no se ofrece llamar a otra.
+  const nextToCall = queueJP.some(e => e.status === 'LLAMADO') ? undefined : queueJP.find(e => e.status === 'INSCRITO');
   const activeTrips = trips.filter(t => t.status === 'ACTIVO');
   const openManifests = manifests.filter(m => m.status === 'BORRADOR').length;
   const totalPassengers = manifests.reduce((s, m) => s + m.passengers.length, 0);
@@ -196,9 +197,11 @@ export default function OperationsCenter({ onNavigate }: Props) {
     if (!nextToCall) return;
     try {
       await advanceQueueEntry(nextToCall.id, 'LLAMADO');
-      setVersion(v => v + 1);
+    } catch {
+      // El motivo ya lo muestra la notificacion general (request() en operacion-api.ts).
     } finally {
       setCallConfirm(false);
+      setVersion(v => v + 1);
     }
   };
 
