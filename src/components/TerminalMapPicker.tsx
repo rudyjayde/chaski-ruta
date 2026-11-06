@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Search, Loader2, LocateFixed } from 'lucide-react';
+import { Search, Loader2, LocateFixed, Maximize2, Minimize2 } from 'lucide-react';
 import { createMap, dotIcon, searchPlace, L } from '../lib/map';
 
 // Selector real de coordenadas (OpenStreetMap) para un terminal -- reemplaza
@@ -28,6 +28,7 @@ export default function TerminalMapPicker({ lat, lng, onChange, heightClass = 'h
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [message, setMessage] = useState('');
+  const [expanded, setExpanded] = useState(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
@@ -78,6 +79,15 @@ export default function TerminalMapPicker({ lat, lng, onChange, heightClass = 'h
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lat, lng, ready]);
 
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpanded(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expanded]);
+
   const handleSearch = async () => {
     const q = query.trim();
     if (!q || !mapObjRef.current) return;
@@ -121,10 +131,19 @@ export default function TerminalMapPicker({ lat, lng, onChange, heightClass = 'h
   };
 
   return (
-    <div className={`relative isolate ${heightClass} bg-bg rounded-lg overflow-hidden border border-border`}>
+    // El contenedor exterior guarda el lugar en la pagina mientras el mapa esta
+    // expandido. Es el MISMO mapa cambiando de tamano (no uno nuevo), asi
+    // conserva zoom y pin; createMap lo reajusta con su ResizeObserver.
+    <div className={`relative ${heightClass}`}>
+      {expanded && <div className="fixed inset-0 z-[1999] bg-black/50" onClick={() => setExpanded(false)} aria-hidden="true" />}
+      <div
+        className={`isolate bg-bg overflow-hidden border border-border ${
+          expanded ? 'fixed inset-4 md:inset-8 z-[2000] rounded-xl shadow-2xl' : 'absolute inset-0 rounded-lg'
+        }`}
+      >
       <div ref={mapRef} className="absolute inset-0" />
       {ready && (
-        <div className="absolute z-[1000] top-2 left-12 right-2 flex items-center gap-1.5 bg-surface border border-border rounded-lg shadow px-2.5 py-1.5">
+        <div className="absolute z-[1000] top-2 left-12 right-14 flex items-center gap-1.5 bg-surface border border-border rounded-lg shadow px-2.5 py-1.5">
           {searching ? <Loader2 size={14} className="text-muted flex-shrink-0 animate-spin" /> : <Search size={14} className="text-muted flex-shrink-0" />}
           <input
             type="text"
@@ -135,6 +154,17 @@ export default function TerminalMapPicker({ lat, lng, onChange, heightClass = 'h
             className="flex-1 min-w-0 text-sm text-t1 bg-transparent focus:outline-none placeholder:text-muted"
           />
         </div>
+      )}
+      {ready && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          title={expanded ? 'Reducir mapa' : 'Expandir mapa'}
+          aria-label={expanded ? 'Reducir mapa' : 'Expandir mapa'}
+          className="absolute z-[1000] top-2 right-2 w-9 h-9 flex items-center justify-center bg-surface border border-border rounded-lg shadow text-t1 hover:bg-hover"
+        >
+          {expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+        </button>
       )}
       {ready && 'geolocation' in navigator && (
         <button
@@ -153,10 +183,17 @@ export default function TerminalMapPicker({ lat, lng, onChange, heightClass = 'h
         </div>
       )}
       {message && (
-        <div className="absolute z-[1000] bottom-8 left-2 right-12 bg-danger/10 border border-danger/30 text-danger text-xs rounded-lg px-3 py-1.5">
+        <div className="absolute z-[1000] bottom-8 left-2 right-12 bg-surface border border-danger/30 text-danger text-xs rounded-lg shadow px-3 py-1.5">
           {message}
         </div>
       )}
+      {expanded && lat != null && lng != null && !message && (
+        <div className="absolute z-[1000] bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-surface border border-border rounded-lg shadow pl-3 pr-1.5 py-1.5">
+          <span className="text-sm text-t2 whitespace-nowrap">Arrastra el pin para ajustarlo · <span className="font-mono">{lat.toFixed(5)}, {lng.toFixed(5)}</span></span>
+          <button type="button" onClick={() => setExpanded(false)} className="px-3 py-1 text-sm font-medium bg-primary text-white rounded-md hover:bg-primary-h">Listo</button>
+        </div>
+      )}
+      </div>
     </div>
   );
 }
