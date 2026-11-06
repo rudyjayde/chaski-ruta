@@ -164,9 +164,6 @@ function formatDate(value?: string | null): string {
 function mapQueueStatus(status: string): QueueStatus {
   return status === 'EN_TERMINAL' ? 'EN TERMINAL' : (status as QueueStatus);
 }
-function unmapQueueStatusForAdvance(status: 'LLAMADO' | 'EN TERMINAL' | 'EMBARCANDO' | 'LISTO') {
-  return status === 'EN TERMINAL' ? 'EN_TERMINAL' : status;
-}
 
 function mapGpsStatus(status: string): Trip['gpsStatus'] {
   if (status === 'GPS_FISICO') return 'GPS_PRO_DEMO';
@@ -372,10 +369,10 @@ export async function confirmArrival(entryId: string, lat: number, lng: number):
   await request(`/queues/entries/${entryId}/confirm-arrival`, { method: 'POST', body: JSON.stringify({ lat, lng }) });
 }
 
-export async function advanceQueueEntry(entryId: string, toStatus: 'LLAMADO' | 'EN TERMINAL' | 'EMBARCANDO' | 'LISTO'): Promise<void> {
+export async function advanceQueueEntry(entryId: string, toStatus: 'LLAMADO'): Promise<void> {
   await request(`/queues/entries/${entryId}/advance`, {
     method: 'POST',
-    body: JSON.stringify({ toStatus: unmapQueueStatusForAdvance(toStatus) }),
+    body: JSON.stringify({ toStatus }),
   });
 }
 
@@ -894,6 +891,8 @@ export interface Organization {
   routeDestinationName?: string | null;
   returnOriginName?: string | null;
   returnDestinationName?: string | null;
+  // Modo presentacion: se inscribe sin verificar ubicacion (ver schema.prisma).
+  presentationMode?: boolean;
 }
 
 export interface CreateOrganizationInput {
@@ -1529,6 +1528,7 @@ export interface OperationalConfig {
   routeDestinationName: string | null;
   returnOriginName: string | null;
   returnDestinationName: string | null;
+  presentationMode: boolean;
   // null = el Super Admin todavia no marco el terminal en el mapa.
   terminalOriginLat: number | null;
   terminalOriginLng: number | null;

@@ -31,6 +31,6 @@ export class OperationalConfigController {
     @Query('organizationId') organizationId?: string,
   ) {
     const orgId = resolveOrgId(user, organizationId);
-    return this.config.update(orgId, dto);
+    return this.config.update(orgId, dto, user);
   }
 }

@@ -892,6 +892,10 @@ model OperationalConfig {
   // Autorizacion del administrador para inscribir a un CONDUCTOR cuyo historial no se puede confirmar
   // (sin viajes, o su ultimo viaje no calza con el terminal donde esta). Solo Super Admin lo cambia.
   enrollmentAuthRequired   Boolean @default(true)
+  // Modo presentacion (6 nov 2026, Jayde): para demostrar el sistema lejos de los terminales. Encendido,
+  // el conductor se inscribe en cualquier terminal sin validar ubicacion ni historial, y la inscripcion
+  // queda SIN_EVIDENCIA. Apagado (por defecto) rigen los terminales configurados. Solo Super Admin lo cambia.
+  presentationMode         Boolean @default(false)
   timeoutMinutes           Int     @default(15)
   anomalySpeedThresholdKmh Int     @default(100)
 

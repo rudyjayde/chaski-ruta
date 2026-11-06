@@ -966,6 +966,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
     // (agregarlos aqui daria la falsa impresion de que hacen algo).
     gpsRadiusMeters: 300,
     gpsMaxAgeMinutes: 5,
+    presentationMode: false,
     minTripMinutesOutbound: 90,
     minTripMinutesReturn: 90,
     maxTripMinutesOutbound: null as number | null,
@@ -1124,6 +1125,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           initialConfigNotes: cfg.initialConfigNotes ?? '',
           gpsRadiusMeters: cfg.gpsRadiusMeters ?? 300,
           gpsMaxAgeMinutes: cfg.gpsMaxAgeMinutes ?? 5,
+          presentationMode: cfg.presentationMode ?? false,
           minTripMinutesOutbound: cfg.minTripMinutesOutbound ?? 90,
           minTripMinutesReturn: cfg.minTripMinutesReturn ?? 90,
           maxTripMinutesOutbound: cfg.maxTripMinutesOutbound ?? null,
@@ -1156,6 +1158,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
           initialConfigNotes: opForm.initialConfigNotes.trim(),
           gpsRadiusMeters: opForm.gpsRadiusMeters,
           gpsMaxAgeMinutes: opForm.gpsMaxAgeMinutes,
+          presentationMode: opForm.presentationMode,
           minTripMinutesOutbound: opForm.minTripMinutesOutbound,
           minTripMinutesReturn: opForm.minTripMinutesReturn,
           maxTripMinutesOutbound: opForm.maxTripMinutesOutbound,
@@ -1454,6 +1457,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 initialConfigNotes: opConfig.initialConfigNotes ?? '',
                 gpsRadiusMeters: opConfig.gpsRadiusMeters ?? 300,
                 gpsMaxAgeMinutes: opConfig.gpsMaxAgeMinutes ?? 5,
+                presentationMode: opConfig.presentationMode ?? false,
                 minTripMinutesOutbound: opConfig.minTripMinutesOutbound ?? 90,
                 minTripMinutesReturn: opConfig.minTripMinutesReturn ?? 90,
                 maxTripMinutesOutbound: opConfig.maxTripMinutesOutbound ?? null,
@@ -1791,6 +1795,28 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 <p className="text-xs text-t2 mb-3">
                   Controlan la cola contraria (plan-operacion.md §3.10) — el administrador de la asociación solo puede verlos, nunca cambiarlos.
                 </p>
+                <div className={`flex items-start justify-between gap-4 rounded-lg border p-3 mb-3 ${opForm.presentationMode ? 'border-warn/40 bg-warn/5' : 'border-border bg-surface'}`}>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-t1">Modo presentación</p>
+                    <p className="text-xs text-t2 mt-0.5">
+                      Encendido: el conductor se inscribe en cualquiera de las dos terminales, sin importar dónde esté, y la inscripción queda como no verificada. Apagado: vuelven a valer las terminales configuradas arriba. Úsalo solo en una asociación de prueba.
+                    </p>
+                  </div>
+                  {editingOp ? (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={opForm.presentationMode}
+                      aria-label="Modo presentación"
+                      onClick={() => setOpForm(v => ({ ...v, presentationMode: !v.presentationMode }))}
+                      className={`relative w-11 h-6 rounded-full flex-shrink-0 transition-colors ${opForm.presentationMode ? 'bg-warn' : 'bg-border'}`}
+                    >
+                      <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${opForm.presentationMode ? 'translate-x-5' : ''}`} />
+                    </button>
+                  ) : (
+                    <span className={`text-sm font-medium flex-shrink-0 ${opForm.presentationMode ? 'text-warn' : 'text-t2'}`}>{opForm.presentationMode ? 'Encendido' : 'Apagado'}</span>
+                  )}
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-t1 mb-1">Radio GPS de terminal (metros)</label>
@@ -2286,6 +2312,7 @@ function EditOrgWizard({ org, onBack, onSaved }: { org: Organization; onBack: ()
                 ['Terminal 2', opForm.terminalDestinationName || '—'],
                 ['Radio GPS de terminal', `${opForm.gpsRadiusMeters} m`],
                 ['Antigüedad máx. de la señal GPS', `${opForm.gpsMaxAgeMinutes} min`],
+                ['Modo presentación', opForm.presentationMode ? 'Encendido' : 'Apagado'],
                 ['Tiempo mínimo — ida', `${opForm.minTripMinutesOutbound} min`],
                 ['Tiempo mínimo — vuelta', `${opForm.minTripMinutesReturn} min`],
                 ['Tiempo máximo esperado — ida / vuelta', `${opForm.maxTripMinutesOutbound ?? '—'} / ${opForm.maxTripMinutesReturn ?? '—'} min`],

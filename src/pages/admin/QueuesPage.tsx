@@ -3,27 +3,19 @@ import { Search, Filter, ChevronRight, X, AlertTriangle, Phone, Car, Plus, Loade
 import type { QueueEntry, QueueStatus, EvidenceType, Unit } from '../../types';
 import {
   fetchQueue, fetchVehicles, joinQueue, confirmArrival, advanceQueueEntry,
-  declareLater, overrideQueueEntry, departQueueEntry, routeLabel,
+  declareLater, overrideQueueEntry, departQueueEntry, routeLabel, routeEnds,
 } from '../../lib/operacion-api';
 import { getOperationalState, getOperationalPosition, getQueueDisplayOrder } from '../../lib/queue-ui';
 import { useAdminDemo } from './AdminApp';
 import { showErrorNotice } from '../../lib/error-notice';
+import PresentationModeNotice from '../../components/PresentationModeNotice';
 
 const OPERATIONAL_DATE = 'Jornada ' + new Date().toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
-// Cadena de avance manual OPCIONAL del gerente -- registro fino de
-// trazabilidad (LLAMADO -> EN TERMINAL -> EMBARCANDO -> LISTO), pero desde
-// la correccion del 3 de septiembre de 2026 (plan-flujo-colas-hardware.md
-// §2, Documento Maestro §6.4) YA NO es requisito para que el conductor
-// prepare su manifiesto ni marque su salida -- eso se habilita apenas la
-// unidad esta LLAMANDO. No incluye SALIO, que se maneja con "Salió a
-// viaje" (crea el Trip real) en vez de un avance mas.
-const ADVANCE_CHAIN: Record<string, 'LLAMADO' | 'EN TERMINAL' | 'EMBARCANDO' | 'LISTO'> = {
-  INSCRITO: 'LLAMADO',
-  LLAMADO: 'EN TERMINAL',
-  'EN TERMINAL': 'EMBARCANDO',
-  EMBARCANDO: 'LISTO',
-};
+// Desde LLAMADO la unidad solo puede salir a ruta (6 nov 2026, Jayde). EN
+// TERMINAL/EMBARCANDO/LISTO ya no se asignan; se conservan aqui para que una
+// unidad que hubiera quedado en uno de esos estados tambien pueda salir.
+const CAN_DEPART = new Set(['LLAMADO', 'EN TERMINAL', 'EMBARCANDO', 'LISTO']);
 
 const STATUS_COLOR: Record<QueueStatus, string> = {
   PREINSCRITO: 'bg-[#F4F4F5] text-t2',
@@ -285,6 +277,7 @@ export default function QueuesPage() {
   const currentlyLlamado = rawEntries.find(e => e.status === 'LLAMADO');
   const canCallNext = !!nextInscrito && !currentlyLlamado;
   const routeCode = tab === 'jp' ? 'JULI_PUNO' : 'PUNO_JULI';
+  const departDestination = routeEnds(routeCode, org).destination;
 
   const runAction = async (label: string, fn: () => Promise<unknown>) => {
     setActionError('');
@@ -304,11 +297,9 @@ export default function QueuesPage() {
     setShowCallConfirm(false);
   };
 
-  const handleAdvance = (entry: QueueEntry) => {
-    const next = ADVANCE_CHAIN[entry.status];
-    if (!next) return;
+  const handleCall = (entry: QueueEntry) => {
     setBusyEntryId(entry.id);
-    runAction('avanzar', () => advanceQueueEntry(entry.id, next)).finally(() => setBusyEntryId(null));
+    runAction('llamar', () => advanceQueueEntry(entry.id, 'LLAMADO')).finally(() => setBusyEntryId(null));
   };
 
   const handleConfirmArrival = (entry: QueueEntry) => {
@@ -398,6 +389,8 @@ export default function QueuesPage() {
           )}
         </div>
       </div>
+
+      <PresentationModeNotice org={org} className="rounded-none border-x-0 border-t-0 px-6" />
 
       {currentlyLlamado && (
         <div className="px-6 py-2 bg-accent/10 border-b border-accent/30 text-sm text-t1">
@@ -541,23 +534,23 @@ export default function QueuesPage() {
                     Confirmar llegada (GPS)
                   </button>
                 )}
-                {ADVANCE_CHAIN[selected.status] && !(selected.status === 'INSCRITO' && currentlyLlamado) && (
+                {selected.status === 'INSCRITO' && !currentlyLlamado && (
                   <button
-                    onClick={() => handleAdvance(selected)}
+                    onClick={() => handleCall(selected)}
                     disabled={busyEntryId === selected.id}
                     className="w-full flex items-center justify-center gap-2 h-9 border border-primary text-primary rounded-lg text-sm font-medium hover:bg-primary/5 transition-colors disabled:opacity-50"
                   >
                     <ArrowRightCircle size={13} />
-                    Avanzar a {ADVANCE_CHAIN[selected.status]}
+                    Avanzar a LLAMADO
                   </button>
                 )}
-                {selected.status === 'LISTO' && (
+                {CAN_DEPART.has(selected.status) && (
                   <button
                     onClick={() => handleDepart(selected)}
                     disabled={busyEntryId === selected.id}
                     className="w-full flex items-center justify-center gap-2 h-9 bg-ok text-white rounded-lg text-sm font-medium hover:bg-ok/90 transition-colors disabled:opacity-50"
                   >
-                    Salió a viaje
+                    {departDestination ? `Marcar salida hacia ${departDestination}` : 'Marcar salida'}
                   </button>
                 )}
                 {(selected.status === 'INSCRITO' || selected.status === 'LLAMADO') && (

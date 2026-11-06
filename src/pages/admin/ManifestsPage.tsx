@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Search, FileText, Download, X, AlertCircle, CheckCircle, FileWarning, FilePen, Loader2, UserPlus, Lock, Save } from 'lucide-react';
 import { fetchManifests, correctManifest, addManifestPassenger, closeManifest, routeLabel, terminalName } from '../../lib/operacion-api';
 import SeatMap from '../../components/SeatMap';
+import { showManifestFullNotice } from '../../lib/error-notice';
 import type { Manifest, ManifestStatus, PaymentMethod } from '../../types';
 import { useAdminDemo } from './AdminApp';
 import DocumentField from '../../components/DocumentField';
@@ -396,6 +397,7 @@ export default function ManifestsPage() {
     try {
       await addManifestPassenger(selected.id, p);
       await reload();
+      if (selected.status === 'BORRADOR' && selected.passengers.length + 1 >= selected.capacity) showManifestFullNotice(selected.capacity);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'No se pudo agregar el pasajero');
     } finally {

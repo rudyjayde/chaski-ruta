@@ -23,8 +23,9 @@ type Corridor = {
   routeDestinationName?: string | null;
   returnOriginName?: string | null;
   returnDestinationName?: string | null;
+  presentationMode?: boolean;
 };
-const CORRIDOR_SELECT = { terminalOriginName: true, terminalDestinationName: true, routeOriginName: true, routeDestinationName: true, returnOriginName: true, returnDestinationName: true } as const;
+const CORRIDOR_SELECT = { terminalOriginName: true, terminalDestinationName: true, routeOriginName: true, routeDestinationName: true, returnOriginName: true, returnDestinationName: true, presentationMode: true } as const;
 function flattenCorridor<T extends { operationalConfig?: Corridor | null }>(org: T) {
   const { operationalConfig, ...rest } = org;
   return {
@@ -35,6 +36,7 @@ function flattenCorridor<T extends { operationalConfig?: Corridor | null }>(org:
     routeDestinationName: operationalConfig?.routeDestinationName ?? null,
     returnOriginName: operationalConfig?.returnOriginName ?? null,
     returnDestinationName: operationalConfig?.returnDestinationName ?? null,
+    presentationMode: operationalConfig?.presentationMode ?? false,
     ...(operationalConfig && 'terminalOriginAddress' in operationalConfig
       ? { terminalOriginAddress: operationalConfig.terminalOriginAddress, terminalDestinationAddress: operationalConfig.terminalDestinationAddress }
       : {}),

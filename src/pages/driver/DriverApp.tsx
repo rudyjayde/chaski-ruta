@@ -12,8 +12,10 @@ import SeatMap from '../../components/SeatMap';
 import GpsAlertBanner from '../../components/GpsAlertBanner';
 import GpsFallbackNotice from '../../components/GpsFallbackNotice';
 import EnrollmentAuthNotice from '../../components/EnrollmentAuthNotice';
+import PresentationModeNotice from '../../components/PresentationModeNotice';
 import ProductionReportView from '../../components/ProductionReportView';
 import { createMap, dotIcon, L } from '../../lib/map';
+import { showManifestFullNotice } from '../../lib/error-notice';
 import type { Passenger, PaymentMethod, Person, Unit, QueueEntry, Manifest, Trip, TripStatus, VehicleType, RouteDir } from '../../types';
 import {
   fetchQueue, fetchVehicles, joinQueue, confirmArrival, declareLater, getOrCreateDeviceId,
@@ -745,12 +747,12 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
     setReturnActionError('');
     setReturnActionNotice('');
     setReturnActionBusy('join');
-    if (!navigator.geolocation) {
+    if (!org?.presentationMode && !navigator.geolocation) {
       setReturnActionError('No se pudo obtener tu ubicación — revisa los permisos del navegador');
       setReturnActionBusy(null);
       return;
     }
-    navigator.geolocation.getCurrentPosition(
+    getJoinPosition(Boolean(org?.presentationMode),
       async pos => {
         try {
           const joined = await joinQueue(returnRoute, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
@@ -781,12 +783,12 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
     setReturnActionNotice('');
     setReturnActionBusy('join');
     setJoinTarget(route);
-    if (!navigator.geolocation) {
+    if (!org?.presentationMode && !navigator.geolocation) {
       setReturnActionError('No se pudo obtener tu ubicación — revisa los permisos del navegador');
       setReturnActionBusy(null);
       return;
     }
-    navigator.geolocation.getCurrentPosition(
+    getJoinPosition(Boolean(org?.presentationMode),
       async pos => {
         try {
           const joined = await joinQueue(route, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
@@ -817,12 +819,12 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
     setReturnActionError('');
     setReturnActionNotice('');
     setReturnActionBusy('later');
-    if (!navigator.geolocation) {
+    if (!org?.presentationMode && !navigator.geolocation) {
       setReturnActionError('No se pudo obtener tu ubicación — revisa los permisos del navegador');
       setReturnActionBusy(null);
       return;
     }
-    navigator.geolocation.getCurrentPosition(
+    getJoinPosition(Boolean(org?.presentationMode),
       async pos => {
         try {
           await joinQueue(returnRoute, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
@@ -879,6 +881,7 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
       <GpsAlertBanner enabled={hasVehicleGPS} />
       <GpsFallbackNotice />
       <EnrollmentAuthNotice org={org} />
+      <PresentationModeNotice org={org} />
 
       {/* Unit */}
       <div className="bg-surface border border-border rounded-lg p-4 flex flex-wrap gap-4 items-center">
@@ -1065,7 +1068,9 @@ function DriverHome({ onNavigate }: { onNavigate: (s: Section) => void }) {
                 ? 'No estás inscrito en ninguna cola. Puedes anotarte para el siguiente turno.'
                 : detectedRoute
                   ? `Todavía no tienes viajes registrados. Con tu ubicación detectamos que estás en ${detected?.terminalName || 'un terminal'}: anótate en la cola que sale de ahí.`
-                  : 'Todavía no tienes viajes registrados. Elige desde qué terminal sales y anótate en esa cola: debes estar ahí con tu celular.'}
+                  : org?.presentationMode
+                    ? 'Todavía no tienes viajes registrados. Elige la cola en la que quieres anotarte.'
+                    : 'Todavía no tienes viajes registrados. Elige desde qué terminal sales y anótate en esa cola: debes estar ahí con tu celular.'}
             </p>
             {!enroll.allowed && <p className="text-xs text-warn">{enroll.message}</p>}
             {locationKnown ? (
@@ -1207,12 +1212,12 @@ function DriverQueue() {
     setErrorMsg('');
     if (!enroll.allowed) { setErrorMsg(enroll.message); return; }
     setJoiningRoute(route);
-    if (!navigator.geolocation) {
+    if (!org?.presentationMode && !navigator.geolocation) {
       setErrorMsg('Este navegador no puede obtener tu ubicación');
       setJoiningRoute(null);
       return;
     }
-    navigator.geolocation.getCurrentPosition(
+    getJoinPosition(Boolean(org?.presentationMode),
       async pos => {
         try {
           const joined = await joinQueue(route, myVehicleId, getOrCreateDeviceId(), false, pos.coords.latitude, pos.coords.longitude);
@@ -1278,6 +1283,7 @@ function DriverQueue() {
 
   return (
     <div className="p-6 lg:p-8 space-y-5">
+      <PresentationModeNotice org={org} />
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-base font-semibold text-t1">Cola de turnos</h1>
@@ -1409,6 +1415,21 @@ function DriverQueue() {
   );
 }
 // ─── Manifiesto (unchanged logic, preserved as-is) ────────────────────────────
+// Posicion para inscribirse. En Modo presentacion no se pide: el backend no la verifica, y asi un
+// permiso negado o un GPS sin senal bajo techo no frenan la demostracion.
+function getJoinPosition(
+  skip: boolean,
+  onPosition: (pos: { coords: { latitude?: number; longitude?: number } }) => void,
+  onError: () => void,
+  options?: PositionOptions,
+) {
+  if (skip) {
+    onPosition({ coords: {} });
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(onPosition, onError, options);
+}
+
 function seatMapCapacity(vehicleType: VehicleType) {
   return vehicleType === 'SPRINTER' ? 20 : 15;
 }
@@ -1594,6 +1615,7 @@ function DriverManifest() {
     try {
       await addManifestPassenger(activeManifest.id, p);
       await reload();
+      if (activeManifest.status === 'BORRADOR' && activeManifest.passengers.length + 1 >= activeManifest.capacity) showManifestFullNotice(activeManifest.capacity);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'No se pudo agregar el pasajero');
     } finally {

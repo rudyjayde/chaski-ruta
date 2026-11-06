@@ -167,7 +167,7 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     r = await call(T.d[1], 'POST', `/queues/entries/${q[1].id}/advance`, { toStatus: 'LLAMADO' });
     check('un conductor no puede avanzar posiciones', r.status === 403, `HTTP ${r.status}`);
     r = await call(T.admin, 'POST', `/queues/entries/${q[0].id}/advance`, { toStatus: 'EN_TERMINAL' });
-    check('el administrador avanza LLAMADO → EN_TERMINAL', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    check('desde LLAMADO ya no se puede pasar a EN_TERMINAL', r.status === 400, `HTTP ${r.status} ${msg(r)}`);
     r = await call(T.admin, 'POST', `/queues/entries/${q[0].id}/override`, { action: 'REQUEUE', reason: 'x' });
     check('la intervención exige un motivo de al menos 3 letras', r.status === 400, `HTTP ${r.status} ${msg(r)}`);
     // devolver la unidad 1 a LLAMADO para el ciclo de viaje (REQUEUE la manda al final y promueve a la siguiente)
@@ -1113,6 +1113,60 @@ const msg = (r: Res) => (Array.isArray(r.json?.message) ? r.json.message.join(';
     await prisma.queueEntry.update({ where: { id: a.id }, data: { status: 'LLAMADO' } });
     const dbCode = await prisma.queueEntry.update({ where: { id: b.id }, data: { status: 'LLAMADO' } }).then(() => null, (e: any) => e.code);
     check('la base de datos rechaza una segunda unidad LLAMADO aunque se salte el backend', dbCode === 'P2002', `código ${dbCode}`);
+
+    // Desde LLAMADO el administrador marca la salida directamente.
+    await wipeOps();
+    [a] = await seedQueue('JULI_PUNO', [0]);
+    await callUnit(a.id);
+    r = await call(T.admin, 'POST', `/queues/entries/${a.id}/depart`);
+    check('marcar salida sin manifiesto se rechaza explicando el motivo', r.status === 400 && /manifiesto/i.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    const salidaTrip = await call(T.d[0], 'POST', `/queues/entries/${a.id}/prepare-trip`);
+    const salidaMan = await call(T.d[0], 'POST', '/manifests', { tripId: salidaTrip.json.id, capacity: 19 });
+    await call(T.d[0], 'POST', `/manifests/${salidaMan.json.id}/close`, { paperBackupConfirmed: true });
+    r = await call(T.admin, 'POST', `/queues/entries/${a.id}/depart`);
+    check('el administrador marca la salida desde LLAMADO con el manifiesto cerrado', r.status === 201 && r.json?.status === 'ACTIVO', `HTTP ${r.status} ${msg(r)}`);
+    const salidaAudit = await prisma.auditEntry.findFirst({ where: { organizationId: orgA.id, action: 'DESPACHAR_VIAJE', resourceId: r.json?.id } });
+    check('la auditoría registra el estado real desde el que salió', salidaAudit?.before === 'Cola JULI_PUNO (LLAMADO)', salidaAudit?.before ?? 'sin registro');
+
+    // ═════════ T. MODO PRESENTACION ═════════
+    head('T. Modo presentación');
+    await wipeOps();
+    const superT = await prisma.person.create({ data: { organizationId: null, name: 'Super E2E Modo', email: `e2e.${stamp}.supert@example.test`, role: 'SUPERADMIN', status: 'ACTIVO' } });
+    const TST = await tok(superT);
+    const setMode = (presentationMode: boolean, token = TST) => call(token, 'POST', `/operational-config?organizationId=${orgA.id}`, { presentationMode });
+    r = await setMode(true, T.admin);
+    check('el administrador no puede encender el Modo presentación', r.status === 403, `HTTP ${r.status}`);
+    r = await join(0, 'JULI_PUNO', FAR);
+    check('apagado: lejos del terminal se sigue rechazando', r.status === 403 && /fuera del radio/.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+
+    r = await setMode(true);
+    check('el Super Admin enciende el Modo presentación', r.status === 201 && r.json?.presentationMode === true, `HTTP ${r.status}`);
+    r = await call(T.d[0], 'GET', '/organizations/me');
+    check('el conductor recibe el aviso de que el modo está encendido', r.json?.presentationMode === true, JSON.stringify(r.json?.presentationMode));
+    r = await call(T.d[0], 'GET', `/queues/detect/terminal?lat=${JULI.lat}&lng=${JULI.lng}`);
+    check('encendido: no se detecta una sola terminal, se ofrecen las dos', r.status === 200 && r.json?.route === null, `route=${r.json?.route}`);
+    r = await join(0, 'JULI_PUNO', FAR);
+    check('encendido: se inscribe en la primera terminal estando lejos', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    const modoEntry = await prisma.queueEntry.findFirst({ where: { organizationId: orgA.id, vehicleId: u[0].id, route: 'JULI_PUNO' } });
+    check('la inscripción queda como no verificada', modoEntry?.evidence === 'SIN_EVIDENCIA' && modoEntry?.arrivalGpsLat === null, `evidencia=${modoEntry?.evidence}`);
+    const modoAudit = await prisma.auditEntry.findFirst({ where: { organizationId: orgA.id, action: 'INSCRIPCION_COLA', resourceId: modoEntry?.id } });
+    check('la auditoría dice que no se verificó la ubicación', /Modo presentacion/.test(modoAudit?.reason ?? ''), modoAudit?.reason ?? 'sin registro');
+    r = await join(1, 'PUNO_JULI', null);
+    check('encendido: se inscribe en la otra terminal, incluso sin ubicación', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    r = await join(0, 'PUNO_JULI', FAR);
+    check('encendido: sigue sin poder estar en las dos colas a la vez', r.status === 403, `HTTP ${r.status} ${msg(r)}`);
+
+    await wipeOps();
+    r = await setMode(false);
+    check('el Super Admin apaga el Modo presentación', r.status === 201 && r.json?.presentationMode === false, `HTTP ${r.status}`);
+    r = await join(0, 'JULI_PUNO', FAR);
+    check('apagado otra vez: vuelven a valer las terminales configuradas', r.status === 403 && /fuera del radio/.test(msg(r)), `HTTP ${r.status} ${msg(r)}`);
+    r = await join(0, 'JULI_PUNO', JULI);
+    check('apagado otra vez: en la terminal real se inscribe con evidencia', r.status === 201, `HTTP ${r.status} ${msg(r)}`);
+    const realEntry = await prisma.queueEntry.findFirst({ where: { organizationId: orgA.id, vehicleId: u[0].id, route: 'JULI_PUNO' } });
+    check('la inscripción real queda con evidencia de presencia', realEntry?.evidence === 'PRESENCIA_TERMINAL', `evidencia=${realEntry?.evidence}`);
+    const modoAudits = await prisma.auditEntry.count({ where: { organizationId: orgA.id, action: { in: ['MODO_PRESENTACION_ACTIVADO', 'MODO_PRESENTACION_DESACTIVADO'] } } });
+    check('encender y apagar el modo quedan en Auditoría', modoAudits === 2, `${modoAudits} registros`);
 
     await prisma.queueEntry.deleteMany({ where: { organizationId: orgA.id } });
     const orphanPos = await prisma.queueEntry.count({ where: { organizationId: orgA.id } });

@@ -3,12 +3,31 @@
 // Aceptar, explicando el motivo. La dispara request() en operacion-api.ts para
 // toda accion contra el backend; showErrorNotice() queda para los errores que
 // no pasan por ahi (ej. el navegador no pudo obtener la ubicacion).
-type Listener = (message: string) => void;
+//
+// La misma ventana se usa en verde para avisos positivos que requieren que el
+// usuario haga algo a continuacion (ver showManifestFullNotice).
+export interface Notice {
+  tone: 'error' | 'success';
+  title: string;
+  message: string;
+}
+
+type Listener = (notice: Notice) => void;
 
 let listener: Listener | null = null;
 
 export function showErrorNotice(message: string) {
-  listener?.(message);
+  listener?.({ tone: 'error', title: 'No se pudo completar la acción', message });
+}
+
+// Al registrar el ultimo asiento. Dice "cierra el manifiesto" y no "marca
+// salida" porque el backend no deja salir con el manifiesto abierto.
+export function showManifestFullNotice(capacity: number) {
+  listener?.({
+    tone: 'success',
+    title: 'Manifiesto completo',
+    message: `La unidad completó sus ${capacity} pasajeros. Cierra el manifiesto para poder marcar la salida.`,
+  });
 }
 
 export function subscribeErrorNotice(fn: Listener) {

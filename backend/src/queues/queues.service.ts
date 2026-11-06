@@ -396,7 +396,10 @@ export class QueuesService {
     // terminal se refiere (si el conductor eligio la direccion equivocada lo entiende al instante).
     const terminalNameOfRoute = (route === 'JULI_PUNO' ? config.terminalOriginName : config.terminalDestinationName)?.trim();
     const terminalRef = terminalNameOfRoute ? `del terminal ${terminalNameOfRoute}` : 'del terminal';
-    if (!terminalLocated && actor.role === 'CONDUCTOR') {
+    // Modo presentacion: no se valida ubicacion (ni del celular ni del GPS del vehiculo) ni historial, y
+    // la inscripcion queda SIN_EVIDENCIA. Las demas reglas de la cola siguen aplicando.
+    const presentationMode = config.presentationMode;
+    if (!terminalLocated && actor.role === 'CONDUCTOR' && !presentationMode) {
       throw new BadRequestException(TERMINAL_SIN_UBICACION);
     }
 
@@ -414,13 +417,13 @@ export class QueuesService {
     // administrador/superadmin de mas abajo sigue intacta y solo aplica
     // cuando NO hay ninguna posicion disponible (nunca cuando la hay y dice
     // que esta lejos).
-    const hardware = await this.gps.getVehicleHardwareStatus(organizationId, vehicle.id);
-    const hardwarePosition = hardware.position;
+    const hardware = presentationMode ? null : await this.gps.getVehicleHardwareStatus(organizationId, vehicle.id);
+    const hardwarePosition = hardware?.position;
     // GPS del vehiculo sin señal (malogrado, desconectado o sin fix): el conductor solo puede usar
     // el GPS de su celular con una autorizacion vigente del administrador. Si fuera automatico,
     // desconectar el equipo bastaria para saltarse la verificacion del Plan PRO.
     let gpsFallbackAuthorization: { id: string } | null = null;
-    if (hardware.noSignal && actor.role === 'CONDUCTOR') {
+    if (hardware?.noSignal && actor.role === 'CONDUCTOR') {
       gpsFallbackAuthorization = await this.findValidGpsFallback(organizationId, vehicle.id);
       if (!gpsFallbackAuthorization) throw new ForbiddenException(GPS_VEHICULO_SIN_SENAL);
     }
@@ -437,6 +440,8 @@ export class QueuesService {
       evidence = 'PRESENCIA_TERMINAL';
       arrivalLat = hardwarePosition.lat;
       arrivalLng = hardwarePosition.lng;
+    } else if (presentationMode) {
+      // Sigue SIN_EVIDENCIA/SIN_GPS aunque el celular haya mandado su posicion: no se verifico nada.
     } else if (dto.lat !== undefined && dto.lng !== undefined) {
       tripGpsStatus = 'REGISTRO_MOVIL';
       const distance = terminalLocated ? distanceMeters(dto.lat, dto.lng, terminal.lat as number, terminal.lng as number) : 0;
@@ -464,7 +469,7 @@ export class QueuesService {
     let declaredLaterBefore = false;
     if (actor.role === 'CONDUCTOR' && !verifiedRelocation) {
       declaredLaterBefore = await this.wasDeclaredLater(organizationId, route, actor.sub);
-      if (config.enrollmentAuthRequired) {
+      if (config.enrollmentAuthRequired && !presentationMode) {
         const mismatch = await this.historyMismatch(organizationId, vehicle.id, route, activeTrip, declaredLaterBefore);
         if (mismatch) {
           const granted = await this.prisma.enrollmentAuthRequest.findFirst({
@@ -628,7 +633,9 @@ export class QueuesService {
         before: null,
         after: 'INSCRITO',
         evidence,
-        reason: gpsFallbackAuthorization
+        reason: presentationMode
+          ? `Unidad ${vehicle.code} -- Modo presentacion: ubicacion no verificada`
+          : gpsFallbackAuthorization
           ? `Unidad ${vehicle.code} -- GPS del vehiculo sin señal: se uso el GPS del celular autorizado por el administrador (solicitud ${gpsFallbackAuthorization.id})`
           : `Unidad ${vehicle.code}`,
       },
@@ -752,7 +759,9 @@ export class QueuesService {
   }
 
   /**
-   * Transiciones manuales del gerente: llamar, marcar en terminal, embarcando, listo.
+   * Llamado manual del administrador. Lo unico posterior a LLAMADO es salir a
+   * ruta (depart): pasar por EN_TERMINAL liberaba el turno mientras la unidad
+   * seguia llenando pasajeros (6 nov 2026, Jayde).
    *
    * Mantis 3017 (6 nov 2026): cada cola tiene una sola unidad LLAMADO (la que
    * esta llenando pasajeros), y dos administradores pueden pedir el mismo
@@ -763,19 +772,15 @@ export class QueuesService {
   async advance(organizationId: string, actor: JwtPayload, entryId: string, dto: AdvanceQueueDto) {
     const entry = await this.getEntryOrThrow(organizationId, entryId);
     if (entry.status === dto.toStatus) throw new ConflictException(QUEUE_CHANGED);
-    const currentIndex = ADVANCE_ORDER.indexOf(entry.status as (typeof ADVANCE_ORDER)[number]);
-    const targetIndex = ADVANCE_ORDER.indexOf(dto.toStatus);
-    if (currentIndex === -1 || targetIndex !== currentIndex + 1) {
-      throw new BadRequestException(`No se puede pasar de ${entry.status} a ${dto.toStatus} directamente`);
+    if (entry.status !== 'INSCRITO') {
+      throw new BadRequestException(`Solo se puede llamar a una unidad inscrita en la cola (esta unidad está en ${entry.status}).`);
     }
 
-    if (dto.toStatus === 'LLAMADO') {
-      const current = await this.prisma.queueEntry.findFirst({
-        where: { organizationId, route: entry.route, status: 'LLAMADO' },
-        select: { vehicle: { select: { code: true } } },
-      });
-      if (current) throw new ConflictException(alreadyCalling(current.vehicle.code));
-    }
+    const current = await this.prisma.queueEntry.findFirst({
+      where: { organizationId, route: entry.route, status: 'LLAMADO' },
+      select: { vehicle: { select: { code: true } } },
+    });
+    if (current) throw new ConflictException(alreadyCalling(current.vehicle.code));
 
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -987,7 +992,7 @@ export class QueuesService {
         action: 'DESPACHAR_VIAJE',
         resource: 'Viaje',
         resourceId: trip.id,
-        before: `Cola ${entry.route} (LISTO)`,
+        before: `Cola ${entry.route} (${entry.status})`,
         after: 'ACTIVO',
       },
     });
@@ -1361,6 +1366,8 @@ export class QueuesService {
    */
   async detectTerminal(organizationId: string, lat: number, lng: number) {
     const config = await this.getConfig(organizationId);
+    // Modo presentacion: sin deteccion, para que el conductor vea las dos colas.
+    if (config.presentationMode) return { route: null, terminalName: '', distanceMeters: null };
     const candidates = (
       [
         { route: 'JULI_PUNO' as RouteDir, lat: config.terminalOriginLat, lng: config.terminalOriginLng, name: config.terminalOriginName },

@@ -12,6 +12,7 @@ export class UpdateOperationalConfigDto {
   @IsOptional() @IsNumber() @Min(1) @Max(60) gpsMaxAgeMinutes?: number;
   // Exigir autorizacion del administrador a un conductor cuyo historial no se puede confirmar.
   @IsOptional() @IsBoolean() enrollmentAuthRequired?: boolean;
+  @IsOptional() @IsBoolean() presentationMode?: boolean;
   @IsOptional() @IsNumber() @Min(1) @Max(240) timeoutMinutes?: number;
   @IsOptional() @IsNumber() @Min(30) @Max(200) anomalySpeedThresholdKmh?: number;
 
