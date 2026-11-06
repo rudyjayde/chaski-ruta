@@ -374,7 +374,7 @@ export default function QueuesPage() {
   const alreadyQueuedCodes = new Set(rawEntries.filter(e => e.status !== 'AUSENTE' && e.status !== 'RETIRADO').map(e => e.code));
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col min-h-full">
       {/* Header */}
       <div className="px-4 md:px-6 py-4 border-b border-border bg-surface flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -401,10 +401,8 @@ export default function QueuesPage() {
 
       {currentlyLlamado && (
         <div className="px-6 py-2 bg-accent/10 border-b border-accent/30 text-sm text-t1">
-          <strong>{currentlyLlamado.code}</strong> ya está Llamando — por eso no sale "Llamar siguiente" (normalmente solo una unidad llama a la vez).
-          Si {currentlyLlamado.code} ya se fue o quedó atascada de una prueba, ciérrale el manifiesto y márcale salida (o retírala con "Registrar excepción") para liberar el turno.
-          Si necesitas llamar a otra unidad puntual sin esperar a que {currentlyLlamado.code} termine, selecciónala en la lista y usa "Avanzar a Llamado" en su panel —
-          funciona con cualquier unidad en cualquier posición, pero ten en cuenta que vas a tener dos unidades Llamando a la vez.
+          <strong>{currentlyLlamado.code}</strong> ya está Llamando. Solo una unidad puede llamar a la vez en cada cola.
+          Si {currentlyLlamado.code} ya se fue o quedó atascada, ciérrale el manifiesto y márcale salida, o retírala con "Registrar excepción", para liberar el turno.
         </div>
       )}
 
@@ -463,8 +461,8 @@ export default function QueuesPage() {
       </div>
 
       {/* Table + Side panel */}
-      <div className="flex flex-1 overflow-hidden">
-        <div className={`flex-1 overflow-auto ${selected ? 'border-r border-border' : ''}`}>
+      <div className="flex-1">
+        <div className="overflow-x-auto">
           {loading ? (
             <div className="flex flex-col items-center justify-center h-48 text-t2">
               <Loader2 size={24} className="mb-2 animate-spin" />
@@ -480,9 +478,14 @@ export default function QueuesPage() {
           )}
         </div>
 
-        {/* Side panel */}
+        {/* Side panel: ocupa todo el alto de la pantalla, no el espacio que sobra
+            debajo de las posiciones. El pb deja libres las ultimas acciones de
+            los botones flotantes (asistente y tema). */}
         {selected && (
-          <aside className="fixed inset-0 z-40 w-full md:static md:inset-auto md:z-auto md:w-80 md:flex-shrink-0 overflow-auto p-4 bg-surface" aria-label="Detalle de entrada en cola">
+          <div className="hidden md:block fixed inset-0 z-40 bg-black/20" onClick={() => setSelected(null)} aria-hidden="true" />
+        )}
+        {selected && (
+          <aside className="fixed inset-y-0 right-0 z-40 w-full md:w-96 overflow-y-auto p-4 pb-24 bg-surface border-l border-border shadow-2xl" aria-label="Detalle de entrada en cola">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-semibold text-t1">Detalle — Código {selected.code}</h3>
               <button onClick={() => setSelected(null)} className="text-muted hover:text-t1" aria-label="Cerrar panel">
@@ -538,7 +541,7 @@ export default function QueuesPage() {
                     Confirmar llegada (GPS)
                   </button>
                 )}
-                {ADVANCE_CHAIN[selected.status] && (
+                {ADVANCE_CHAIN[selected.status] && !(selected.status === 'INSCRITO' && currentlyLlamado) && (
                   <button
                     onClick={() => handleAdvance(selected)}
                     disabled={busyEntryId === selected.id}
